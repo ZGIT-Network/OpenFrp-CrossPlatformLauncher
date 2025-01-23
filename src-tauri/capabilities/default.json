@@ -1,0 +1,28 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Capability for the main window",
+  "remote": {
+    "urls": [
+      "https://*.openfrp.net"
+    ]
+  },
+  "windows": [
+    "main"
+  ],
+  "platforms": [
+    "windows",
+    "macOS",
+    "linux"
+  ],
+  "allowlist": {
+    "notification": {
+      "all": true
+    }
+  },
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "notification:default"
+  ]
+}

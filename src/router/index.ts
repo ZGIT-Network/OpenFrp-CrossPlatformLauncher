@@ -1,0 +1,52 @@
+import { createRouter, createWebHashHistory } from 'vue-router'
+import FrpcManager from '../components/FrpcManager.vue'
+import Settings from '../components/Settings.vue'
+import Home from '../components/Home.vue'
+import ProxyList from '../components/ProxyList.vue'
+import Info from '../components/Info.vue'
+import CreateProxy from '../components/CreateProxy.vue'
+
+const routes = [
+  {
+    path: '/',
+    redirect: '/home'
+  },
+  {
+    path: '/home',
+    name: 'Home',
+    component: Home
+  },
+  {
+    path: '/createproxy',
+    name: 'CreateProxy',
+    component: CreateProxy
+  },
+  {
+    path: '/proxylist',
+    name: 'ProxyList',
+    component: ProxyList
+  },
+  {
+    path: '/frpc',
+    name: 'FrpcManager',
+    component: FrpcManager
+  },
+  {
+    path: '/settings',
+    name: 'Settings',
+    component: Settings
+  },
+  {
+    path: '/info',
+    name: 'Info',
+    component: Info
+  }
+]
+
+const router = createRouter({
+  // 使用 hash 模式而不是 history 模式，因为这更适合桌面应用
+  history: createWebHashHistory(),
+  routes
+})
+
+export default router 
