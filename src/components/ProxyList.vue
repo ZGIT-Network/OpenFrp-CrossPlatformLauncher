@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, h } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -10,13 +10,14 @@ const message = useMessage()
 const notification = useNotification()
 const tunnels = ref<any[]>([])
 const loading = ref(false)
+const loadingTunnels = ref<Set<string>>(new Set())
 
 // 从localStorage获取用户Token
 const getUserToken = () => {
   return localStorage.getItem('userToken') || ''
 }
 
-// 获取隧道列表
+// 获取隧道列表并检查状态
 const fetchProxyList = async () => {
   const token = getUserToken()
   if (!token) {
@@ -34,18 +35,20 @@ const fetchProxyList = async () => {
     })
 
     if (response.data.success) {
-      // 将数据扁平化处理并按id排序
-      tunnels.value = response.data.data.flatMap((group: any) => 
+      tunnels.value = response.data.data.flatMap((group: any) =>
         group.proxies.map((proxy: any) => ({
           ...proxy,
           node: group.node,
-          status: 'stopped' // 默认状态
+          status: 'stopped' // 默认状态为停止
         }))
       )
-      // 按id排序
       tunnels.value.sort((a, b) => a.id - b.id)
+
       // 加载保存的状态
       loadTunnelStates()
+
+      // 立即检查所有隧道的实际运行状态
+      await Promise.all(tunnels.value.map(tunnel => checkTunnelStatus(tunnel)))
     } else {
       message.error('获取隧道列表失败')
     }
@@ -75,13 +78,13 @@ const requestNotificationPermission = async () => {
 const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
     /start.*success/i,          // 匹配 "start xxx success"
-    /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
+    /启动*成功/,               // 匹配 "xxx启动xxx成功xxx"
     /login.*success/i,          // 匹配 "login xxx success"
     /tunnel.*established/i,     // 匹配 "tunnel xxx established"
     /connection.*established/i,  // 匹配 "connection xxx established"
     /connected.*success/i       // 匹配 "connected xxx success"
   ]
-  
+
   return successPatterns.some(pattern => pattern.test(log))
 }
 
@@ -103,44 +106,102 @@ const checkAllTunnelsStatus = () => {
   tunnels.value.forEach(tunnel => checkTunnelStatus(tunnel))
 }
 
+// 添加复制函数
+const copyToClipboard = async (text: string) => {
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success('已复制到剪贴板')
+  } catch (err) {
+    message.error('复制失败')
+    console.error('复制失败:', err)
+  }
+}
+
 const toggleTunnel = async (tunnel: any) => {
   const token = getUserToken()
   try {
-    if (tunnel.status === 'running') {
+    loadingTunnels.value.add(tunnel.id.toString())
+
+    // 先检查实际状态
+    const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
+
+    if (isRunning) {
+      // 如果实际在运行，则停止
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'stop',
+          tunnelId: tunnel.id.toString(),
+          tunnelName: tunnel.name
+        }
+      })
+
       await invoke('stop_frpc_instance', { id: tunnel.id.toString() })
       tunnel.status = 'stopped'
     } else {
-      // 检查是否已在运行
-      const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
-      if (isRunning) {
-        message.warning('该隧道已在运行中')
-        tunnel.status = 'running'
-        return
-      }
+      // 如果实际未运行，则启动
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'start',
+          tunnelId: tunnel.id.toString(),
+          tunnelName: tunnel.name
+        }
+      })
 
       let lastLog = ''
-      const unlistenLog = await listen(`frpc-log-${tunnel.id}`, (event: any) => {
+      await listen(`frpc-log-${tunnel.id}`, (event: any) => {
         const logMessage = event.payload.message
-        console.log('收到日志:', logMessage) // 调试用
         lastLog = logMessage
-        console.log(unlistenLog)
-        
+        console.log(lastLog)
+
         if (isSuccessLog(logMessage)) {
-          message.success('隧道启动成功')
-          notification.success({
-            title: '隧道启动成功',
-            content: `隧道 ${tunnel.name} (ID: ${tunnel.id}) 已成功启动\n${lastLog}`,
-            duration: 5000
-          })
-          
-          requestNotificationPermission().then(granted => {
-            if (granted) {
-              sendNotification({
-                title: '隧道启动成功',
-                body: `隧道 ${tunnel.name} (ID: ${tunnel.id}) 已成功启动\n${lastLog}`
-              })
+          invoke('emit_event', {
+            event: 'tunnel-event',
+            payload: {
+              type: 'success',
+              tunnelId: tunnel.id.toString(),
+              tunnelName: tunnel.name
             }
           })
+
+          // 修改成功通知的内容和按钮
+          notification.success({
+            title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
+            description: `连接地址: ${tunnel.remote}`,
+            content: () => h('div', [            
+              h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
+              
+                h(NButton, {
+                  type: 'success',
+                  text: true,
+                  onClick: () => copyToClipboard(tunnel.remote)
+                }, '复制连接地址')
+              
+            ]),
+            duration: 5000
+          })
+
+
+          async function handleNotification() {
+            // 你有发送通知的权限吗？
+            let permissionGranted = await isPermissionGranted();
+
+            // 如果没有，我们需要请求它
+            if (!permissionGranted) {
+              const permission = await requestPermission();
+              permissionGranted = permission === 'granted';
+            }
+
+            // 一旦获得许可，我们就可以发送通知
+            if (permissionGranted) {
+              sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` });
+            }
+          }
+
+          handleNotification();
+
+          // message.success('隧道启动成功')
         }
       })
 
@@ -153,8 +214,20 @@ const toggleTunnel = async (tunnel: any) => {
     }
     saveTunnelStates()
   } catch (e) {
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'error',
+        tunnelId: tunnel.id.toString(),
+        tunnelName: tunnel.name
+      }
+    })
+
     message.error(`操作失败: ${e}`)
+    // 操作失败后立即检查实际状态
     await checkTunnelStatus(tunnel)
+  } finally {
+    loadingTunnels.value.delete(tunnel.id.toString())
   }
 }
 
@@ -193,10 +266,16 @@ const getTypeColor = (type: string) => {
 onMounted(async () => {
   await requestNotificationPermission()
   await fetchProxyList()
-  // 定期检查隧道状态
-  setInterval(checkAllTunnelsStatus, 5000)
-  // 定期刷新隧道列表
-  setInterval(fetchProxyList, 30000)
+
+  // 设置定期检查隧道状态的定时器
+  const statusCheckInterval = setInterval(checkAllTunnelsStatus, 5000)
+  const listRefreshInterval = setInterval(fetchProxyList, 30000)
+
+  // 组件卸载时清理定时器
+  onUnmounted(() => {
+    clearInterval(statusCheckInterval)
+    clearInterval(listRefreshInterval)
+  })
 })
 </script>
 
@@ -212,36 +291,33 @@ onMounted(async () => {
     <n-skeleton v-if="loading" height="3"></n-skeleton>
     <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
       <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
-        <n-card :title="tunnel.name" :bordered="false" size="small" style="flex: 1; height: 100%;">
+        <n-card :title="'隧道 #'+tunnel.id+' '+tunnel.name" :bordered="false" size="small" style="flex: 1; height: 100%;">
           <template #header-extra>
             <n-tag :type="getTypeColor(tunnel.type)">
               {{ tunnel.type.toUpperCase() }}
             </n-tag>
           </template>
           <n-space vertical size="small">
-            <n-space justify="space-between">
-              <n-text depth="3">ID</n-text>
-              <n-text># {{ tunnel.id }}</n-text>
-            </n-space>
-            <n-space justify="space-between">
-              <n-text depth="3">远程地址</n-text>
-              <n-text>{{ tunnel.remote }}</n-text>
-            </n-space>
-            <n-space justify="space-between">
-              <n-text depth="3">本地地址</n-text>
-              <n-text>{{ tunnel.local }}</n-text>
-            </n-space>
-            <n-space justify="space-between">
+            <n-space>
               <n-text depth="3">节点</n-text>
               <n-text>{{ tunnel.node }}</n-text>
             </n-space>
+            
+            <n-space >
+              <n-text depth="3">本地地址</n-text>
+              <n-text>{{ tunnel.local }}</n-text>
+            </n-space>
+            <n-space >
+              <n-text depth="3">远程地址</n-text>
+              <n-text>{{ tunnel.remote }}</n-text>
+            </n-space>
+           
             <n-space justify="end">
               <n-tooltip trigger="hover">
                 <template #trigger>
-                  <n-switch
-                    :value="tunnel.status === 'running'"
-                    @update:value="() => toggleTunnel(tunnel)"
-                  />
+                  <n-switch :value="tunnel.status === 'running'" @update:value="() => toggleTunnel(tunnel)"
+                    :loading="loadingTunnels.has(tunnel.id.toString())"
+                    :disabled="loadingTunnels.has(tunnel.id.toString())" />
                 </template>
                 控制隧道启动/停止
               </n-tooltip>
@@ -257,6 +333,7 @@ onMounted(async () => {
 .n-card {
   transition: all 0.3s;
 }
+
 .n-card:hover {
   box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 }

@@ -10,7 +10,7 @@ import { NCard, NAlert, NSpace, NCollapse, NCollapseItem, NList, NListItem, NThi
                 <tbody>
                   <tr>
                     <td>OpenFrp Cross Platform Launcher</td>
-                    <td>v0.1.0</td>
+                    <td>v0.1</td>
                   </tr>
                 </tbody>
               </n-table>

@@ -7,6 +7,10 @@
       "https://*.openfrp.net"
     ]
   },
+  "systemTray": {
+    "iconPath": "icons/32x32.png",
+    "iconAsTemplate": true
+  },
   "windows": [
     "main"
   ],
@@ -18,11 +22,28 @@
   "allowlist": {
     "notification": {
       "all": true
+    },
+    "dialog": {
+      "all": true
+    },
+    "window": {
+      "all": true,
+      "close": true,
+      "listen": true
     }
   },
   "permissions": [
     "core:default",
     "opener:default",
+    "notification:allow-notify",
+    "notification:allow-check-permissions",
+    "notification:allow-is-permission-granted",
+    "notification:allow-request-permission",
+    "notification:allow-permission-state",
+    "core:app:default",
+    "core:window:allow-close",
+    "core:window:allow-hide",
+    "process:default",
     "notification:default"
   ]
 }

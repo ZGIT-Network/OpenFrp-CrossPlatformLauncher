@@ -1,84 +1,123 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { useMessage, useDialog, NButton, NCard, NLog, NSpace } from 'naive-ui'
+import { useMessage, NButton, NCard, NLog, NSpace } from 'naive-ui'
+import type { LogInst } from 'naive-ui'
+import hljs from 'highlight.js'
 
 const message = useMessage()
-const dialog = useDialog()
 const logs = ref('')
+const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
 
 // 存储所有监听器的清理函数
 const cleanupFunctions = ref<(() => void)[]>([])
 
 // 从 localStorage 加载日志
 const loadLogs = () => {
-  const savedLogs = localStorage.getItem('frpcLogs')
-  if (savedLogs) {
-    logs.value = savedLogs
-  }
+  logs.value = localStorage.getItem('frpcLogs') || ''
+  logInst.value?.scrollTo({ position: 'bottom', silent: true },)
 }
 
-// 保存日志到 localStorage
-watch(logs, (newValue) => {
-  localStorage.setItem('frpcLogs', newValue)
-})
+// 添加系统日志的辅助函数
+const appendSystemLog = (message: string) => {
+  const timestamp = new Date().toLocaleTimeString()
+  logs.value += `[系统] [${timestamp}] ${message}\n`
+  localStorage.setItem('frpcLogs', logs.value)
+}
+
+// 添加隧道日志的辅助函数
+const appendTunnelLog = (tunnelId: string, message: string) => {
+  const timestamp = new Date().toLocaleTimeString()
+  logs.value += `[隧道 ${tunnelId}] [${timestamp}] ${message}\n`
+  localStorage.setItem('frpcLogs', logs.value)
+}
+
+// 添加普通日志的辅助函数
+const appendLog = (message: string) => {
+  const timestamp = new Date().toLocaleTimeString()
+  logs.value += `[系统] [${timestamp}] ${message}\n`
+  localStorage.setItem('frpcLogs', logs.value)
+}
+
 
 onMounted(async () => {
   // 加载已保存的日志
   loadLogs()
+  
+  // 确保日志滚动到最底部
+  if (logInst.value) {
+    logInst.value.scrollTo({ position: 'bottom' })
+    
+  }
 
   try {
     // 监听全局日志
     const globalLogUnlisten = await listen('log', (event: any) => {
-      logs.value += event.payload.message + '\n'
+      appendLog(event.payload.message)
     })
     cleanupFunctions.value.push(globalLogUnlisten)
 
-    // 监听各个实例的日志
+    // 监听隧道事件
+    const tunnelEventUnlisten = await listen('tunnel-event', (event: any) => {
+      const { type, tunnelId, tunnelName } = event.payload
+      switch (type) {
+        case 'start':
+          appendSystemLog(`开始启动隧道 ${tunnelName} (ID: ${tunnelId})`)
+          break
+        case 'stop':
+          appendSystemLog(`停止隧道 ${tunnelName} (ID: ${tunnelId})`)
+          break
+        case 'success':
+          appendSystemLog(`隧道 ${tunnelName} (ID: ${tunnelId}) 启动成功`)
+          break
+        case 'error':
+          appendSystemLog(`隧道 ${tunnelName} (ID: ${tunnelId}) 发生错误`)
+          break
+      }
+    })
+    cleanupFunctions.value.push(tunnelEventUnlisten)
+
+    // 立即为所有可能的隧道ID设置监听器
     const savedStates = localStorage.getItem('tunnelStates')
     if (savedStates) {
       const states = JSON.parse(savedStates)
       for (const id of Object.keys(states)) {
-        if (states[id] === 'running') {
-          const instanceLogUnlisten = await listen(`frpc-log-${id}`, (event: any) => {
-            logs.value += `[隧道 ${id}] ${event.payload.message}\n`
-          })
-          cleanupFunctions.value.push(instanceLogUnlisten)
-        }
+        const instanceLogUnlisten = await listen(`frpc-log-${id}`, (event: any) => {
+          appendTunnelLog(id, event.payload.message)
+        })
+        cleanupFunctions.value.push(instanceLogUnlisten)
       }
     }
-
-    // 监听下载提示
-    const downloadUnlisten = await listen('need_download', async () => {
-      dialog.warning({
-        title: '提示',
-        content: '未检测到 frpc，是否立即下载？',
-        positiveText: '下载',
-        negativeText: '取消',
-        onPositiveClick: () => {
-          // 处理下载逻辑
-        }
-      })
-    })
-    cleanupFunctions.value.push(downloadUnlisten)
-
   } catch (error) {
     console.error('设置日志监听器时出错:', error)
+    appendSystemLog(`设置日志监听器失败: ${error}`)
     message.error('设置日志监听器失败')
   }
+
+  // 每秒更新一次日志显示
+  const updateInterval = setInterval(loadLogs, 1000)
+
+  // 监听 logs 的变化并滚动到底部
+  watch(logs, () => {
+    if (logInst.value) {
+      logInst.value.scrollTo({ position: 'bottom' })   
+     }
+  })
+
+  onUnmounted(() => {
+    // 清理所有监听器
+    cleanupFunctions.value.forEach(cleanup => {
+      try {
+        cleanup()
+      } catch (error) {
+        console.error('清理监听器时出错:', error)
+      }
+    })
+    cleanupFunctions.value = []
+    clearInterval(updateInterval)
+  })
 })
 
-onUnmounted(() => {
-  // 清理所有监听器
-  cleanupFunctions.value.forEach(cleanup => {
-    try {
-      cleanup()
-    } catch (error) {
-      console.error('清理监听器时出错:', error)
-    }
-  })
-  cleanupFunctions.value = []
-})
 
 // 清除日志
 const clearLogs = () => {
@@ -91,9 +130,13 @@ const MAX_LOG_LENGTH = 50000 // 最大日志长度
 watch(logs, (newValue) => {
   if (newValue.length > MAX_LOG_LENGTH) {
     // 保留后半部分的日志
-    logs.value = newValue.slice(-MAX_LOG_LENGTH / 2)
+    const truncatedLogs = newValue.slice(-MAX_LOG_LENGTH / 2)
+    logs.value = truncatedLogs
+    localStorage.setItem('frpcLogs', truncatedLogs)
   }
 })
+logInst.value?.scrollTo({ position: 'bottom' })
+
 </script>
 
 <template>
@@ -108,14 +151,11 @@ watch(logs, (newValue) => {
         :rows="20"
         :log="logs"
         :loading="false"
+        :hljs="hljs"
+        ref="logInst"
+        language="naive-log"
         trim
       />
     </n-card>
   </n-space>
 </template>
-
-<style scoped>
-.n-card {
-  margin-bottom: 16px;
-}
-</style>

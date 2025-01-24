@@ -1,8 +1,77 @@
 <script lang="ts" setup>
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { useDialog, NText, useNotification } from 'naive-ui';
+import { onMounted, h, onUnmounted } from 'vue';
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+import { RouterLink } from 'vue-router';
 
+
+const dialog = useDialog()
+const notification = useNotification()
 import './style.less';
 
+let unlistenNeedDownload: any = null
 
+
+
+onMounted(async () => {
+
+  unlistenNeedDownload = await listen('need_download', async () => {
+    const notificationInstance = notification.warning({
+      title: '提示',
+      description: '未检测到 frpc，是否前往设置页面下载？\n您必须下载 frpc 才能继续使用本程序。',
+      content: () => h(RouterLink, {
+            to: { path: '/settings' },
+            // 点击链接时销毁通知并执行跳转
+            onClick: () => {
+                notificationInstance.destroy();      // 销毁通知
+                // 执行跳转
+               
+            }
+        }, '前往下载')
+    })
+  })
+
+  
+  invoke('check_and_download')
+    
+
+
+  const appWindow = getCurrentWindow();
+
+  appWindow.onCloseRequested(async () => {
+    dialog.warning({
+      title: '二次确认',
+      content: '确认退出程序？',
+      positiveText: '最小化到托盘',
+      negativeText: '彻底退出',
+      closeOnEsc: true,
+      maskClosable: true,
+      showIcon: true,
+      closable: true,
+      onPositiveClick: async () => {
+        await appWindow.hide();
+      },
+      onNegativeClick: async () => {
+        try {
+          // 先结束所有隧道
+          await invoke('kill_all_processes');
+          // 然后退出程序
+          await invoke('exit_app');
+        } catch (e) {
+          console.error(e);
+        }
+      }
+    })
+  });
+})
+
+onUnmounted(() => {
+    if (unlistenNeedDownload) {
+        unlistenNeedDownload()
+    }
+})
 </script>
 
 <template>
@@ -36,13 +105,13 @@ import './style.less';
     </div>
     <div class="header-right">
       <n-text>
-         v0.1 (Tech_Test)
+        v0.1 (Tech_Test)
       </n-text>
     </div>
   </div>
 
-  
-  
+
+
 </template>
 <style scoped>
 .header {
@@ -117,5 +186,4 @@ import './style.less';
 .header-avatar {
   padding: 15px 18px 10px 0;
 }
-
 </style>

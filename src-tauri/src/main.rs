@@ -10,23 +10,31 @@ use std::fs;
 use std::fs::File;
 use std::io::Cursor;
 use std::io::Write;
-use std::io::{BufRead, BufReader};
-use std::path::Path;
+// use std::io::{BufRead, BufReader};
+//use std::path::Path;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tar::Archive;
-use tauri::{command, Emitter, Manager, Runtime, State};
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
+use tauri::{command, Emitter, Runtime, State};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{TrayIcon, TrayIconBuilder};
+use tauri::Manager;
+// use std::sync::atomic;
+// use std::sync::Arc;
+// use tauri::PhysicalPosition;
+// use tauri::WindowEvent;
 
-// 管理多个 frpc 进程
-pub struct FrpcProcesses(Mutex<HashMap<String, Child>>);
+// 定义进程组结构
+#[derive(Default)]
+struct FrpcProcesses(Mutex<HashMap<String, ProcessInfo>>);
 
-impl Default for FrpcProcesses {
-    fn default() -> Self {
-        Self(Mutex::new(HashMap::new()))
-    }
+struct ProcessInfo {
+    child: Child,
+    #[cfg(target_os = "windows")]
+    group_id: u32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -59,17 +67,39 @@ struct Config {
     frpc_filename: String, // 添加文件名字段
 }
 
-// 获取应用数据目录
-fn get_app_dir() -> Result<std::path::PathBuf, String> {
-    let home = dirs::home_dir().ok_or("无法获取主目录")?;
-    let app_dir = home.join(".ofl-lite");
-    std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
-    Ok(app_dir)
+// 添加全局静态变量来存储程序目录
+static APP_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn init_app_directory(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let app_local_data_dir = app.path().app_local_data_dir()
+        .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
+    
+    // 确保目录存在
+    fs::create_dir_all(&app_local_data_dir)?;
+    
+    // 创建子目录
+    let frpc_dir = app_local_data_dir.join("frpc");
+    let config_dir = app_local_data_dir.join("config");
+    fs::create_dir_all(&frpc_dir)?;
+    fs::create_dir_all(&config_dir)?;
+    
+    // 保存目录路径
+    *APP_DIR.lock().unwrap() = Some(app_local_data_dir.clone());
+    
+    Ok(app_local_data_dir)
+}
+
+// 获取程序目录的辅助函数
+fn get_app_dir() -> PathBuf {
+    APP_DIR.lock()
+        .unwrap()
+        .clone()
+        .expect("应用程序目录未初始化")
 }
 
 // 获取配置文件路径
 fn get_config_path() -> Result<PathBuf, String> {
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     Ok(app_dir.join("config.json"))
 }
 
@@ -137,7 +167,7 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
 
     // 检查版本
     let mut config = load_config()?;
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     let target_path = app_dir.join(&target_filename);
 
     // 先检查文件是否存在
@@ -174,7 +204,7 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
         .map_err(|e| e.to_string())?;
     }
 
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     let target_path = app_dir.join(&target_filename);
 
     // 如果文件已存在，先删除
@@ -340,32 +370,32 @@ async fn start_frpc_instance<R: Runtime>(
     token: String,
     tunnel_id: String,
 ) -> Result<String, String> {
-    // 检查进程是否已经在运行
     if let Ok(map) = processes.0.lock() {
         if map.contains_key(&id) {
             return Err("该隧道已经在运行中".to_string());
         }
     }
 
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     let config = load_config()?;
     let frpc_path = app_dir.join(&config.frpc_filename);
-    
+
     if !frpc_path.exists() {
         return Err("frpc 程序不存在，请先下载".to_string());
     }
 
     let mut cmd = Command::new(frpc_path);
-    cmd.args(&["-u", &token, "-p", &tunnel_id])
-       .stdout(Stdio::piped())
-       .stderr(Stdio::piped());
 
-    // Windows 特定：隐藏命令行窗口
     #[cfg(target_os = "windows")]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     }
+
+    cmd.args(&["-u", &token, "-p", &tunnel_id])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
 
@@ -373,15 +403,13 @@ async fn start_frpc_instance<R: Runtime>(
     if let Some(stdout) = child.stdout.take() {
         let event_name = format!("frpc-log-{}", id);
         let app_handle = app.clone();
-        
+
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    let _ = app_handle.emit(&event_name, LogPayload { 
-                        message: line 
-                    });
+                    let _ = app_handle.emit(&event_name, LogPayload { message: line });
                 }
             }
         });
@@ -391,23 +419,34 @@ async fn start_frpc_instance<R: Runtime>(
     if let Some(stderr) = child.stderr.take() {
         let event_name = format!("frpc-log-{}", id);
         let app_handle = app.clone();
-        
+
         std::thread::spawn(move || {
             use std::io::{BufRead, BufReader};
             let reader = BufReader::new(stderr);
             for line in reader.lines() {
                 if let Ok(line) = line {
-                    let _ = app_handle.emit(&event_name, LogPayload { 
-                        message: format!("错误: {}", line)
-                    });
+                    let _ = app_handle.emit(
+                        &event_name,
+                        LogPayload {
+                            message: format!("错误: {}", line),
+                        },
+                    );
                 }
             }
         });
     }
 
-    // 存储进程
+    // 存储进程信息
     if let Ok(mut map) = processes.0.lock() {
-        map.insert(id.clone(), child);
+        #[cfg(target_os = "windows")]
+        {
+            let group_id = child.id();
+            map.insert(id.clone(), ProcessInfo { child, group_id });
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            map.insert(id.clone(), ProcessInfo { child });
+        }
     }
 
     Ok("启动成功".to_string())
@@ -420,19 +459,17 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut child) = map.remove(&id) {
+        if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
-                use std::process::Command;
-                // 在 Windows 上，使用 taskkill 来确保子进程也被终止
                 let _ = Command::new("taskkill")
                     .args(&["/F", "/T", "/PID"])
-                    .arg(child.id().to_string())
+                    .arg(process_info.group_id.to_string())
                     .output();
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let _ = child.kill();
+                let _ = process_info.child.kill();
             }
             return Ok(());
         }
@@ -449,7 +486,7 @@ async fn get_frpc_version() -> Result<String, String> {
 // 添加检查 frpc 的函数
 #[command]
 async fn check_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     let config = load_config()?;
 
     if config.frpc_filename.is_empty() {
@@ -470,7 +507,7 @@ async fn check_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String
 // 修改版本获取命令
 #[command]
 async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
-    let app_dir = get_app_dir()?;
+    let app_dir = get_app_dir();
     let mut config = load_config()?;
 
     let frpc_path = app_dir.join(&config.frpc_filename);
@@ -528,15 +565,15 @@ async fn check_frpc_status(
     id: String,
 ) -> Result<bool, String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut child) = map.remove(&id) {
-            match child.try_wait() {
+        if let Some(mut process_info) = map.remove(&id) {
+            match process_info.child.try_wait() {
                 Ok(Some(_)) => {
                     // 进程已结束
                     return Ok(false);
                 }
                 Ok(None) => {
                     // 进程仍在运行，放回map
-                    map.insert(id, child);
+                    map.insert(id, process_info);
                     return Ok(true);
                 }
                 Err(_) => return Ok(false),
@@ -546,9 +583,173 @@ async fn check_frpc_status(
     Ok(false)
 }
 
+#[command]
+async fn kill_all_processes() -> Result<(), String> {
+    let os = std::env::consts::OS;
+    let os_name = match os {
+        "windows" => "windows",
+        "linux" => "linux",
+        "macos" => "darwin",
+        _ => return Err("不支持的操作系统".to_string()),
+    };
+
+    let arch_name = match std::env::consts::ARCH {
+        "x86" => "386",
+        "x86_64" => "amd64",
+        "arm" => "arm",
+        "aarch64" => "arm64",
+        _ => return Err("不支持的系统架构".to_string()),
+    };
+
+    // 构建最终的文件名
+    let target_filename = if os == "windows" {
+        format!("frpc_{}_{}.exe", os_name, arch_name)
+    } else {
+        format!("frpc_{}_{}", os_name, arch_name)
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        // Windows 下使用 taskkill 命令终止所有包含 frpc 的进程
+        
+        Command::new("taskkill")
+            .args(["/F", "/IM", &target_filename])
+            .output()
+            .map_err(|e| format!("终止进程失败: {}", e))?;
+    }
+
+    #[cfg(target_family = "unix")]
+    {
+        // Unix 系统（Linux/macOS）下使用 pkill 命令，-f 参数可以匹配完整的命令行
+        Command::new("pkill")
+            .args(["-f", &target_filename])
+            .output()
+            .map_err(|e| format!("终止进程失败: {}", e))?;
+    }
+
+    Ok(())
+}
+
+#[command]
+async fn emit_event<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    event: String,
+    payload: serde_json::Value,
+) -> Result<(), String> {
+    app.emit(&event, payload)
+        .map_err(|e| format!("发送事件失败: {}", e))
+}
+
+#[command]
+async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle.exit(0);
+    Ok(())
+}
+
+// 在 main 函数前添加这个函数
+fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Error>> {
+    let menu = Menu::with_items(app, &[
+        &MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?,
+        &MenuItem::with_id(app, "separator", "", false, None::<&str>)?,
+        &MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>)?,
+        &MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>)?
+    ])?;
+
+    let tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .icon(app.default_window_icon().unwrap().clone())
+        .on_menu_event(move |app, event| {
+            match event.id.as_ref() {
+                "show" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+                "quit_with_frpc" => {
+                    if let Some(processes) = app.try_state::<FrpcProcesses>() {
+                        if let Ok(mut map) = processes.0.lock() {
+                            for (_, process_info) in map.drain() {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    let _ = Command::new("taskkill")
+                                        .args(&["/F", "/T", "/PID"])
+                                        .arg(process_info.group_id.to_string())
+                                        .output();
+                                }
+                                #[cfg(not(target_os = "windows"))]
+                                {
+                                    let _ = process_info.child.kill();
+                                }
+                            }
+                        }
+                    }
+                    app.exit(0);
+                }
+                "quit_keep_frpc" => {
+                    app.exit(0);
+                }
+                _ => {}
+            }
+        })
+        .on_tray_icon_event(move |tray, event| {
+            match event {
+                tauri::tray::TrayIconEvent::Click { 
+                    button,
+                    button_state,
+                    ..
+                } => {
+                    if button == tauri::tray::MouseButton::Left && 
+                       button_state == tauri::tray::MouseButtonState::Up {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        })
+        .build(app)?;
+
+    Ok(tray)
+}
+
+// 修改 main 函数
 fn main() {
+    let instance = single_instance::SingleInstance::new("openfrp-cpl").unwrap();
+    
+    if !instance.is_single() {
+        eprintln!("程序已经在运行中！");
+        std::process::exit(1);
+    }
+
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
+        .setup(|app| {
+            let app_dir = init_app_directory(app)?;
+            println!("应用程序目录: {:?}", app_dir);
+            
+            let _tray = create_tray_menu(app)?;
+            
+            // 检查 frpc 是否存在
+            let frpc_path = app_dir.join("frpc").join(if cfg!(target_os = "windows") {
+                "frpc.exe"
+            } else {
+                "frpc"
+            });
+
+            if !frpc_path.exists() {
+                // 如果 frpc 不存在，发送事件通知前端
+                let window = app.get_webview_window("main").unwrap();
+                // 发送一个带有路由信息的事件
+                window.emit("redirect_to_settings", "need_download").unwrap();
+            }
+            
+            Ok(())
+        })
         .manage(FrpcProcesses::default())
         .invoke_handler(tauri::generate_handler![
             download_frpc,
@@ -557,7 +758,10 @@ fn main() {
             get_frpc_version,
             get_frpc_cli_version,
             check_and_download,
-            check_frpc_status
+            check_frpc_status,
+            kill_all_processes,
+            emit_event,
+            exit_app
         ])
         .run(tauri::generate_context!())
         .expect("运行时出错");

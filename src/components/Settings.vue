@@ -1,53 +1,49 @@
 <template>
-    
     <n-card title="设置">
         <n-space vertical>
-            <n-alert title="技术测试版本警告" type="warning">当前版本属于非常早期的技术测试版本，可能存在很多问题，请谨慎使用。<br/>若遇到问题，请及时联系我们。</n-alert>
+            <n-alert title="技术测试版本警告" type="warning">
+                当前版本属于非常早期的技术测试版本，可能存在很多问题，请谨慎使用。<br />
+                若遇到问题，请及时联系我们。
+            </n-alert>
 
             <n-form>
                 <n-space>
-                <n-form-item label="用户密钥">
-                    <n-space>
-                        <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp用户密钥" />
-                        <n-button type="primary" @click="saveSettings">
-                            保存设置
-                        </n-button>
-                    </n-space>
-                </n-form-item>
-                <n-form-item label="主题">
-                    <n-switch v-model:value="isDark">
-                        <template #checked>
-                            深色
-                        </template>
-                        <template #unchecked>
-                            浅色
-                        </template>
-                    </n-switch>
-                </n-form-item>
-            </n-space>
+                    <n-form-item label="用户密钥">
+                        <n-space>
+                            <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp用户密钥" />
+                            <n-button type="primary" @click="saveSettings">保存设置</n-button>
+                        </n-space>
+                    </n-form-item>
+                    <n-form-item label="主题">
+                        <n-switch v-model:value="isDark">
+                            <template #checked>深色</template>
+                            <template #unchecked>浅色</template>
+                        </n-switch>
+                    </n-form-item>
+                </n-space>
             </n-form>
-            <n-collapse>
-                <n-collapse-item title="Frpc 管理 (首次使用请在这里下载 Frpc)" name="1">
+
+            <n-collapse v-model:expanded-names="activeNames" accordion>
+                <n-collapse-item title="Frpc 管理" name="1">
+                    <template #header-extra>
+                        首次使用请在这里下载 Frpc
+                    </template>
                     <n-space>
-                        <n-button @click="downloadFrpc" :loading="downloading">
-                            下载 Frpc
-                        </n-button>
-                        <n-button @click="getFrpcVersion">
-                            获取本地Frpc版本
-                        </n-button>
-                        <!-- <n-button @click="startFrpc" :disabled="isRunning">
-                            启动
-                        </n-button>
-                        <n-button @click="stopFrpc" :disabled="!isRunning">
-                            停止
-                        </n-button> -->
+                        <n-button @click="downloadFrpc" :loading="downloading">检查更新或者下载 Frpc</n-button>
+                        <n-button @click="getFrpcVersion">获取本地Frpc版本</n-button>
+                        <n-popconfirm @positive-click="killAllProcesses">
+                            <template #trigger>
+                                <n-button  type="warning">终止所有 frpc 进程</n-button>
+                            </template>
+                            确认终止所有 frpc 进程？
+                        </n-popconfirm>
+                        
                     </n-space>
                     <br />
                     <n-card title="运行日志" class="mt-4">
-                        <n-log :rows="5" :log="logs" :loading="false" trim />
+                        <n-log :rows="10" :log="logs" :loading="false" trim />
                     </n-card>
                 </n-collapse-item>
-
             </n-collapse>
         </n-space>
     </n-card>
@@ -55,20 +51,21 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { 
-  useMessage, 
-  useDialog, 
-  NButton, 
-  NCard, 
-  NLog, 
-  NSpace, 
-  NAlert,
-  NForm,
-  NFormItem,
-  NSwitch,
-  NInput,
-  NCollapse,
-  NCollapseItem
+import {
+    useMessage,
+    useDialog,
+    NButton,
+    NCard,
+    NLog,
+    NSpace,
+    NAlert,
+    NForm,
+    NFormItem,
+    NSwitch,
+    NInput,
+    NCollapse,
+    NCollapseItem,
+    NPopconfirm
 } from 'naive-ui'
 import { inject, watch } from 'vue'
 
@@ -93,6 +90,9 @@ const downloading = ref(false)
 const logs = ref('')
 const userToken = ref('')
 const tempToken = ref('') // 临时存储用户输入的token
+
+const activeNames = ref<string[]>([]); // 控制展开的项
+
 
 // 组件加载时从localStorage读取Token
 onMounted(() => {
@@ -131,7 +131,9 @@ onMounted(async () => {
             positiveText: '下载',
             negativeText: '取消',
             onPositiveClick: () => {
-                downloadFrpc()
+
+                downloadFrpc();
+
             }
         })
     })
@@ -154,6 +156,7 @@ onUnmounted(() => {
 })
 
 const downloadFrpc = async () => {
+    activeNames.value = ['1'];  // 设置展开的项为 Frpc 管理
     downloading.value = true
     try {
         await invoke('download_frpc')
@@ -171,6 +174,15 @@ const getFrpcVersion = async () => {
         message.success('版本获取成功')
     } catch (e) {
         message.error(`获取版本失败: ${e}`)
+    }
+}
+
+const killAllProcesses = async () => {
+    try {
+        await invoke('kill_all_processes')
+        message.success('已终止所有 frpc 进程')
+    } catch (e) {
+        message.error(`操作失败: ${e}`)
     }
 }
 </script>
