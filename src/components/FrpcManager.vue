@@ -46,7 +46,6 @@ const appendSystemLog = (message: string) => {
 
 // 修改隧道日志的辅助函数
 const appendTunnelLog = (tunnelId: string, message: string) => {
-  const timestamp = new Date().toLocaleTimeString()
   // 处理 ANSI 转义序列
   const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'))
   logs.value += `[<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`

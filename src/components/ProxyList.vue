@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, h } from 'vue'
+import { ref, onMounted, onUnmounted,h } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
@@ -133,6 +133,8 @@ const toggleTunnel = async (tunnel: any) => {
 
       await invoke('stop_frpc_instance', { id: tunnel.id.toString() })
       tunnel.status = 'stopped'
+      // 添加停止通知
+      message.info(`隧道 #${tunnel.id} ${tunnel.name} 已停止运行`)
     } else {
       // 如果实际未运行，则启动
       await invoke('emit_event', {
@@ -144,18 +146,29 @@ const toggleTunnel = async (tunnel: any) => {
         }
       })
 
-      // 移除成功日志检测，只依赖事件系统
-      await listen(`frpc-log-${tunnel.id}`, (event: any) => {
-        const logMessage = event.payload.message
-        console.log(logMessage)
-      })
-
       await invoke('start_frpc_instance', {
         id: tunnel.id.toString(),
         token: token,
         tunnelId: tunnel.id.toString()
       })
       tunnel.status = 'running'
+      // 添加启动通知
+       notification.success({
+            title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
+            description: `连接地址: ${tunnel.remote}`,
+            content: () => h('div', [            
+              h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
+              
+                h(NButton, {
+                  type: 'success',
+                  text: true,
+                  onClick: () => copyToClipboard(tunnel.remote)
+                }, '复制连接地址')
+              
+            ]),
+            duration: 5000
+          })
+      await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` });
     }
     saveTunnelStates()
   } catch (e) {
