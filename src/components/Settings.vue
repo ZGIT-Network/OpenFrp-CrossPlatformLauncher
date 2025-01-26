@@ -19,12 +19,12 @@ import {
     NScrollbar
 } from 'naive-ui'
 import { inject, watch } from 'vue'
-import { useRouter, onBeforeRouteLeave } from 'vue-router'
+import { onBeforeRouteLeave } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
+// import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 
-const router = useRouter()
+// const router = useRouter()
 const { colorScheme, toggleColorScheme } = inject('darkMode') as any
 const isDark = ref(colorScheme.value === 'dark')
 
@@ -47,10 +47,11 @@ const currentVersion = ref('获取中...')
 const checking = ref(false)
 const autoStart = ref(false)
 
+
 const activeNames = ref<string[]>(['2']); // 控制展开的项
 
 // 添加路由守卫
-onBeforeRouteLeave((to, from, next) => {
+onBeforeRouteLeave((_to, _from, next) => {
     if (downloading.value) {
         dialog.warning({
             title: '提示',
@@ -160,7 +161,7 @@ const killAllProcesses = async () => {
 // 获取当前版本
 const getCurrentVersion = async () => {
     try {
-        const version = await invoke('get_cpl_version')
+        const version = await invoke('get_cpl_version') as string
         currentVersion.value = version
     } catch (e) {
         currentVersion.value = '获取失败'
@@ -172,10 +173,8 @@ const getCurrentVersion = async () => {
 const checkUpdate = async () => {
     checking.value = true
     try {
-        const update = await invoke('check_update')
-        // console.log('更新信息:', update)
-
-        if (update) {  // update 是 CplUpdate 对象
+        const update = await invoke('check_update') as CplUpdate
+        if (update) {
             dialog.info({
                 title: update.title,
                 content: () =>
@@ -228,6 +227,12 @@ const toggleAutoStart = async () => {
         // 发生错误时也重新检查状态
         await checkAutoStart()
     }
+}
+
+interface CplUpdate {
+    title: string;
+    latest: string;
+    msg: string;
 }
 </script>
 

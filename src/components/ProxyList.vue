@@ -2,7 +2,7 @@
 import { ref, onMounted, onUnmounted,h } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
-import { listen } from '@tauri-apps/api/event'
+// import { listen } from '@tauri-apps/api/event'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
 
@@ -80,6 +80,7 @@ const isSuccessLog = (log: string): boolean => {
     /start.*success/i,          // 匹配 "start xxx success"
     /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
   ]
+  console.log(isSuccessLog)
 
   return successPatterns.some(pattern => pattern.test(log))
 }

@@ -15,6 +15,12 @@ let unlistenNeedDownload: any = null
 
 const currentVersion = ref('v0.1')
 
+interface CplUpdate {
+    title: string;
+    latest: string;
+    msg: string;
+}
+
 const getCurrentVersion = async () => {
   try {
     const version = await invoke('get_cpl_version')
@@ -29,7 +35,7 @@ getCurrentVersion()
 onMounted(async () => {
   // 检查更新
   try {
-    const update = await invoke('check_update')
+    const update = await invoke('check_update') as CplUpdate
     if (update) {
       const notificationInstance = notification.info({
         title: update.title,
