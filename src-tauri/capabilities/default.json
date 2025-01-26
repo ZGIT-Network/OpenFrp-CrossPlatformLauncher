@@ -44,6 +44,11 @@
     "core:window:allow-close",
     "core:window:allow-hide",
     "process:default",
-    "notification:default"
+    "notification:default",
+    "dialog:default",
+    "autostart:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

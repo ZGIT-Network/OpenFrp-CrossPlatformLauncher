@@ -12,20 +12,27 @@ use std::io::Cursor;
 use std::io::Write;
 // use std::io::{BufRead, BufReader};
 //use std::path::Path;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tar::Archive;
-use tauri::{command, Emitter, Runtime, State};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
+use tauri::{command, Emitter, Runtime, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 // use std::sync::atomic;
 // use std::sync::Arc;
 // use tauri::PhysicalPosition;
 // use tauri::WindowEvent;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+// 添加 Windows 特定的常量
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // 定义进程组结构
 #[derive(Default)]
@@ -60,38 +67,62 @@ struct LogPayload {
     message: String,
 }
 
-// 修改配置文件结构体
+// 配置文件版本号，用于管理配置文件升级
+const CONFIG_VERSION: u32 = 1;
+
 #[derive(Serialize, Deserialize, Default)]
 struct Config {
-    frpc_version: String,
-    frpc_filename: String, // 添加文件名字段
+    config_version: Option<u32>, // 配置文件版本号
+    frpc_version: Option<String>,
+    frpc_filename: Option<String>,
+    cpl_version: Option<String>,
+}
+
+impl Config {
+    fn upgrade(mut self) -> Self {
+        let current_version = self.config_version.unwrap_or(0);
+
+        if current_version < 1 {
+            // 版本0到版本1的升级
+            self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
+            self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.3".to_string()));
+        }
+
+        // 更新版本号
+        self.config_version = Some(CONFIG_VERSION);
+        self
+    }
 }
 
 // 添加全局静态变量来存储程序目录
 static APP_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 fn init_app_directory(app: &tauri::App) -> Result<PathBuf, Box<dyn std::error::Error>> {
-    let app_local_data_dir = app.path().app_local_data_dir()
+    let app_local_data_dir = app
+        .path()
+        .app_local_data_dir()
         .map_err(|e| Box::<dyn std::error::Error>::from(e.to_string()))?;
-    
+
     // 确保目录存在
     fs::create_dir_all(&app_local_data_dir)?;
-    
+
     // 创建子目录
     let frpc_dir = app_local_data_dir.join("frpc");
     let config_dir = app_local_data_dir.join("config");
     fs::create_dir_all(&frpc_dir)?;
     fs::create_dir_all(&config_dir)?;
-    
+
     // 保存目录路径
     *APP_DIR.lock().unwrap() = Some(app_local_data_dir.clone());
-    
+
     Ok(app_local_data_dir)
 }
 
 // 获取程序目录的辅助函数
 fn get_app_dir() -> PathBuf {
-    APP_DIR.lock()
+    APP_DIR
+        .lock()
         .unwrap()
         .clone()
         .expect("应用程序目录未初始化")
@@ -106,21 +137,49 @@ fn get_config_path() -> Result<PathBuf, String> {
 // 加载配置
 fn load_config() -> Result<Config, String> {
     let config_path = get_config_path()?;
-    if config_path.exists() {
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+
+    let mut config = if config_path.exists() {
+        // 读取现有配置
         let content =
-            fs::read_to_string(&config_path).map_err(|e| format!("无法读取配置文件: {}", e))?;
-        serde_json::from_str(&content).map_err(|e| format!("无法解析配置文件: {}", e))
+            fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+
+        serde_json::from_str::<Config>(&content)
+            .map_err(|e| format!("解析配置文件失败: {}", e))?
+            .upgrade() // 升级配置文件结构
     } else {
-        Ok(Config::default())
-    }
+        // 创建新配置
+        Config {
+            config_version: Some(CONFIG_VERSION),
+            cpl_version: Some(current_version.clone()),
+            ..Default::default()
+        }
+    };
+
+    // 强制更新版本号为当前编译版本
+    config.cpl_version = Some(current_version);
+    
+    // 保存可能升级后的配置
+    save_config(&config)?;
+
+    Ok(config)
 }
 
 // 保存配置
 fn save_config(config: &Config) -> Result<(), String> {
     let config_path = get_config_path()?;
+
+    // 确保配置目录存在
+    if let Some(parent) = config_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
+    }
+
     let content =
-        serde_json::to_string_pretty(config).map_err(|e| format!("无法序列化配置: {}", e))?;
-    fs::write(&config_path, content).map_err(|e| format!("无法写入配置文件: {}", e))
+        serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
+
+    fs::write(&config_path, content).map_err(|e| format!("保存配置文件失败: {}", e))?;
+
+    Ok(())
 }
 
 #[command]
@@ -177,22 +236,24 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
             LogPayload {
                 message: format!(
                     "当前版本: {}, 最新版本: {}",
-                    config.frpc_version.as_str(),
+                    config.frpc_version.as_ref().map_or("", |s| s.as_str()),
                     latest_version
                 ),
             },
         )
         .map_err(|e| e.to_string())?;
 
-        if config.frpc_version == latest_version {
-            app.emit(
-                "log",
-                LogPayload {
-                    message: "当前已是最新版本，无需更新".into(),
-                },
-            )
-            .map_err(|e| e.to_string())?;
-            return Ok("当前已是最新版本".to_string());
+        if let Some(current_version) = config.frpc_version.as_ref() {
+            if current_version.as_str() == latest_version {
+                app.emit(
+                    "log",
+                    LogPayload {
+                        message: "已经是最新版本".into(),
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+                return Ok("已经是最新版本".to_string());
+            }
         }
     } else {
         app.emit(
@@ -336,9 +397,9 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
         }
     }
 
-    // 更新配置，使用处理后的版本号
-    config.frpc_filename = target_filename;
-    config.frpc_version = latest_version;
+    // 更新配置
+    config.frpc_version = Some(latest_version);
+    config.frpc_filename = Some(target_filename);
     save_config(&config)?;
 
     #[cfg(unix)]
@@ -378,7 +439,7 @@ async fn start_frpc_instance<R: Runtime>(
 
     let app_dir = get_app_dir();
     let config = load_config()?;
-    let frpc_path = app_dir.join(&config.frpc_filename);
+    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
 
     if !frpc_path.exists() {
         return Err("frpc 程序不存在，请先下载".to_string());
@@ -388,9 +449,7 @@ async fn start_frpc_instance<R: Runtime>(
 
     #[cfg(target_os = "windows")]
     {
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
-        cmd.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
     cmd.args(&["-u", &token, "-p", &tunnel_id])
@@ -462,8 +521,9 @@ async fn stop_frpc_instance<R: Runtime>(
         if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
-                let _ = Command::new("taskkill")
-                    .args(&["/F", "/T", "/PID"])
+                let mut cmd = Command::new("taskkill");
+                cmd.creation_flags(CREATE_NO_WINDOW);
+                cmd.args(&["/F", "/T", "/PID"])
                     .arg(process_info.group_id.to_string())
                     .output();
             }
@@ -480,7 +540,11 @@ async fn stop_frpc_instance<R: Runtime>(
 #[command]
 async fn get_frpc_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.frpc_version)
+    Ok(config
+        .frpc_version
+        .as_ref()
+        .unwrap_or(&String::new())
+        .clone())
 }
 
 // 添加检查 frpc 的函数
@@ -489,7 +553,7 @@ async fn check_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String
     let app_dir = get_app_dir();
     let config = load_config()?;
 
-    if config.frpc_filename.is_empty() {
+    if config.frpc_filename.is_none() {
         app.emit(
             "log",
             LogPayload {
@@ -500,7 +564,7 @@ async fn check_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String
         return Ok(false);
     }
 
-    let frpc_path = app_dir.join(&config.frpc_filename);
+    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
     Ok(frpc_path.exists())
 }
 
@@ -510,13 +574,19 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
     let app_dir = get_app_dir();
     let mut config = load_config()?;
 
-    let frpc_path = app_dir.join(&config.frpc_filename);
+    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
 
     if !frpc_path.exists() {
         return Err("frpc 可执行文件不存在".to_string());
     }
 
-    let child = Command::new(&frpc_path)
+    let mut cmd = Command::new(&frpc_path);
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    
+    let child = cmd
         .arg("-v")
         .stdout(Stdio::piped())
         .spawn()
@@ -529,7 +599,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
 
         if let Some(version) = version_str.lines().next() {
             if let Some(ver) = version.split_whitespace().last() {
-                config.frpc_version = ver.to_string();
+                config.frpc_version = Some(ver.to_string());
                 save_config(&config)?;
             }
         }
@@ -610,17 +680,15 @@ async fn kill_all_processes() -> Result<(), String> {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows 下使用 taskkill 命令终止所有包含 frpc 的进程
-        
-        Command::new("taskkill")
-            .args(["/F", "/IM", &target_filename])
+        let mut cmd = Command::new("taskkill");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        cmd.args(["/F", "/IM", &target_filename])
             .output()
             .map_err(|e| format!("终止进程失败: {}", e))?;
     }
 
     #[cfg(target_family = "unix")]
     {
-        // Unix 系统（Linux/macOS）下使用 pkill 命令，-f 参数可以匹配完整的命令行
         Command::new("pkill")
             .args(["-f", &target_filename])
             .output()
@@ -648,92 +716,320 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
 
 // 在 main 函数前添加这个函数
 fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Error>> {
-    let menu = Menu::with_items(app, &[
-        &MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?,
-        &MenuItem::with_id(app, "separator", "", false, None::<&str>)?,
-        &MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>)?,
-        &MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>)?
-    ])?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?,
+            &MenuItem::with_id(app, "separator", "", false, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "quit_with_frpc",
+                "结束所有隧道并退出",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                app,
+                "quit_keep_frpc",
+                "保持隧道运行并退出",
+                true,
+                None::<&str>,
+            )?,
+        ],
+    )?;
 
     let tray = TrayIconBuilder::new()
         .menu(&menu)
         .icon(app.default_window_icon().unwrap().clone())
-        .on_menu_event(move |app, event| {
-            match event.id.as_ref() {
-                "show" => {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+            }
+            "quit_with_frpc" => {
+                if let Some(processes) = app.try_state::<FrpcProcesses>() {
+                    if let Ok(mut map) = processes.0.lock() {
+                        for (_, process_info) in map.drain() {
+                            #[cfg(target_os = "windows")]
+                            {
+                                let _ = Command::new("taskkill")
+                                    .args(&["/F", "/T", "/PID"])
+                                    .arg(process_info.group_id.to_string())
+                                    .output();
+                            }
+                            #[cfg(not(target_os = "windows"))]
+                            {
+                                let _ = process_info.child.kill();
+                            }
+                        }
+                    }
+                }
+                app.exit(0);
+            }
+            "quit_keep_frpc" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(move |tray, event| match event {
+            tauri::tray::TrayIconEvent::Click {
+                button,
+                button_state,
+                ..
+            } => {
+                if button == tauri::tray::MouseButton::Left
+                    && button_state == tauri::tray::MouseButtonState::Up
+                {
+                    let app = tray.app_handle();
                     if let Some(window) = app.get_webview_window("main") {
                         let _ = window.show();
                         let _ = window.set_focus();
                     }
                 }
-                "quit_with_frpc" => {
-                    if let Some(processes) = app.try_state::<FrpcProcesses>() {
-                        if let Ok(mut map) = processes.0.lock() {
-                            for (_, process_info) in map.drain() {
-                                #[cfg(target_os = "windows")]
-                                {
-                                    let _ = Command::new("taskkill")
-                                        .args(&["/F", "/T", "/PID"])
-                                        .arg(process_info.group_id.to_string())
-                                        .output();
-                                }
-                                #[cfg(not(target_os = "windows"))]
-                                {
-                                    let _ = process_info.child.kill();
-                                }
-                            }
-                        }
-                    }
-                    app.exit(0);
-                }
-                "quit_keep_frpc" => {
-                    app.exit(0);
-                }
-                _ => {}
             }
-        })
-        .on_tray_icon_event(move |tray, event| {
-            match event {
-                tauri::tray::TrayIconEvent::Click { 
-                    button,
-                    button_state,
-                    ..
-                } => {
-                    if button == tauri::tray::MouseButton::Left && 
-                       button_state == tauri::tray::MouseButtonState::Up {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                }
-                _ => {}
-            }
+            _ => {}
         })
         .build(app)?;
 
     Ok(tray)
 }
 
+// 添加更新相关的结构体
+#[derive(Serialize, Deserialize, Debug)]
+struct CplUpdate {
+    latest: String,
+    url: String,
+    msg: String,
+    title: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct UpdateData {
+    latest: String,
+    latest_full: String,
+    latest_ver: String,
+    latest_msg: String,
+    common_details: String,
+    #[serde(rename = "cplUpdate")]
+    cpl_update: CplUpdate,
+    // 其他字段可以暂时忽略
+    #[serde(skip)]
+    launcherUpdate: Option<serde_json::Value>,
+    #[serde(skip)]
+    source: Option<serde_json::Value>,
+    #[serde(skip)]
+    soft: Option<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ApiResponse {
+    data: UpdateData,
+    flag: bool,
+    msg: String,
+}
+
+#[command]
+async fn check_update() -> Result<Option<CplUpdate>, String> {
+    let response = reqwest::get("https://api.openfrp.net/commonQuery/get?key=software")
+        .await
+        .map_err(|e| format!("请求失败: {}", e))?;
+
+    let text = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    // println!("API Response: {}", text); // 输出完整响应
+
+    if text.is_empty() {
+        return Err("API 响应为空".to_string());
+    }
+
+    let api_response: ApiResponse =
+        serde_json::from_str(&text).map_err(|e| format!("解析错误: {} \n原始数据: {}", e, text))?;
+
+    let current_version = env!("CARGO_PKG_VERSION");
+    println!("Current version: {}, Latest version: {}", current_version, api_response.data.cpl_update.latest);
+
+    if current_version != api_response.data.cpl_update.latest {
+        Ok(Some(api_response.data.cpl_update))
+    } else {
+        Ok(None)
+    }
+}
+
+// 添加下载和更新命令
+#[command]
+async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
+    let response = reqwest::get("https://api.openfrp.net/commonQuery/get?key=software")
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let api_response: ApiResponse = response.json().await.map_err(|e| e.to_string())?;
+    let download_url = format!(
+        "{}ofcpl_{}_{}.zip",
+        api_response.data.cpl_update.url,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    );
+
+    // 下载更新包
+    let response = reqwest::get(&download_url)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+
+    // 获取临时目录
+    let app_dir = get_app_dir();
+    let temp_dir = app_dir.join("temp");
+    fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+
+    // 保存并解压更新包
+    let temp_zip = temp_dir.join("update.zip");
+    fs::write(&temp_zip, &bytes).map_err(|e| e.to_string())?;
+
+    // 解压更新包
+    let file = File::open(&temp_zip).map_err(|e| e.to_string())?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
+    archive.extract(&temp_dir).map_err(|e| e.to_string())?;
+
+    // 准备重启命令
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let new_exe = temp_dir.join("openfrp-crossplatformlauncher");
+
+    // 创建更新脚本
+    #[cfg(target_os = "windows")]
+    {
+        let bat_content = format!(
+            "@echo off\n\
+             timeout /t 1 /nobreak >nul\n\
+             copy /y \"{}\" \"{}\"\n\
+             start \"\" \"{}\"\n",
+            new_exe.display(),
+            current_exe.display(),
+            current_exe.display()
+        );
+        let bat_path = temp_dir.join("update.bat");
+        fs::write(&bat_path, bat_content).map_err(|e| e.to_string())?;
+
+        Command::new("cmd")
+            .args(["/C", "start", "/b", bat_path.to_str().unwrap()])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    #[cfg(target_family = "unix")]
+    {
+        let sh_content = format!(
+            "#!/bin/sh\n\
+             sleep 1\n\
+             cp -f \"{}\" \"{}\"\n\
+             \"{}\" &",
+            new_exe.display(),
+            current_exe.display(),
+            current_exe.display()
+        );
+        let sh_path = temp_dir.join("update.sh");
+        fs::write(&sh_path, &sh_content).map_err(|e| e.to_string())?;
+        fs::set_permissions(
+            &sh_path,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .map_err(|e| e.to_string())?;
+
+        Command::new("sh")
+            .arg(sh_path)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+
+    // 更新配置文件中的版本号
+    let mut config = load_config()?;
+    config.cpl_version = Some(api_response.data.cpl_update.latest);
+    save_config(&config)?;
+
+    // 退出当前进程
+    app.exit(0);
+
+    Ok(())
+}
+
+#[command]
+fn get_cpl_version() -> Result<String, String> {
+    let config = load_config()?;
+    Ok(config.cpl_version.unwrap_or_else(|| "0.1.0".to_string()))
+}
+
+#[tauri::command]
+async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
+    let autostart_manager = app.autolaunch();
+    let current_state = autostart_manager.is_enabled().map_err(|e| format!("检查状态失败: {}", e))?;
+    
+    // 只在状态不一致时进行切换
+    if current_state != enable {
+        match enable {
+            true => autostart_manager.enable().map_err(|e| format!("启用失败: {}", e))?,
+            false => autostart_manager.disable().map_err(|e| format!("禁用失败: {}", e))?,
+        }
+        
+        // 验证操作是否成功
+        let new_state = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
+        if new_state != enable {
+            return Err(format!("操作未生效: 目标状态 {} 但当前状态为 {}", enable, new_state));
+        }
+    }
+    
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
+    let autostart_manager = app.autolaunch();
+    // 多次检查以确保状态稳定
+    let state1 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    let state2 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
+    
+    if state1 != state2 {
+        return Err("状态不稳定，请重试".to_string());
+    }
+    
+    Ok(state1)
+}
+
 // 修改 main 函数
 fn main() {
     let instance = single_instance::SingleInstance::new("openfrp-cpl").unwrap();
-    
+
     if !instance.is_single() {
-        eprintln!("程序已经在运行中！");
+        let builder = tauri::Builder::default().plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![])
+        ));
+        let app = builder.build(tauri::generate_context!()).unwrap();
+
+        app.dialog()
+            .message("OpenFrp 跨平台启动器已经在运行中。\n请检查系统托盘或任务栏。")
+            .title("程序已在运行")
+            .kind(MessageDialogKind::Warning)
+            .blocking_show();
+
         std::process::exit(1);
     }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![])
+        ))
         .setup(|app| {
             let app_dir = init_app_directory(app)?;
             println!("应用程序目录: {:?}", app_dir);
-            
+
             let _tray = create_tray_menu(app)?;
-            
+
             // 检查 frpc 是否存在
             let frpc_path = app_dir.join("frpc").join(if cfg!(target_os = "windows") {
                 "frpc.exe"
@@ -745,23 +1041,30 @@ fn main() {
                 // 如果 frpc 不存在，发送事件通知前端
                 let window = app.get_webview_window("main").unwrap();
                 // 发送一个带有路由信息的事件
-                window.emit("redirect_to_settings", "need_download").unwrap();
+                window
+                    .emit("redirect_to_settings", "need_download")
+                    .unwrap();
             }
-            
+
             Ok(())
         })
         .manage(FrpcProcesses::default())
         .invoke_handler(tauri::generate_handler![
+            check_update,
+            download_and_update,
+            check_frpc_status,
             download_frpc,
             start_frpc_instance,
             stop_frpc_instance,
             get_frpc_version,
             get_frpc_cli_version,
             check_and_download,
-            check_frpc_status,
             kill_all_processes,
             emit_event,
-            exit_app
+            exit_app,
+            get_cpl_version,
+            toggle_auto_start,
+            check_auto_start,
         ])
         .run(tauri::generate_context!())
         .expect("运行时出错");

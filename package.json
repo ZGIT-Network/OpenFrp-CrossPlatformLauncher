@@ -5,7 +5,7 @@
   "author": "云默安 @ ZGIT Network",
   "homepage": "https://www.openfrp.net",
   "private": true,
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,10 +15,13 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
+    "@tauri-apps/plugin-autostart": "^2.2.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
     "@tauri-apps/plugin-notification": "^2.2.1",
     "@tauri-apps/plugin-opener": "^2",
     "@tauri-apps/plugin-process": "^2.2.0",
     "@vicons/ionicons5": "^0.13.0",
+    "ansi-to-html": "^0.7.2",
     "axios": "^1.7.9",
     "highlight.js": "^11.11.1",
     "less": "^4.2.2",

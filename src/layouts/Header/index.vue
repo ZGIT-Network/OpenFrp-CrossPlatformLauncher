@@ -1,42 +1,87 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, NText, useNotification } from 'naive-ui';
-import { onMounted, h, onUnmounted } from 'vue';
+import { useDialog, NText, useNotification, NButton } from 'naive-ui';
+import { onMounted, h, onUnmounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RouterLink } from 'vue-router';
-
+import { RouterLink, useRouter } from 'vue-router';
 
 const dialog = useDialog()
 const notification = useNotification()
+const router = useRouter()
 import './style.less';
 
 let unlistenNeedDownload: any = null
 
+const currentVersion = ref('v0.1')
 
+const getCurrentVersion = async () => {
+  try {
+    const version = await invoke('get_cpl_version')
+    currentVersion.value = version as string
+  } catch (e) {
+    currentVersion.value = '获取失败'
+    console.error('获取版本失败:', e)
+  }
+}
+getCurrentVersion()
 
 onMounted(async () => {
+  // 检查更新
+  try {
+    const update = await invoke('check_update')
+    if (update) {
+      const notificationInstance = notification.info({
+        title: update.title,
+        description: `发现新版本 v${update.latest}\n${update.msg}`,
+        content: () => h('div', [
+          h(NButton, {
+            text: true, type: 'primary',
+            onClick: async () => {
+              notificationInstance.destroy()
+              try {
+                await invoke('download_and_update')
+              } catch (e) {
+                notification.error({
+                  title: '更新失败',
+                  content: String(e)
+                })
+              }
+            },
+            style: 'margin-top: 8px;'
+          }, '立即更新')
+        ]),
+        duration: 10000
+      })
+    }
+  } catch (e) {
+    console.error('检查更新失败:', e)
+  }
 
   unlistenNeedDownload = await listen('need_download', async () => {
     const notificationInstance = notification.warning({
       title: '提示',
       description: '未检测到 frpc，是否前往设置页面下载？\n您必须下载 frpc 才能继续使用本程序。',
+      duration: 8000,
       content: () => h(RouterLink, {
-            to: { path: '/settings' },
-            // 点击链接时销毁通知并执行跳转
-            onClick: () => {
-                notificationInstance.destroy();      // 销毁通知
-                // 执行跳转
-               
-            }
-        }, '前往下载')
+        to: { path: '/settings' },
+        onClick: () => {
+          notificationInstance.destroy();
+          router.push('/settings');
+        }
+      }, '前往下载')
     })
   })
 
-  
-  invoke('check_and_download')
-    
-
+  // 检查 frpc
+  try {
+    const handle = await getCurrentWindow()
+    if (await invoke('check_frpc_status', { id: "0" })) {
+      await invoke('download_frpc', { app: handle })
+    }
+  } catch (e) {
+    console.error('检查 frpc 失败:', e)
+  }
 
   const appWindow = getCurrentWindow();
 
@@ -65,12 +110,30 @@ onMounted(async () => {
       }
     })
   });
+
+  // 监听 frpc 更新成功事件
+  await listen('frpc-update', (event) => {
+    notification.success({
+      title: 'Frpc 更新',
+      content: event.payload as string,
+      duration: 5000
+    })
+  })
+
+  // 监听 frpc 更新失败事件
+  await listen('frpc-update-error', (event) => {
+    notification.error({
+      title: 'Frpc 更新失败',
+      content: event.payload as string,
+      duration: 5000
+    })
+  })
 })
 
 onUnmounted(() => {
-    if (unlistenNeedDownload) {
-        unlistenNeedDownload()
-    }
+  if (unlistenNeedDownload) {
+    unlistenNeedDownload()
+  }
 })
 </script>
 
@@ -105,7 +168,7 @@ onUnmounted(() => {
     </div>
     <div class="header-right">
       <n-text>
-        v0.1 (Tech_Test)
+        v{{ currentVersion }} (Tech_Test)
       </n-text>
     </div>
   </div>

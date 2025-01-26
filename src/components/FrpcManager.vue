@@ -4,6 +4,25 @@ import { listen } from '@tauri-apps/api/event'
 import { useMessage, NButton, NCard, NLog, NSpace } from 'naive-ui'
 import type { LogInst } from 'naive-ui'
 import hljs from 'highlight.js'
+import ansiToHtml from 'ansi-to-html'
+
+const convert = new ansiToHtml({
+  fg: '#FFF',
+  bg: '#000',
+  newline: true,
+  escapeXML: false,
+  stream: false,
+  colors: {
+    '1': '#FB9FB1',  // 红色
+    '2': '#ACC267',  // 绿色
+    '3': '#DDB26F',  // 黄色
+    '4': '#6FC2EF',  // 蓝色
+    '5': '#E1A3EE',  // 紫色
+    '6': '#12CFC0',  // 青色
+    '7': '#D0D0D0',  // 白色
+    '9': '#F6363F'   // 亮红色
+  }
+})
 
 const message = useMessage()
 const logs = ref('')
@@ -25,10 +44,12 @@ const appendSystemLog = (message: string) => {
   localStorage.setItem('frpcLogs', logs.value)
 }
 
-// 添加隧道日志的辅助函数
+// 修改隧道日志的辅助函数
 const appendTunnelLog = (tunnelId: string, message: string) => {
   const timestamp = new Date().toLocaleTimeString()
-  logs.value += `[隧道 ${tunnelId}] [${timestamp}] ${message}\n`
+  // 处理 ANSI 转义序列
+  const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'))
+  logs.value += `[<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`
   localStorage.setItem('frpcLogs', logs.value)
 }
 
@@ -62,16 +83,16 @@ onMounted(async () => {
       const { type, tunnelId, tunnelName } = event.payload
       switch (type) {
         case 'start':
-          appendSystemLog(`开始启动隧道 ${tunnelName} (ID: ${tunnelId})`)
+          appendSystemLog(`<span style="color: #2080f0">开始启动隧道 #${tunnelId} ${tunnelName}</span>`)
           break
         case 'stop':
-          appendSystemLog(`停止隧道 ${tunnelName} (ID: ${tunnelId})`)
+          appendSystemLog(`<span style="color: #2080f0">停止隧道 #${tunnelId} ${tunnelName}</span>  `)
           break
         case 'success':
-          appendSystemLog(`隧道 ${tunnelName} (ID: ${tunnelId}) 启动成功`)
+          appendSystemLog(`<span style="color: #2080f0">隧道 #${tunnelId} ${tunnelName} 启动成功</span>`)
           break
         case 'error':
-          appendSystemLog(`隧道 ${tunnelName} (ID: ${tunnelId}) 发生错误`)
+          appendSystemLog(`<span style="color: #2080f0">隧道 #${tunnelId} ${tunnelName} 发生错误</span>`)
           break
       }
     })

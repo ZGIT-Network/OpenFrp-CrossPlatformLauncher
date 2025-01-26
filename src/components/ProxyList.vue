@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, h } from 'vue'
-import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton } from 'naive-ui'
+import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
@@ -78,11 +78,7 @@ const requestNotificationPermission = async () => {
 const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
     /start.*success/i,          // 匹配 "start xxx success"
-    /启动*成功/,               // 匹配 "xxx启动xxx成功xxx"
-    /login.*success/i,          // 匹配 "login xxx success"
-    /tunnel.*established/i,     // 匹配 "tunnel xxx established"
-    /connection.*established/i,  // 匹配 "connection xxx established"
-    /connected.*success/i       // 匹配 "connected xxx success"
+    /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
   ]
 
   return successPatterns.some(pattern => pattern.test(log))
@@ -122,7 +118,6 @@ const toggleTunnel = async (tunnel: any) => {
   try {
     loadingTunnels.value.add(tunnel.id.toString())
 
-    // 先检查实际状态
     const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
 
     if (isRunning) {
@@ -149,60 +144,10 @@ const toggleTunnel = async (tunnel: any) => {
         }
       })
 
-      let lastLog = ''
+      // 移除成功日志检测，只依赖事件系统
       await listen(`frpc-log-${tunnel.id}`, (event: any) => {
         const logMessage = event.payload.message
-        lastLog = logMessage
-        console.log(lastLog)
-
-        if (isSuccessLog(logMessage)) {
-          invoke('emit_event', {
-            event: 'tunnel-event',
-            payload: {
-              type: 'success',
-              tunnelId: tunnel.id.toString(),
-              tunnelName: tunnel.name
-            }
-          })
-
-          // 修改成功通知的内容和按钮
-          notification.success({
-            title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
-            description: `连接地址: ${tunnel.remote}`,
-            content: () => h('div', [            
-              h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
-              
-                h(NButton, {
-                  type: 'success',
-                  text: true,
-                  onClick: () => copyToClipboard(tunnel.remote)
-                }, '复制连接地址')
-              
-            ]),
-            duration: 5000
-          })
-
-
-          async function handleNotification() {
-            // 你有发送通知的权限吗？
-            let permissionGranted = await isPermissionGranted();
-
-            // 如果没有，我们需要请求它
-            if (!permissionGranted) {
-              const permission = await requestPermission();
-              permissionGranted = permission === 'granted';
-            }
-
-            // 一旦获得许可，我们就可以发送通知
-            if (permissionGranted) {
-              sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` });
-            }
-          }
-
-          handleNotification();
-
-          // message.success('隧道启动成功')
-        }
+        console.log(logMessage)
       })
 
       await invoke('start_frpc_instance', {
@@ -280,53 +225,56 @@ onMounted(async () => {
 </script>
 
 <template>
-  <n-space vertical>
-    <n-card>
-      <n-space>
-        <n-button @click="fetchProxyList" :loading="loading">
-          刷新隧道列表
-        </n-button>
-      </n-space>
-    </n-card>
-    <n-skeleton v-if="loading" height="3"></n-skeleton>
-    <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
-      <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
-        <n-card :title="'隧道 #'+tunnel.id+' '+tunnel.name" :bordered="false" size="small" style="flex: 1; height: 100%;">
-          <template #header-extra>
-            <n-tag :type="getTypeColor(tunnel.type)">
-              {{ tunnel.type.toUpperCase() }}
-            </n-tag>
-          </template>
-          <n-space vertical size="small">
-            <n-space>
-              <n-text depth="3">节点</n-text>
-              <n-text>{{ tunnel.node }}</n-text>
+  <n-scrollbar>
+    <n-space vertical>
+      <n-card>
+        <n-space>
+          <n-button @click="fetchProxyList" :loading="loading">
+            刷新隧道列表
+          </n-button>
+        </n-space>
+      </n-card>
+      <n-skeleton v-if="loading" height="3"></n-skeleton>
+      <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
+        <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
+          <n-card :title="'隧道 #' + tunnel.id + ' ' + tunnel.name" :bordered="false" size="small"
+            style="flex: 1; height: 100%;">
+            <template #header-extra>
+              <n-tag :type="getTypeColor(tunnel.type)">
+                {{ tunnel.type.toUpperCase() }}
+              </n-tag>
+            </template>
+            <n-space vertical size="small">
+              <n-space>
+                <n-text depth="3">节点</n-text>
+                <n-text>{{ tunnel.node }}</n-text>
+              </n-space>
+
+              <n-space>
+                <n-text depth="3">本地地址</n-text>
+                <n-text>{{ tunnel.local }}</n-text>
+              </n-space>
+              <n-space>
+                <n-text depth="3">远程地址</n-text>
+                <n-text>{{ tunnel.remote }}</n-text>
+              </n-space>
+
+              <n-space justify="end">
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-switch :value="tunnel.status === 'running'" @update:value="() => toggleTunnel(tunnel)"
+                      :loading="loadingTunnels.has(tunnel.id.toString())"
+                      :disabled="loadingTunnels.has(tunnel.id.toString())" />
+                  </template>
+                  控制隧道启动/停止
+                </n-tooltip>
+              </n-space>
             </n-space>
-            
-            <n-space >
-              <n-text depth="3">本地地址</n-text>
-              <n-text>{{ tunnel.local }}</n-text>
-            </n-space>
-            <n-space >
-              <n-text depth="3">远程地址</n-text>
-              <n-text>{{ tunnel.remote }}</n-text>
-            </n-space>
-           
-            <n-space justify="end">
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-switch :value="tunnel.status === 'running'" @update:value="() => toggleTunnel(tunnel)"
-                    :loading="loadingTunnels.has(tunnel.id.toString())"
-                    :disabled="loadingTunnels.has(tunnel.id.toString())" />
-                </template>
-                控制隧道启动/停止
-              </n-tooltip>
-            </n-space>
-          </n-space>
-        </n-card>
-      </n-grid-item>
-    </n-grid>
-  </n-space>
+          </n-card>
+        </n-grid-item>
+      </n-grid>
+    </n-space>
+  </n-scrollbar>
 </template>
 
 <style scoped>

@@ -2,12 +2,13 @@
 import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
 import { darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
 import type { MenuOption } from 'naive-ui'
-import {  h } from 'vue'
+import { h } from 'vue'
 import { RouterLink, RouterView } from 'vue-router'
 import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5'
 import { GlobalThemeOverrides } from 'naive-ui';
-import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu,NText } from 'naive-ui'
+import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NText } from 'naive-ui'
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 
 const osThemeRef = useOsTheme();
 const colorScheme = ref<'dark' | 'light'>(osThemeRef.value === 'dark' ? 'dark' : 'light');
@@ -15,6 +16,19 @@ const collapsed = ref(false);
 provide('collapsed', collapsed);
 
 import Header from './layouts/Header/index.vue';
+
+const currentVersion = ref('v0.1')
+
+const getCurrentVersion = async () => {
+  try {
+    const version = await invoke('get_cpl_version')
+    currentVersion.value = version as string
+  } catch (e) {
+    currentVersion.value = '获取失败'
+    console.error('获取版本失败:', e)
+  }
+}
+getCurrentVersion()
 
 // 菜单配置
 
@@ -197,7 +211,7 @@ onMounted(async () => {
       const { type, tunnelId, tunnelName } = event.payload
       const timestamp = new Date().toLocaleTimeString()
       let message = ''
-      
+
       switch (type) {
         case 'start':
           message = `[系统] [${timestamp}] 开始启动隧道 ${tunnelName} (ID: ${tunnelId})`
@@ -212,7 +226,7 @@ onMounted(async () => {
           message = `[系统] [${timestamp}] 隧道 ${tunnelName} (ID: ${tunnelId}) 发生错误`
           break
       }
-      
+
       if (message) {
         const savedLogs = localStorage.getItem('frpcLogs') || ''
         localStorage.setItem('frpcLogs', savedLogs + message + '\n')
@@ -271,7 +285,7 @@ onMounted(() => {
     }
   })
 
-  
+
 })
 
 
@@ -283,7 +297,7 @@ onMounted(() => {
       <n-loading-bar-provider>
         <n-notification-provider>
           <n-message-provider>
-           
+
             <n-layout style="height: 100vh">
               <!-- 这里恢复了 Header 组件 -->
               <n-layout-header bordered style="height: 64px; padding: 0">
@@ -298,7 +312,9 @@ onMounted(() => {
                 </n-layout-sider>
                 <n-layout>
                   <n-layout-content content-style="padding: 24px;">
-                    <n-text style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">OpenFrp Cross Platform Launcher<br/>Tech_Test 技术测试 v0.1.2 预览体验计划</n-text>
+                    <n-text
+                      style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">OpenFrp
+                      Cross Platform Launcher<br />Tech_Test 技术测试 v{{currentVersion}} 预览体验计划</n-text>
                     <router-view></router-view>
                   </n-layout-content>
                 </n-layout>
