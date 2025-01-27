@@ -20,8 +20,9 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
 use tauri::{command, Emitter, Runtime, State};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_deep_link;
 // use std::sync::atomic;
 // use std::sync::Arc;
 // use tauri::PhysicalPosition;
@@ -86,7 +87,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.3".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.4".to_string()));
         }
 
         // 更新版本号
@@ -158,7 +159,7 @@ fn load_config() -> Result<Config, String> {
 
     // 强制更新版本号为当前编译版本
     config.cpl_version = Some(current_version);
-    
+
     // 保存可能升级后的配置
     save_config(&config)?;
 
@@ -585,7 +586,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    
+
     let child = cmd
         .arg("-v")
         .stdout(Stdio::piped())
@@ -836,7 +837,10 @@ async fn check_update() -> Result<Option<CplUpdate>, String> {
         .await
         .map_err(|e| format!("请求失败: {}", e))?;
 
-    let text = response.text().await.map_err(|e| format!("读取响应失败: {}", e))?;
+    let text = response
+        .text()
+        .await
+        .map_err(|e| format!("读取响应失败: {}", e))?;
     // println!("API Response: {}", text); // 输出完整响应
 
     if text.is_empty() {
@@ -847,7 +851,10 @@ async fn check_update() -> Result<Option<CplUpdate>, String> {
         serde_json::from_str(&text).map_err(|e| format!("解析错误: {} \n原始数据: {}", e, text))?;
 
     let current_version = env!("CARGO_PKG_VERSION");
-    println!("Current version: {}, Latest version: {}", current_version, api_response.data.cpl_update.latest);
+    println!(
+        "Current version: {}, Latest version: {}",
+        current_version, api_response.data.cpl_update.latest
+    );
 
     if current_version != api_response.data.cpl_update.latest {
         Ok(Some(api_response.data.cpl_update))
@@ -962,22 +969,31 @@ fn get_cpl_version() -> Result<String, String> {
 #[tauri::command]
 async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
     let autostart_manager = app.autolaunch();
-    let current_state = autostart_manager.is_enabled().map_err(|e| format!("检查状态失败: {}", e))?;
-    
+    let current_state = autostart_manager
+        .is_enabled()
+        .map_err(|e| format!("检查状态失败: {}", e))?;
+
     // 只在状态不一致时进行切换
     if current_state != enable {
         match enable {
-            true => autostart_manager.enable().map_err(|e| format!("启用失败: {}", e))?,
-            false => autostart_manager.disable().map_err(|e| format!("禁用失败: {}", e))?,
+            true => autostart_manager
+                .enable()
+                .map_err(|e| format!("启用失败: {}", e))?,
+            false => autostart_manager
+                .disable()
+                .map_err(|e| format!("禁用失败: {}", e))?,
         }
-        
+
         // 验证操作是否成功
         let new_state = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
         if new_state != enable {
-            return Err(format!("操作未生效: 目标状态 {} 但当前状态为 {}", enable, new_state));
+            return Err(format!(
+                "操作未生效: 目标状态 {} 但当前状态为 {}",
+                enable, new_state
+            ));
         }
     }
-    
+
     Ok(())
 }
 
@@ -988,33 +1004,40 @@ async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
     let state1 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     let state2 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
-    
+
     if state1 != state2 {
         return Err("状态不稳定，请重试".to_string());
     }
-    
+
     Ok(state1)
 }
 
+// 添加状态结构体
+#[derive(Default)]
+struct DeepLinkState(Mutex<Option<String>>);
+
 // 修改 main 函数
 fn main() {
-    let instance = single_instance::SingleInstance::new("openfrp-cpl").unwrap();
+    // let instance = single_instance::SingleInstance::new("openfrp-cpl").unwrap();
 
-    if !instance.is_single() {
-        let builder = tauri::Builder::default().plugin(tauri_plugin_autostart::init(
-            MacosLauncher::LaunchAgent,
-            Some(vec![])
-        ));
-        let app = builder.build(tauri::generate_context!()).unwrap();
+    // if !instance.is_single() {
+    //     // let builder = tauri::Builder::default()
+    //     // .plugin(tauri_plugin_single_instance::init())
+    //     //     .plugin(tauri_plugin_deep_link::init())
+    //     //     .plugin(tauri_plugin_autostart::init(
+    //     //         MacosLauncher::LaunchAgent,
+    //     //         Some(vec![]),
+    //     //     ));
+    //     // let app = builder.build(tauri::generate_context!()).unwrap();
 
-        app.dialog()
-            .message("OpenFrp 跨平台启动器已经在运行中。\n请检查系统托盘或任务栏。")
-            .title("程序已在运行")
-            .kind(MessageDialogKind::Warning)
-            .blocking_show();
+    //     // app.dialog()
+    //     //     .message("OpenFrp 跨平台启动器已经在运行中。请检查系统托盘或任务栏。")
+    //     //     .title("程序已在运行")
+    //     //     .kind(MessageDialogKind::Error)
+    //     //     .blocking_show();
 
-        std::process::exit(1);
-    }
+    //     // std::process::exit(1);
+    // }
 
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
@@ -1022,13 +1045,39 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            Some(vec![])
+            Some(vec![]),
         ))
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            // 当收到第二个实例的启动参数时
+            println!("新实例参数: {:?}", argv);
+            // 发送事件到前端
+            let _ = app.emit("second-instance", argv);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let app_dir = init_app_directory(app)?;
             println!("应用程序目录: {:?}", app_dir);
 
+            #[cfg(any(windows, target_os = "linux"))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                app.deep_link().register("openfrp")?;
+            }
+
             let _tray = create_tray_menu(app)?;
+
+            // 检查是否是自动启动
+            if app
+                .app_handle()
+                .env()
+                .args_os
+                .iter()
+                .any(|arg| arg == "--autostart")
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.eval("window.location.search = '?autostart=true'")?;
+                }
+            }
 
             // 检查 frpc 是否存在
             let frpc_path = app_dir.join("frpc").join(if cfg!(target_os = "windows") {

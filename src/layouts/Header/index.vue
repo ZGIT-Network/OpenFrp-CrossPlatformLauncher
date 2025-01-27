@@ -1,15 +1,20 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, NText, useNotification, NButton } from 'naive-ui';
+import { useDialog, NText, useNotification, NButton,useMessage } from 'naive-ui';
 import { onMounted, h, onUnmounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { RouterLink, useRouter } from 'vue-router';
+import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
+import { useLinkTunnelsStore } from '@/stores/linkTunnels'
+import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
+
 
 const dialog = useDialog()
 const notification = useNotification()
 const router = useRouter()
 import './style.less';
+const message = useMessage()
 
 let unlistenNeedDownload: any = null
 
@@ -31,6 +36,110 @@ const getCurrentVersion = async () => {
   }
 }
 getCurrentVersion()
+
+const requestNotificationPermission = async () => {
+  try {
+    let permissionGranted = await isPermissionGranted()
+    if (!permissionGranted) {
+      const permission = await requestPermission()
+      permissionGranted = permission === 'granted'
+    }
+    return permissionGranted
+  } catch (e) {
+    console.error('获取通知权限失败:', e)
+    return false
+  }
+}
+
+
+
+const linkTunnelsStore = useLinkTunnelsStore()
+const processingLinks = ref(new Set<string>())
+
+const handleDeepLink = async (url: string) => {
+  const urlObj = new URL(url)
+  if (urlObj.protocol !== 'openfrp:') return
+  
+  const params = new URLSearchParams(urlObj.search)
+  const user = params.get('user')
+  const proxyId = params.get('proxy')
+  
+  if (!user || !proxyId) {
+    console.error('链接格式错误')
+    return
+  }
+
+  // 检查是否正在处理
+  if (processingLinks.value.has(proxyId)) {
+    console.log('隧道正在启动中，跳过:', proxyId)
+    return
+  }
+  
+  try {
+    processingLinks.value.add(proxyId)
+    
+    // 发送启动事件到日志系统
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'start',
+        tunnelId: proxyId,
+        tunnelName: `[快速启动]`
+      }
+    })
+
+    await invoke('start_frpc_instance', {
+      id: proxyId,
+      token: user,
+      tunnelId: proxyId,
+      logColors: true,
+      enableLog: true,
+      logUser: user
+    })
+
+    await requestNotificationPermission()
+
+    // notification.success({
+    //         title: `(快速启动) 隧道 #${proxyId} 已尝试启动`,
+    //         content: () => h('div', [            
+    //           h('span', `您可在网页版或日志中查看链接地址与启动状态`),
+              
+              
+    //         ]),
+    //         duration: 5000
+    //       })
+      await sendNotification({ title: `隧道 #${proxyId} 已尝试启动`, body: `您可在网页版或日志中查看链接地址与启动状态` });
+
+
+    linkTunnelsStore.addLinkTunnel(proxyId)
+    message.success('已尝试通过快速启动隧道 #' + proxyId)
+    setTimeout(() => {
+      message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
+    }, 1000);
+    
+
+    
+
+  } catch (e) {
+    // 发送错误事件到日志系统
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'error',
+        tunnelId: proxyId,
+        tunnelName: `[快速启动]`
+      }
+    })
+    
+    message.error(`启动隧道失败: ${e}`)
+  } finally {
+    processingLinks.value.delete(proxyId)
+  }
+}
+
+// 创建事件清理函数的引用
+let cleanupOpenUrl: (() => void) | null = null
+let cleanupSecondInstance: (() => void) | null = null
 
 onMounted(async () => {
   // 检查更新
@@ -134,12 +243,37 @@ onMounted(async () => {
       duration: 5000
     })
   })
+
+  // 检查启动参数
+  const urls = await getCurrent()
+  if (urls && urls.length > 0) {
+    await handleDeepLink(urls[0])
+  }
+
+  // 监听新的链接
+  cleanupOpenUrl = await onOpenUrl((urls) => {
+    if (urls.length > 0) {
+      handleDeepLink(urls[0])
+    }
+  })
+
+  // 监听来自第二个实例的参数
+  cleanupSecondInstance = await listen('second-instance', (event: any) => {
+    const args = event.payload as string[]
+    for (const arg of args) {
+      if (arg.startsWith('openfrp://')) {
+        handleDeepLink(arg)
+      }
+    }
+  })
 })
 
 onUnmounted(() => {
   if (unlistenNeedDownload) {
     unlistenNeedDownload()
   }
+  if (cleanupOpenUrl) cleanupOpenUrl()
+  if (cleanupSecondInstance) cleanupSecondInstance()
 })
 </script>
 
@@ -178,9 +312,6 @@ onUnmounted(() => {
       </n-text>
     </div>
   </div>
-
-
-
 </template>
 <style scoped>
 .header {

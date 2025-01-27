@@ -5,6 +5,7 @@ import { useMessage, NButton, NCard, NLog, NSpace } from 'naive-ui'
 import type { LogInst } from 'naive-ui'
 import hljs from 'highlight.js'
 import ansiToHtml from 'ansi-to-html'
+import { useLinkTunnelsStore } from '../stores/linkTunnels'
 
 const convert = new ansiToHtml({
   fg: '#FFF',
@@ -28,8 +29,8 @@ const message = useMessage()
 const logs = ref('')
 const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
 
-// 存储所有监听器的清理函数
 const cleanupFunctions = ref<(() => void)[]>([])
+const activeListeners = ref(new Map<string, boolean>())
 
 // 从 localStorage 加载日志
 const loadLogs = () => {
@@ -108,6 +109,25 @@ onMounted(async () => {
         cleanupFunctions.value.push(instanceLogUnlisten)
       }
     }
+
+    // 监听外部隧道事件
+    const linkTunnelsStore = useLinkTunnelsStore()
+    
+    // 为外部隧道添加日志监听器
+    watch(() => linkTunnelsStore.linkLaunchedTunnels, async (tunnels) => {
+      for (const tunnelId of tunnels) {
+        // 检查是否已经有这个隧道的监听器
+        const listenerKey = `frpc-log-${tunnelId}`
+        if (!activeListeners.value.has(listenerKey)) {
+          const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
+            appendTunnelLog(tunnelId, event.payload.message)
+          })
+          activeListeners.value.set(listenerKey, true)
+          cleanupFunctions.value.push(instanceLogUnlisten)
+        }
+      }
+    }, { immediate: true })
+
   } catch (error) {
     console.error('设置日志监听器时出错:', error)
     appendSystemLog(`设置日志监听器失败: ${error}`)
@@ -134,6 +154,7 @@ onMounted(async () => {
       }
     })
     cleanupFunctions.value = []
+    activeListeners.value.clear()
     clearInterval(updateInterval)
   })
 })
@@ -168,7 +189,7 @@ logInst.value?.scrollTo({ position: 'bottom' })
         </n-button>
       </template>
       <n-log 
-        :rows="20"
+        :rows="25"
         :log="logs"
         :loading="false"
         :hljs="hljs"

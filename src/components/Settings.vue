@@ -22,6 +22,7 @@ import { inject, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 
 // const router = useRouter()
@@ -46,7 +47,8 @@ const tempToken = ref('') // 临时存储用户输入的token
 const currentVersion = ref('获取中...')
 const checking = ref(false)
 const autoStart = ref(false)
-
+const autoRestoreTunnels = ref(true)  // 默认设为 true
+const deepLinkEnabled = ref(false)
 
 const activeNames = ref<string[]>(['2']); // 控制展开的项
 
@@ -73,8 +75,16 @@ onMounted(() => {
         userToken.value = savedToken
         tempToken.value = savedToken
     }
+    
+    // 设置默认值
+    if (localStorage.getItem('autoRestoreTunnels') === null) {
+        localStorage.setItem('autoRestoreTunnels', 'true')
+    }
+    autoRestoreTunnels.value = localStorage.getItem('autoRestoreTunnels') === 'true'
+    
     getCurrentVersion()
-    checkAutoStart()
+    checkAutoStartSettings()
+    checkDeepLinkStatus()
 })
 
 // 保存设置
@@ -179,8 +189,8 @@ const checkUpdate = async () => {
                 title: update.title,
                 content: () =>
                     h('div', [
-                        `发现新版本 ${update.latest}`,
-                        h('br'), h('br'),
+                        `发现新版本 v${update.latest}`,
+                        h('br'),`当前版本 v${currentVersion.value}`,h('br'), h('br'),
                         '更新日志:',
                         h('br'),
                         ...update.msg.split('\n').map((line, index) => h('div', { key: index }, line))
@@ -206,10 +216,13 @@ const checkUpdate = async () => {
     }
 }
 
-// 检查自启动状态
-const checkAutoStart = async () => {
+// 检查自启动状态和恢复隧道设置
+const checkAutoStartSettings = async () => {
     try {
         autoStart.value = await invoke('check_auto_start')
+        // 从 localStorage 读取恢复隧道设置
+        const savedValue = localStorage.getItem('autoRestoreTunnels')
+        autoRestoreTunnels.value = savedValue === null ? true : savedValue === 'true'
     } catch (e) {
         console.error('检查自启动状态失败:', e)
     }
@@ -220,12 +233,51 @@ const toggleAutoStart = async () => {
     try {
         await invoke('toggle_auto_start', { enable: autoStart.value })
         // 切换后重新检查状态
-        await checkAutoStart()
+        await checkAutoStartSettings()
         message.success(`${autoStart.value ? '启用' : '禁用'}开机自启动成功`)
     } catch (e) {
         message.error(`设置开机自启动失败: ${e}`)
         // 发生错误时也重新检查状态
-        await checkAutoStart()
+        await checkAutoStartSettings()
+    }
+}
+
+// 切换恢复隧道设置
+const toggleAutoRestoreTunnels = (value: boolean) => {
+    autoRestoreTunnels.value = value
+    localStorage.setItem('autoRestoreTunnels', value.toString())
+    message.success(`${value ? '启用' : '禁用'}开机恢复隧道成功`)
+}
+
+// 检查深层链接状态
+const checkDeepLinkStatus = async () => {
+    try {
+        if (navigator.platform.includes('Win') || navigator.platform.includes('Linux')) {
+            deepLinkEnabled.value = await isRegistered('openfrp')
+        }
+    } catch (e) {
+        // 如果还没有注册过，isRegistered 会抛出错误，这是正常的
+        deepLinkEnabled.value = false
+        console.debug('检查深层链接状态:', e)
+    }
+}
+
+// 切换深层链接
+const toggleDeepLink = async (value: boolean) => {
+    try {
+        if (navigator.platform.includes('Win') || navigator.platform.includes('Linux')) {
+            if (value) {
+                await register('openfrp')
+                message.success('启用快速启动功能成功')
+            } else {
+                await unregister('openfrp')
+                message.success('禁用快速启动功能成功')
+            }
+            await checkDeepLinkStatus()
+        }
+    } catch (e) {
+        message.error(`设置快速启动功能失败: ${e}`)
+        await checkDeepLinkStatus()
     }
 }
 
@@ -262,7 +314,7 @@ interface CplUpdate {
                     </n-space>
                 </n-form>
 
-                <n-collapse v-model:expanded-names="activeNames">
+                <n-collapse v-model:expanded-names="activeNames" accordion>
                     <n-collapse-item title="版本信息" name="2">
                         <n-space vertical>
                             <n-text>当前版本：v{{ currentVersion }}</n-text>
@@ -299,6 +351,14 @@ interface CplUpdate {
                             <n-space align="center">
                                 <n-switch v-model:value="autoStart" @update:value="toggleAutoStart" />
                                 <span>开机自启动</span>
+                            </n-space>
+                            <n-space align="center" v-if="autoStart">
+                                <n-switch v-model:value="autoRestoreTunnels" @update:value="toggleAutoRestoreTunnels" />
+                                <span>开机时恢复上次运行的隧道</span>
+                            </n-space>
+                            <n-space align="center">
+                                <n-switch v-model:value="deepLinkEnabled" @update:value="toggleDeepLink" />
+                                <span>允许通过快速启动隧道</span>
                             </n-space>
                         </n-space>
                     </n-collapse-item>

@@ -1,16 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted,h } from 'vue'
+import { ref, onMounted, onUnmounted,h, computed } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
-// import { listen } from '@tauri-apps/api/event'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
+import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 
 const message = useMessage()
 const notification = useNotification()
 const tunnels = ref<any[]>([])
 const loading = ref(false)
 const loadingTunnels = ref<Set<string>>(new Set())
+
+const linkTunnelsStore = useLinkTunnelsStore()
+
+
+
+// 存储外部隧道信息
+interface ExternalTunnel {
+  id: string;
+  status: 'running' | 'stopped';
+}
+
+const externalTunnels = ref<Map<string, ExternalTunnel>>(new Map())
 
 // 从localStorage获取用户Token
 const getUserToken = () => {
@@ -89,9 +101,10 @@ const isSuccessLog = (log: string): boolean => {
 const checkTunnelStatus = async (tunnel: any) => {
   try {
     const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
-    if (isRunning !== (tunnel.status === 'running')) {
-      tunnel.status = isRunning ? 'running' : 'stopped'
-      saveTunnelStates()
+    tunnel.status = isRunning ? 'running' : 'stopped'
+    if (!isRunning) {
+      // 如果隧道已停止，确保移除标签
+      linkTunnelsStore.removeLinkTunnel(tunnel.id.toString())
     }
   } catch (e) {
     console.error('检查隧道状态失败:', e)
@@ -134,8 +147,12 @@ const toggleTunnel = async (tunnel: any) => {
 
       await invoke('stop_frpc_instance', { id: tunnel.id.toString() })
       tunnel.status = 'stopped'
-      // 添加停止通知
+      // 当隧道停止时，移除"通过快速启动"标签
+      linkTunnelsStore.removeLinkTunnel(tunnel.id.toString())
       message.info(`隧道 #${tunnel.id} ${tunnel.name} 已停止运行`)
+      
+      // 立即检查状态
+      await checkTunnelStatus(tunnel)
     } else {
       // 如果实际未运行，则启动
       await invoke('emit_event', {
@@ -222,18 +239,119 @@ const getTypeColor = (type: string) => {
   return colors[type.toLowerCase()] || 'default'
 }
 
+// 在恢复隧道状态前添加延迟
+const restoreTunnelStates = async () => {
+  try {
+    const savedStates = localStorage.getItem('tunnelStates')
+    if (savedStates) {
+      const states = JSON.parse(savedStates)
+      for (const tunnel of tunnels.value) {
+        if (states[tunnel.id] === 'running') {
+          // 添加延迟确保 frpc 完全初始化
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          await toggleTunnel(tunnel)
+        }
+      }
+    }
+  } catch (e) {
+    console.error('恢复隧道状态失败:', e)
+  }
+}
+
+// 获取只在快速启动列表显示的隧道
+const getLinkOnlyTunnels = computed(() => {
+  const result = new Set(linkTunnelsStore.linkLaunchedTunnels)
+  tunnels.value.forEach(tunnel => {
+    if (result.has(tunnel.id.toString())) {
+      result.delete(tunnel.id.toString())
+    }
+  })
+  
+  // 将外部隧道添加到 Map 中
+  result.forEach(tunnelId => {
+    if (!externalTunnels.value.has(tunnelId)) {
+      externalTunnels.value.set(tunnelId, {
+        id: tunnelId,
+        status: 'running'
+      })
+    }
+  })
+  
+  return result
+})
+
+// 停止外部隧道
+const stopExternalTunnel = async (tunnelId: string) => {
+  try {
+    // 发送停止事件到日志系统
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'stop',
+        tunnelId: tunnelId,
+        tunnelName: `[快速启动]`
+      }
+    })
+
+    await invoke('stop_frpc_instance', { id: tunnelId })
+    linkTunnelsStore.removeLinkTunnel(tunnelId)
+    externalTunnels.value.delete(tunnelId)
+    message.success('停止外部隧道成功')
+  } catch (e) {
+    // 发送错误事件到日志系统
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'error',
+        tunnelId: tunnelId,
+        tunnelName: `[快速启动]`
+      }
+    })
+    message.error(`停止外部隧道失败: ${e}`)
+  }
+}
+
+// 检查外部隧道状态
+const checkExternalTunnelStatus = async (tunnelId: string) => {
+  try {
+    const isRunning = await invoke('check_frpc_status', { id: tunnelId })
+    if (!isRunning) {
+      linkTunnelsStore.removeLinkTunnel(tunnelId)
+      externalTunnels.value.delete(tunnelId)
+    }
+  } catch (e) {
+    console.error('检查外部隧道状态失败:', e)
+  }
+}
+
 onMounted(async () => {
   await requestNotificationPermission()
   await fetchProxyList()
 
+  // 检查是否需要自动恢复隧道
+  const shouldRestore = localStorage.getItem('autoRestoreTunnels') === 'true'
+  const isAutoStart = window.location.search.includes('autostart=true')
+  
+  if (shouldRestore && isAutoStart) {
+    await restoreTunnelStates()
+  }
+
   // 设置定期检查隧道状态的定时器
   const statusCheckInterval = setInterval(checkAllTunnelsStatus, 5000)
-  const listRefreshInterval = setInterval(fetchProxyList, 30000)
+  const listRefreshInterval = setInterval(fetchProxyList, 45000)
+
+  // 检查外部隧道状态的定时器
+  const checkInterval = setInterval(() => {
+    externalTunnels.value.forEach((_, tunnelId) => {
+      checkExternalTunnelStatus(tunnelId)
+    })
+  }, 5000)
 
   // 组件卸载时清理定时器
   onUnmounted(() => {
     clearInterval(statusCheckInterval)
     clearInterval(listRefreshInterval)
+    clearInterval(checkInterval)
   })
 })
 </script>
@@ -241,6 +359,31 @@ onMounted(async () => {
 <template>
   <n-scrollbar>
     <n-space vertical>
+      <!-- 外部隧道卡片 -->
+      <n-skeleton v-if="loading" :height="3" />
+      <n-card v-else-if="getLinkOnlyTunnels.size > 0" title="外部快速启动隧道">
+        <n-space vertical>
+          <n-space v-for="tunnelId in getLinkOnlyTunnels" :key="tunnelId" justify="space-between">
+            <n-space>
+              <n-text>外部隧道 #{{ tunnelId }}</n-text>
+              <n-tag type="warning" size="small">不属于当前用户</n-tag>
+              <n-tag   type="info" 
+                       size="small">
+                  快速启动
+                </n-tag>
+            </n-space>
+            <n-button 
+              type="error" 
+              size="small" 
+              @click="stopExternalTunnel(tunnelId)"
+            >
+              停止
+            </n-button>
+          </n-space>
+        </n-space>
+      </n-card>
+
+      <!-- 原有的隧道列表 -->
       <n-card>
         <n-space>
           <n-button @click="fetchProxyList" :loading="loading">
@@ -248,15 +391,23 @@ onMounted(async () => {
           </n-button>
         </n-space>
       </n-card>
-      <n-skeleton v-if="loading" height="3"></n-skeleton>
+
+      <n-skeleton v-if="loading" :height="3" />
       <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
         <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
           <n-card :title="'隧道 #' + tunnel.id + ' ' + tunnel.name" :bordered="false" size="small"
             style="flex: 1; height: 100%;">
             <template #header-extra>
-              <n-tag :type="getTypeColor(tunnel.type)">
-                {{ tunnel.type.toUpperCase() }}
-              </n-tag>
+              <n-space>
+                <n-tag v-if="linkTunnelsStore.linkLaunchedTunnels.has(tunnel.id.toString())" 
+                       type="info" 
+                       size="small">
+                  通过快速启动
+                </n-tag>
+                <n-tag :type="getTypeColor(tunnel.type)">
+                  {{ tunnel.type.toUpperCase() }}
+                </n-tag>
+              </n-space>
             </template>
             <n-space vertical size="small">
               <n-space>
@@ -290,7 +441,6 @@ onMounted(async () => {
     </n-space>
   </n-scrollbar>
 </template>
-
 <style scoped>
 .n-card {
   transition: all 0.3s;

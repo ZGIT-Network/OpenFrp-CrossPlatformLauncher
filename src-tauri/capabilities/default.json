@@ -46,9 +46,16 @@
     "process:default",
     "notification:default",
     "dialog:default",
+    "dialog:allow-message",
     "autostart:default",
     "autostart:allow-enable",
     "autostart:allow-disable",
-    "autostart:allow-is-enabled"
-  ]
+    "autostart:allow-is-enabled",
+    "deep-link:allow-register",
+    "deep-link:allow-is-registered",
+    "deep-link:allow-unregister",
+    "deep-link:default",
+    "deep-link:allow-get-current"
+  ],
+  "deepLinks": ["openfrp"]
 }
