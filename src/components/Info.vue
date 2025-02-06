@@ -42,7 +42,7 @@ getCurrentVersion()
                 Copyright © 2025 ZGIT Network. All rights reserved.
             </n-card>
             <n-card>
-                <n-collapse>
+                <n-collapse :default-expanded-names="['1']">
                     <n-collapse-item title="赞助开发" name="1">
                         <template #header-extra>
                             <n-gradient-text type="error">

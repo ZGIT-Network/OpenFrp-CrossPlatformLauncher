@@ -55,7 +55,9 @@
     "deep-link:allow-is-registered",
     "deep-link:allow-unregister",
     "deep-link:default",
-    "deep-link:allow-get-current"
+    "deep-link:allow-get-current",
+    "core:window:allow-show",
+    "core:window:allow-set-focus"
   ],
   "deepLinks": ["openfrp"]
 }

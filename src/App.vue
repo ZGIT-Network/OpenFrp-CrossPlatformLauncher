@@ -207,32 +207,32 @@ onMounted(async () => {
     cleanupFunctions.value.push(globalLogUnlisten)
 
     // 监听隧道事件
-    const tunnelEventUnlisten = await listen('tunnel-event', (event: any) => {
-      const { type, tunnelId, tunnelName } = event.payload
-      const timestamp = new Date().toLocaleTimeString()
-      let message = ''
+    // const tunnelEventUnlisten = await listen('tunnel-event', (event: any) => {
+    //   const { type, tunnelId, tunnelName } = event.payload
+    //   const timestamp = new Date().toLocaleTimeString()
+    //   let message = ''
 
-      switch (type) {
-        case 'start':
-          message = `[系统] [${timestamp}] 开始启动隧道 ${tunnelName} (ID: ${tunnelId})`
-          break
-        case 'stop':
-          message = `[系统] [${timestamp}] 停止隧道 ${tunnelName} (ID: ${tunnelId})`
-          break
-        case 'success':
-          message = `[系统] [${timestamp}] 隧道 ${tunnelName} (ID: ${tunnelId}) 启动成功`
-          break
-        case 'error':
-          message = `[系统] [${timestamp}] 隧道 ${tunnelName} (ID: ${tunnelId}) 发生错误`
-          break
-      }
+    //   switch (type) {
+    //     case 'start':
+    //       message = `[系统] [${timestamp}] 开始启动隧道 ${tunnelName} (ID: ${tunnelId})`
+    //       break
+    //     case 'stop':
+    //       message = `[系统] [${timestamp}] 停止隧道 ${tunnelName} (ID: ${tunnelId})`
+    //       break
+    //     case 'success':
+    //       message = `[系统] [${timestamp}] 隧道 ${tunnelName} (ID: ${tunnelId}) 启动成功`
+    //       break
+    //     case 'error':
+    //       message = `[系统] [${timestamp}] 隧道 ${tunnelName} (ID: ${tunnelId}) 发生错误`
+    //       break
+    //   }
 
-      if (message) {
-        const savedLogs = localStorage.getItem('frpcLogs') || ''
-        localStorage.setItem('frpcLogs', savedLogs + message + '\n')
-      }
-    })
-    cleanupFunctions.value.push(tunnelEventUnlisten)
+    //   if (message) {
+    //     const savedLogs = localStorage.getItem('frpcLogs') || ''
+    //     localStorage.setItem('frpcLogs', savedLogs + message + '\n')
+    //   }
+    // })
+    // cleanupFunctions.value.push(tunnelEventUnlisten)
 
     // 为所有可能的隧道ID设置监听器
     const savedStates = localStorage.getItem('tunnelStates')

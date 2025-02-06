@@ -87,7 +87,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.4".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.5".to_string()));
         }
 
         // 更新版本号
@@ -872,7 +872,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 
     let api_response: ApiResponse = response.json().await.map_err(|e| e.to_string())?;
     let download_url = format!(
-        "ofcpl_{}_{}.zip",
+        "v{}/ofcpl_{}_{}.zip",
         api_response.data.cpl_update.url,
         std::env::consts::OS,
         std::env::consts::ARCH
@@ -901,7 +901,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 
     // 准备重启命令
     let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let new_exe = temp_dir.join("openfrp-crossplatformlauncher");
+    let new_exe = temp_dir.join("openfrpcrossplatformlauncher");
 
     // 创建更新脚本
     #[cfg(target_os = "windows")]
@@ -963,7 +963,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.1.0".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.1.5".to_string()))
 }
 
 #[tauri::command]
@@ -1080,10 +1080,10 @@ fn main() {
             }
 
             // 检查 frpc 是否存在
-            let frpc_path = app_dir.join("frpc").join(if cfg!(target_os = "windows") {
-                "frpc.exe"
+            let frpc_path = app_dir.join(if cfg!(target_os = "windows") {
+                "frpc_windows_amd64.exe"
             } else {
-                "frpc"
+                "frpc_linux_amd64"
             });
 
             if !frpc_path.exists() {

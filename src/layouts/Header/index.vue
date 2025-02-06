@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, NText, useNotification, NButton,useMessage } from 'naive-ui';
+import { useDialog, NText, useNotification, NButton, useMessage } from 'naive-ui';
 import { onMounted, h, onUnmounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -21,9 +21,9 @@ let unlistenNeedDownload: any = null
 const currentVersion = ref('v0.1')
 
 interface CplUpdate {
-    title: string;
-    latest: string;
-    msg: string;
+  title: string;
+  latest: string;
+  msg: string;
 }
 
 const getCurrentVersion = async () => {
@@ -56,17 +56,37 @@ const requestNotificationPermission = async () => {
 const linkTunnelsStore = useLinkTunnelsStore()
 const processingLinks = ref(new Set<string>())
 
+const isSuccessLog = (log: string): boolean => {
+  const successPatterns = [
+    /start.*success/i,          // 匹配 "start xxx success"
+    /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
+  ]
+  return successPatterns.some(pattern => pattern.test(log))
+}
+
 const handleDeepLink = async (url: string) => {
   const urlObj = new URL(url)
   if (urlObj.protocol !== 'openfrp:') return
-  
+
   const params = new URLSearchParams(urlObj.search)
   const user = params.get('user')
   const proxyId = params.get('proxy')
-  
-  if (!user || !proxyId) {
+  const remoteAddress = params.get('remote')
+  const proxyName = params.get('name')
+
+  if (!user || !proxyId || !remoteAddress || !proxyName) {
+    await sendNotification({ title: '快速启动链接格式错误', body: '请检查链接格式是否正确' })
     console.error('链接格式错误')
     return
+  }
+
+  // 将窗口提升到最前方
+  try {
+    const appWindow = await getCurrentWindow()
+    await appWindow.show()
+    await appWindow.setFocus()
+  } catch (e) {
+    console.error('窗口提升失败:', e)
   }
 
   // 检查是否正在处理
@@ -74,51 +94,121 @@ const handleDeepLink = async (url: string) => {
     console.log('隧道正在启动中，跳过:', proxyId)
     return
   }
-  
+
   try {
     processingLinks.value.add(proxyId)
-    
+
     // 发送启动事件到日志系统
     await invoke('emit_event', {
       event: 'tunnel-event',
       payload: {
         type: 'start',
         tunnelId: proxyId,
-        tunnelName: `[快速启动]`
+        tunnelName: proxyName
       }
     })
 
-    await invoke('start_frpc_instance', {
-      id: proxyId,
-      token: user,
-      tunnelId: proxyId,
-      logColors: true,
-      enableLog: true,
-      logUser: user
+    message.loading('正在启动隧道', { duration: 1000 })
+
+    // 等待日志响应
+    const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
+      const timeout = setTimeout(async () => {
+        // 超时时检查隧道是否实际在运行
+        try {
+          const isRunning = await invoke('check_frpc_status', { id: proxyId })
+          if (isRunning) {
+            resolve({ success: true, message: '隧道已启动' })
+          } else {
+            resolve({ success: false, message: '启动超时，请检查日志。' })
+          }
+        } catch (e) {
+          resolve({ success: false, message: '启动超时，请检查日志。' })
+        }
+      }, 5000)
+
+      const logListener = listen(`frpc-log-${proxyId}`, (event: any) => {
+        const log = event.payload.message
+
+        if (isSuccessLog(log)) {
+          clearTimeout(timeout)
+          logListener.then(unlisten => unlisten())
+          resolve({ success: true, message: log })
+        } else if (log.includes('启动失败')) {
+          clearTimeout(timeout)
+          logListener.then(unlisten => unlisten())
+          const errorMatch = log.match(/启动失败:\s*(.+)/)
+          const errorMessage = errorMatch ? errorMatch[1] : log
+          resolve({ success: false, message: errorMessage })
+        }
+      })
+
+      // 先检查是否已经在运行
+      invoke('check_frpc_status', { id: proxyId })
+        .then(isRunning => {
+          if (isRunning) {
+            clearTimeout(timeout)
+            logListener.then(unlisten => unlisten())
+            resolve({ success: true, message: '隧道已在运行' })
+            return
+          }
+
+          // 如果没有运行，则启动隧道
+          return invoke('start_frpc_instance', {
+            id: proxyId,
+            token: user,
+            tunnelId: proxyId,
+            logColors: true,
+            enableLog: true,
+            logUser: user
+          })
+        })
+        .catch((error) => {
+          clearTimeout(timeout)
+          logListener.then(unlisten => unlisten())
+          resolve({ success: false, message: String(error) })
+        })
     })
 
     await requestNotificationPermission()
 
-    // notification.success({
-    //         title: `(快速启动) 隧道 #${proxyId} 已尝试启动`,
-    //         content: () => h('div', [            
-    //           h('span', `您可在网页版或日志中查看链接地址与启动状态`),
-              
-              
-    //         ]),
-    //         duration: 5000
-    //       })
-      await sendNotification({ title: `隧道 #${proxyId} 已尝试启动`, body: `您可在网页版或日志中查看链接地址与启动状态` });
+    const copyToClipboard = async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text)
+        message.success('已复制到剪贴板')
+      } catch (err) {
+        message.error('复制失败')
+        console.error('复制失败:', err)
+      }
+    }
 
-
-    linkTunnelsStore.addLinkTunnel(proxyId)
-    message.success('已尝试通过快速启动隧道 #' + proxyId)
-    setTimeout(() => {
-      message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
-    }, 1000);
-    
-
-    
+    if (logResult.success) {
+      notification.success({
+        title: `隧道 #${proxyId} ${proxyName} 启动成功`,
+        description: `隧道启动成功！连接地址: ${remoteAddress}`,
+        content: () => h('div', [
+          h(NButton, {
+            type: 'success',
+            text: true,
+            onClick: () => copyToClipboard(remoteAddress)
+          }, '复制链接地址')
+        ]),
+        duration: 5000
+      })
+      await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `请使用链接地址：${remoteAddress}` })
+      linkTunnelsStore.addLinkTunnel(proxyId)
+      message.success('通过快速启动隧道成功')
+      setTimeout(() => {
+        message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
+      }, 1000);
+    } else {
+      notification.error({
+        title: `隧道 #${proxyId} ${proxyName} 启动失败`,
+        content: logResult.message,
+        duration: 5000
+      })
+      await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动失败`, body: logResult.message })
+      message.error(`启动隧道失败: ${logResult.message}`)
+    }
 
   } catch (e) {
     // 发送错误事件到日志系统
@@ -127,11 +217,12 @@ const handleDeepLink = async (url: string) => {
       payload: {
         type: 'error',
         tunnelId: proxyId,
-        tunnelName: `[快速启动]`
+        tunnelName: proxyName
       }
     })
-    
+    await sendNotification({ title: `隧道 #${proxyId} 启动失败`, body: e as any })
     message.error(`启动隧道失败: ${e}`)
+
   } finally {
     processingLinks.value.delete(proxyId)
   }

@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
+import { listen } from '@tauri-apps/api/event'
 
 const message = useMessage()
 const notification = useNotification()
@@ -90,9 +91,9 @@ const requestNotificationPermission = async () => {
 const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
     /start.*success/i,          // 匹配 "start xxx success"
-    /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
+    /启动.*成功/,               // 匹配 "xxx启动xxx成功xxx"
   ]
-  console.log(isSuccessLog)
+  // console.log(isSuccessLog)
 
   return successPatterns.some(pattern => pattern.test(log))
 }
@@ -154,7 +155,6 @@ const toggleTunnel = async (tunnel: any) => {
       // 立即检查状态
       await checkTunnelStatus(tunnel)
     } else {
-      // 如果实际未运行，则启动
       await invoke('emit_event', {
         event: 'tunnel-event',
         payload: {
@@ -164,29 +164,63 @@ const toggleTunnel = async (tunnel: any) => {
         }
       })
 
-      await invoke('start_frpc_instance', {
-        id: tunnel.id.toString(),
-        token: token,
-        tunnelId: tunnel.id.toString()
+      // 等待日志响应
+      message.loading('正在启动隧道', {duration: 1000})
+      let logMessage = ''
+      console.log(logMessage)
+      
+      const logResult = await new Promise<{success: boolean, message: string}>((resolve) => {
+        const timeout = setTimeout(() => resolve({success: false, message: '启动超时，请检查日志。'}), 5000)
+        
+        const logListener = listen(`frpc-log-${tunnel.id}`, (event: any) => {
+          const log = event.payload.message
+          logMessage = log
+          
+          if (isSuccessLog(log)) {
+            clearTimeout(timeout)
+            logListener.then(unlisten => unlisten())
+            resolve({success: true, message: log})
+          } else if (log.includes('启动失败')) {
+            clearTimeout(timeout)
+            logListener.then(unlisten => unlisten())
+            // 提取错误信息
+            const errorMatch = log.match(/启动失败:\s*(.+)/)
+            const errorMessage = errorMatch ? errorMatch[1] : log
+            resolve({success: false, message: errorMessage})
+          }
+        })
+        
+        invoke('start_frpc_instance', {
+          id: tunnel.id.toString(),
+          token: token,
+          tunnelId: tunnel.id.toString()
+        }).catch((error) => {
+          clearTimeout(timeout)
+          resolve({success: false, message: String(error)})
+        })
       })
-      tunnel.status = 'running'
-      // 添加启动通知
-       notification.success({
-            title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
-            description: `连接地址: ${tunnel.remote}`,
-            content: () => h('div', [            
-              h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
-              
-                h(NButton, {
-                  type: 'success',
-                  text: true,
-                  onClick: () => copyToClipboard(tunnel.remote)
-                }, '复制连接地址')
-              
-            ]),
-            duration: 5000
-          })
-      await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` });
+
+      if (logResult.success) {
+        tunnel.status = 'running'
+        notification.success({
+          title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
+          description: `连接地址: ${tunnel.remote}`,
+          content: () => h('div', [            
+            h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
+            h(NButton, {
+              type: 'success',
+              text: true,
+              onClick: () => copyToClipboard(tunnel.remote)
+            }, '复制连接地址')
+          ]),
+          duration: 5000
+        })
+        await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` })
+      } else {
+        tunnel.status = 'stopped'
+        message.error(`隧道启动失败: ${logResult.message}`)
+        await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动失败`, body: logResult.message })
+      }
     }
     saveTunnelStates()
   } catch (e) {
