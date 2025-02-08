@@ -1,9 +1,8 @@
-name: Release
+name: Compile And Release
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches:    
+      - stable
 
 jobs:
   release:
