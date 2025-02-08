@@ -1,6 +1,6 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
-  "identifier": "default",
+  "identifier": "openfrp-launcher-default",
   "description": "Capability for the main window",
   "remote": {
     "urls": [
@@ -19,6 +19,10 @@
     "macOS",
     "linux"
   ],
+  "notifications": {
+    "title": "OpenFrp 跨平台启动器",
+    "enabled": true
+  },
   "allowlist": {
     "notification": {
       "all": true

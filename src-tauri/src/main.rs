@@ -6,6 +6,7 @@ use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Cursor;
@@ -87,7 +88,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.5".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.6".to_string()));
         }
 
         // 更新版本号
@@ -963,7 +964,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.1.5".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.1.6".to_string()))
 }
 
 #[tauri::command]
@@ -1018,28 +1019,7 @@ struct DeepLinkState(Mutex<Option<String>>);
 
 // 修改 main 函数
 fn main() {
-    // let instance = single_instance::SingleInstance::new("openfrp-cpl").unwrap();
-
-    // if !instance.is_single() {
-    //     // let builder = tauri::Builder::default()
-    //     // .plugin(tauri_plugin_single_instance::init())
-    //     //     .plugin(tauri_plugin_deep_link::init())
-    //     //     .plugin(tauri_plugin_autostart::init(
-    //     //         MacosLauncher::LaunchAgent,
-    //     //         Some(vec![]),
-    //     //     ));
-    //     // let app = builder.build(tauri::generate_context!()).unwrap();
-
-    //     // app.dialog()
-    //     //     .message("OpenFrp 跨平台启动器已经在运行中。请检查系统托盘或任务栏。")
-    //     //     .title("程序已在运行")
-    //     //     .kind(MessageDialogKind::Error)
-    //     //     .blocking_show();
-
-    //     // std::process::exit(1);
-    // }
-
-    tauri::Builder::default()
+    let mut app = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1066,17 +1046,25 @@ fn main() {
 
             let _tray = create_tray_menu(app)?;
 
-            // 检查是否是自动启动
-            if app
-                .app_handle()
-                .env()
-                .args_os
-                .iter()
-                .any(|arg| arg == "--autostart")
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    window.eval("window.location.search = '?autostart=true'")?;
-                }
+            // 检查是否是通过自启动启动的
+            let args: Vec<String> = env::args().collect();
+            
+           
+            let is_autostart = args.iter().any(|arg| arg == "--autostart");
+
+            
+
+            // 获取主窗口
+            let window = app.get_webview_window("main").unwrap();
+
+            if is_autostart {
+                // 如果是自启动，通过 eval 添加查询参数
+                window.eval("window.location.search += window.location.search ? '&autostart=true' : '?autostart=true'").unwrap();
+
+                println!("检测到自启动");
+                
+                // 隐藏窗口
+                // window.hide().unwrap();
             }
 
             // 检查 frpc 是否存在
@@ -1093,6 +1081,13 @@ fn main() {
                 window
                     .emit("redirect_to_settings", "need_download")
                     .unwrap();
+            }
+
+            #[cfg(target_os = "windows")]
+            {
+                if let Err(e) = register_app_for_notifications() {
+                    eprintln!("Failed to register app for notifications: {}", e);
+                }
             }
 
             Ok(())
@@ -1115,6 +1110,39 @@ fn main() {
             toggle_auto_start,
             check_auto_start,
         ])
-        .run(tauri::generate_context!())
-        .expect("运行时出错");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application");
+
+    app.run(|_app_handle, event| {
+        match event {
+            // 处理所有可能的事件
+            tauri::RunEvent::Ready => {}
+            tauri::RunEvent::Resumed => {}
+            tauri::RunEvent::MainEventsCleared => {}
+            tauri::RunEvent::Exit => {}
+            tauri::RunEvent::ExitRequested { .. } => {}
+            _ => {}
+        }
+    });
 }
+
+#[cfg(target_os = "windows")]
+fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
+    use std::path::PathBuf;
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let app_path = std::env::current_exe()?;
+    let app_name = "OpenFrp Launcher";
+    let app_id = "com.openfrp.launcher";
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let path = format!("SOFTWARE\\Classes\\AppUserModelId\\{}", app_id);
+    let (key, _) = hkcu.create_subkey(&path)?;
+    
+    key.set_value("DisplayName", &app_name)?;
+    key.set_value("IconPath", &app_path.to_string_lossy().to_string())?;
+    
+    Ok(())
+}
+

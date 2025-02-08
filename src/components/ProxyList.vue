@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted,h, computed } from 'vue'
+import { ref, onMounted, onUnmounted,h, computed, nextTick, watch } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { listen } from '@tauri-apps/api/event'
+import { useRoute } from 'vue-router'
 
 const message = useMessage()
 const notification = useNotification()
@@ -15,7 +16,7 @@ const loadingTunnels = ref<Set<string>>(new Set())
 
 const linkTunnelsStore = useLinkTunnelsStore()
 
-
+const route = useRoute()
 
 // 存储外部隧道信息
 interface ExternalTunnel {
@@ -154,6 +155,7 @@ const toggleTunnel = async (tunnel: any) => {
       
       // 立即检查状态
       await checkTunnelStatus(tunnel)
+      saveTunnelStates() 
     } else {
       await invoke('emit_event', {
         event: 'tunnel-event',
@@ -196,12 +198,14 @@ const toggleTunnel = async (tunnel: any) => {
           tunnelId: tunnel.id.toString()
         }).catch((error) => {
           clearTimeout(timeout)
+          logListener.then(unlisten => unlisten())
           resolve({success: false, message: String(error)})
         })
       })
 
       if (logResult.success) {
         tunnel.status = 'running'
+        saveTunnelStates() // 保存运行状态
         notification.success({
           title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
           description: `连接地址: ${tunnel.remote}`,
@@ -218,12 +222,14 @@ const toggleTunnel = async (tunnel: any) => {
         await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` })
       } else {
         tunnel.status = 'stopped'
+        saveTunnelStates() // 保存失败状态
         message.error(`隧道启动失败: ${logResult.message}`)
         await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动失败`, body: logResult.message })
       }
     }
-    saveTunnelStates()
   } catch (e) {
+    tunnel.status = 'stopped'
+    saveTunnelStates() // 保存错误状态
     await invoke('emit_event', {
       event: 'tunnel-event',
       payload: {
@@ -241,12 +247,17 @@ const toggleTunnel = async (tunnel: any) => {
   }
 }
 
-// 保存隧道状态到localStorage
+// 保存隧道状态
 const saveTunnelStates = () => {
-  const states = tunnels.value.reduce((acc, tunnel) => {
-    acc[tunnel.id.toString()] = tunnel.status
-    return acc
-  }, {} as Record<string, string>)
+  // 只保存当前正在运行的隧道
+  const states: Record<string, string> = {}
+  tunnels.value.forEach(tunnel => {
+    // 检查隧道是否真的在运行
+    if (tunnel.status === 'running') {
+      states[tunnel.id] = tunnel.status
+    }
+  })
+  console.log('Saving current running tunnel states:', states)
   localStorage.setItem('tunnelStates', JSON.stringify(states))
 }
 
@@ -273,22 +284,38 @@ const getTypeColor = (type: string) => {
   return colors[type.toLowerCase()] || 'default'
 }
 
-// 在恢复隧道状态前添加延迟
-const restoreTunnelStates = async () => {
-  try {
-    const savedStates = localStorage.getItem('tunnelStates')
-    if (savedStates) {
-      const states = JSON.parse(savedStates)
-      for (const tunnel of tunnels.value) {
-        if (states[tunnel.id] === 'running') {
-          // 添加延迟确保 frpc 完全初始化
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          await toggleTunnel(tunnel)
-        }
+// 恢复隧道的函数
+const restoreTunnels = async () => {
+  const savedStates = localStorage.getItem('tunnelStates')
+  console.log('Attempting to restore tunnels, saved states:', savedStates)
+  
+  if (savedStates) {
+    const states = JSON.parse(savedStates)
+    const tunnelsToRestore = tunnels.value.filter(tunnel => states[tunnel.id] === 'running')
+    
+    console.log('Found tunnels to restore:', tunnelsToRestore.map(t => t.id))
+    
+    // 先等待一段时间确保系统完全就绪
+    await new Promise(resolve => setTimeout(resolve, 2000))
+    
+    // 逐个启动隧道，确保每个都有足够的时间初始化
+    for (const tunnel of tunnelsToRestore) {
+      try {
+        console.log('Starting tunnel:', tunnel.id)
+        // 确保上一个隧道的状态已经稳定
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        await toggleTunnel(tunnel)
+        // 等待隧道启动完成
+        await new Promise(resolve => setTimeout(resolve, 3000))
+        console.log('Tunnel started:', tunnel.id)
+      } catch (e) {
+        console.error(`自动启动隧道 ${tunnel.id} 失败:`, e)
+        continue
       }
     }
-  } catch (e) {
-    console.error('恢复隧道状态失败:', e)
+    
+    // 最后再次保存所有状态
+    saveTunnelStates()
   }
 }
 
@@ -359,15 +386,36 @@ const checkExternalTunnelStatus = async (tunnelId: string) => {
 }
 
 onMounted(async () => {
+  console.log('ProxyList mounted')
   await requestNotificationPermission()
   await fetchProxyList()
 
   // 检查是否需要自动恢复隧道
   const shouldRestore = localStorage.getItem('autoRestoreTunnels') === 'true'
-  const isAutoStart = window.location.search.includes('autostart=true')
+  const isAutoStart = route.query.autostart === 'true'
   
+  console.log('Should restore:', shouldRestore)
+  console.log('Is autostart:', isAutoStart)
+  console.log('Route query:', route.query)
+
   if (shouldRestore && isAutoStart) {
-    await restoreTunnelStates()
+    // 等待隧道列表加载完成
+    await nextTick()
+    // 添加额外延迟确保一切就绪
+    setTimeout(() => {
+      if (tunnels.value.length > 0) {
+        restoreTunnels()
+      } else {
+        console.log('No tunnels available yet, waiting for tunnels')
+        // 如果隧道列表为空，监听隧道列表变化
+        const unwatch = watch(tunnels, (newTunnels) => {
+          if (newTunnels.length > 0) {
+            restoreTunnels()
+            unwatch() // 停止监听
+          }
+        })
+      }
+    }, 2000)
   }
 
   // 设置定期检查隧道状态的定时器
@@ -381,11 +429,21 @@ onMounted(async () => {
     })
   }, 5000)
 
+  // 监听隧道状态变化
+  watch(tunnels, () => {
+    saveTunnelStates()
+  }, { deep: true })
+
   // 组件卸载时清理定时器
   onUnmounted(() => {
     clearInterval(statusCheckInterval)
     clearInterval(listRefreshInterval)
     clearInterval(checkInterval)
+  })
+
+  // 在组件卸载时保存状态
+  onUnmounted(() => {
+    saveTunnelStates()
   })
 })
 </script>

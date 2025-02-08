@@ -16,13 +16,22 @@ import {
     NCollapseItem,
     NPopconfirm,
     NText,
-    NScrollbar
+    NScrollbar,
+    NTooltip,
+    NDrawer,
+    NDrawerContent,
+    NThing,
+    NIcon,
+    NH3
+    
 } from 'naive-ui'
 import { inject, watch } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
+import { HelpCircleOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
+
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 
 // const router = useRouter()
@@ -49,6 +58,7 @@ const checking = ref(false)
 const autoStart = ref(false)
 const autoRestoreTunnels = ref(true)  // 默认设为 true
 const deepLinkEnabled = ref(false)
+const helpDrawerVisible = ref(false)
 
 const activeNames = ref<string[]>(['2']); // 控制展开的项
 
@@ -75,13 +85,13 @@ onMounted(() => {
         userToken.value = savedToken
         tempToken.value = savedToken
     }
-    
+
     // 设置默认值
     if (localStorage.getItem('autoRestoreTunnels') === null) {
         localStorage.setItem('autoRestoreTunnels', 'true')
     }
     autoRestoreTunnels.value = localStorage.getItem('autoRestoreTunnels') === 'true'
-    
+
     getCurrentVersion()
     checkAutoStartSettings()
     checkDeepLinkStatus()
@@ -190,7 +200,7 @@ const checkUpdate = async () => {
                 content: () =>
                     h('div', [
                         `发现新版本 v${update.latest}`,
-                        h('br'),`当前版本 v${currentVersion.value}`,h('br'), h('br'),
+                        h('br'), `当前版本 v${currentVersion.value}`, h('br'), h('br'),
                         '更新日志:',
                         h('br'),
                         ...update.msg.split('\n').map((line, index) => h('div', { key: index }, line))
@@ -235,6 +245,11 @@ const toggleAutoStart = async () => {
         // 切换后重新检查状态
         await checkAutoStartSettings()
         message.success(`${autoStart.value ? '启用' : '禁用'}开机自启动成功`)
+        if (autoStart.value && deepLinkEnabled.value) {
+            setTimeout(() => {
+                message.warning('注意，通过“快速启动”功能启动的隧道无法开机自启动')
+            }, 200)
+        }
     } catch (e) {
         message.error(`设置开机自启动失败: ${e}`)
         // 发生错误时也重新检查状态
@@ -285,6 +300,12 @@ interface CplUpdate {
     title: string;
     latest: string;
     msg: string;
+}
+
+const helpDrawerContent = ref('none')
+const helpDrawer = (type: string) => {
+    helpDrawerVisible.value = true
+    helpDrawerContent.value = type
 }
 </script>
 
@@ -357,13 +378,44 @@ interface CplUpdate {
                                 <span>开机时恢复上次运行的隧道</span>
                             </n-space>
                             <n-space align="center">
-                                <n-switch v-model:value="deepLinkEnabled" @update:value="toggleDeepLink" />
-                                <span>允许通过快速启动隧道</span>
+                                <n-tooltip trigger="hover">
+                                    <template #trigger>
+                                        <n-switch v-model:value="deepLinkEnabled" @update:value="toggleDeepLink" />
+                                       
+                                    </template>
+                                    允许通过“快速启动”链接启动隧道
+                                </n-tooltip>
+                                <span>启用"快速启动"功能 </span><n-button quaternary circle  @click="helpDrawer('quickstart')">
+                                    <template #icon>
+                                        <n-icon><HelpCircleOutline /></n-icon>
+                                    </template>
+                                </n-button>
                             </n-space>
                         </n-space>
                     </n-collapse-item>
                 </n-collapse>
             </n-space>
         </n-card>
+        <n-drawer v-model:show="helpDrawerVisible" width="40%" placement="right">
+            <n-drawer-content closable>
+                <template #header>
+                    功能帮助指南
+                </template>
+                <n-thing v-if="helpDrawerContent === 'quickstart'">
+                    <n-h3>快速启动</n-h3>
+                    <n-text>
+                       快速启动 是一种基于注册链接(deep link)快速启动隧道的方式
+                    <br/>通过在面板简单的点击链接，即可快速启动隧道
+                    <br/>
+                    <br/>
+                        * 通过“快速启动”功能启动的隧道无法开机自启动
+                    </n-text>
+                </n-thing>
+                <n-thing v-if="helpDrawerContent === 'none'">
+                    你打开了一个什么都没有的提示框？
+                </n-thing>
+              
+            </n-drawer-content>
+          </n-drawer>
     </n-scrollbar>
 </template>

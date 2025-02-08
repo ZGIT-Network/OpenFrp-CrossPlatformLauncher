@@ -1,6 +1,6 @@
 [package]
 name = "OpenFrpCrossPlatformLauncher"
-version = "0.1.5"
+version = "0.1.6"
 description = "OpenFrp CPL 跨平台启动器"
 authors = ["云默安", "ZGIT"]
 edition = "2021"
@@ -36,6 +36,7 @@ single-instance = "0.3"
 tauri-plugin-dialog = "2"
 is_elevated = "0.1.2"
 tauri-plugin-deep-link = "2"
+winreg = "0.50"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-autostart = "2"

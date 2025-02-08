@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "OpenFrpCrossPlatformLauncher"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dirs 5.0.1",
  "flate2",
@@ -25,6 +25,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tokio",
+ "winreg 0.50.0",
  "zip",
 ]
 

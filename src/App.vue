@@ -3,7 +3,7 @@ import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
 import { darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
 import type { MenuOption } from 'naive-ui'
 import { h } from 'vue'
-import { RouterLink, RouterView } from 'vue-router'
+import { RouterLink, RouterView, useRouter } from 'vue-router'
 import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5'
 import { GlobalThemeOverrides } from 'naive-ui';
 import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutSider, NLayoutHeader, NLayoutContent, NMenu, NText } from 'naive-ui'
@@ -193,6 +193,8 @@ const appendLog = (message: string) => {
 // 添加一个标志来记录日志系统是否已经初始化
 const isLogSystemInitialized = ref(false)
 
+const router = useRouter()
+
 onMounted(async () => {
   // 如果日志系统已经初始化，直接返回
   if (isLogSystemInitialized.value) {
@@ -252,6 +254,18 @@ onMounted(async () => {
     // 标记日志系统已初始化
     isLogSystemInitialized.value = true
     appendLog('日志系统启动完成')
+
+    // 检查是否是自启动
+    const isAutoStart = window.location.search.includes('autostart=true')
+    if (isAutoStart) {
+      // 等待一下确保应用完全初始化
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      // 跳转时保留查询参数
+      router.push({
+        path: '/proxylist',
+        query: { autostart: 'true' }
+      })
+    }
   } catch (error) {
     console.error('设置日志监听器时出错:', error)
   }
@@ -289,6 +303,38 @@ onMounted(() => {
 })
 
 
+// 禁止右键和检查
+//禁止F12
+// document.onkeydown = function (event: any) {
+//     var winEvent: any = window.event
+//     if (winEvent && winEvent.keyCode == 123) {
+//         event.returnValue = false
+//     }
+//     if (winEvent && winEvent.keyCode == 13) {
+//         winEvent.keyCode = 505
+//     }
+// }
+ 
+//屏蔽右键菜单
+document.oncontextmenu = function (event: any) {
+    if (window.event) {
+        event = window.event
+    }
+    try {
+        var the = event.srcElement
+        if (
+            !(
+                (the.tagName == 'INPUT' && the.type.toLowerCase() == 'text') ||
+                the.tagName == 'TEXTAREA'
+            )
+        ) {
+            return false
+        }
+        return true
+    } catch (e) {
+        return false
+    }
+  }
 </script>
 
 <template>
