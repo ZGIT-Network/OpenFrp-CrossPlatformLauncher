@@ -873,7 +873,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 
     let api_response: ApiResponse = response.json().await.map_err(|e| e.to_string())?;
     let download_url = format!(
-        "v{}/ofcpl_{}_{}.zip",
+        "{}/ofcpl_{}_{}.zip",
         api_response.data.cpl_update.url,
         std::env::consts::OS,
         std::env::consts::ARCH
