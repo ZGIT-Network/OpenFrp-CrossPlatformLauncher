@@ -18,14 +18,20 @@ provide('collapsed', collapsed);
 import Header from './layouts/Header/index.vue';
 
 const currentVersion = ref('v0.1')
-
-const getCurrentVersion = async () => {
-  try {
-    const version = await invoke('get_cpl_version')
-    currentVersion.value = version as string
-  } catch (e) {
-    currentVersion.value = '获取失败'
-    console.error('获取版本失败:', e)
+const getCurrentVersion = async (retries = 3) => {
+  for (let i = 0; i < retries; i++) {
+    try {
+      const version = await invoke('get_cpl_version')
+      currentVersion.value = version as string
+      return
+    } catch (e) {
+      console.error(`获取版本失败 (尝试 ${i + 1}/${retries}):`, e)
+      if (i === retries - 1) {
+        currentVersion.value = '获取失败'
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 1000))
+      }
+    }
   }
 }
 getCurrentVersion()
@@ -360,7 +366,7 @@ document.oncontextmenu = function (event: any) {
                   <n-layout-content content-style="padding: 24px;">
                     <n-text
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">OpenFrp
-                      Cross Platform Launcher<br />Tech_Test 技术测试 v{{currentVersion}} 预览体验计划</n-text>
+                      Cross Platform Launcher<br />Alpha v{{currentVersion}} 预览体验计划</n-text>
                     <router-view></router-view>
                   </n-layout-content>
                 </n-layout>

@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { NCard, NAlert, NSpace, NCollapse, NCollapseItem, NList, NListItem, NThing, NTable, NScrollbar, NImage, NGradientText } from 'naive-ui';
+import { NCard, NAlert, NSpace, NCollapse, NCollapseItem, NList, NListItem, NThing, NTable, NScrollbar, NImage, NGradientText, NText } from 'naive-ui';
 import { ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
+import { darkTheme } from 'naive-ui'
+
+import cardImage from '@/assets/pexels-ocean.jpg';
 
 const currentVersion = ref('v0.1')
 
@@ -20,15 +23,35 @@ getCurrentVersion()
 <template>
     <n-scrollbar>
         <n-space vertical>
-            <n-alert title="技术测试版本警告"
-                type="warning">当前版本属于非常早期的技术测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时联系我们。</n-alert>
+            <n-alert type="warning">您当前正在使用 Alpha 测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+
+            <n-config-provider :theme="darkTheme">
+                <n-card :bordered="false" :style="{ background: `url(${cardImage}),rgba(0, 0, 0, 0.2)` }" style="
+                  background-blend-mode: darken;
+                  background-size: cover;
+                  background-repeat: no-repeat;
+                  border-radius: 4px;
+                ">
+                    <n-space :size="[0, 0]" :vertical="true" :style="{ 'margin-bottom': '18px' }">
+                        <n-gradient-text :size="26" :gradient="{
+                            deg: 135,
+                            from: 'rgb(82 117 255)',
+                            to: 'rgb(166 203 255) ',
+                            }"> OpenFrp Ocean</n-gradient-text>
+                        <n-text :depth="2" style="margin-bottom: 0;color:#fff">
+                            欢迎使用 OpenFrp Cross Platform Launcher 跨平台启动器<br />基于 Tauri 技术构建
+                        </n-text>
+                    </n-space>
+                </n-card>
+            </n-config-provider>
+            
             <n-card title="关于 OpenFrp Cross Platform Launcher">
                 <n-table striped>
 
                     <tbody>
                         <tr>
                             <td>OpenFrp Cross Platform Launcher</td>
-                            <td>v{{ currentVersion }}</td>
+                            <td>Alpha v{{ currentVersion }}</td>
                         </tr>
                     </tbody>
                 </n-table>
@@ -47,12 +70,14 @@ getCurrentVersion()
                         <template #header-extra>
                             <n-gradient-text type="error">
                                 快吃不起饭了求你了给点吧.jpg
-                              </n-gradient-text>
+                            </n-gradient-text>
                         </template>
                         <n-text>
                             感谢使用。<br />
-                            如果您愿意赞助本项目，请扫描下方二维码，或者前往 <a href="https://afdian.com/a/zgitnetwork">爱发电</a> 赞助。<br />您的每一笔赞助都将用于本项目的开发并标注在 <a href="https://www.zyghit.cn/sponsor">赞助者列表</a>。<br />
-                            <n-image width="300" src="https://r.zyghit.cn/images/ymawx.png" /><n-image width="200" src="https://r.zyghit.cn/images/ymaalyp.png" /><br />
+                            如果您愿意赞助本项目，请扫描下方二维码，或者前往 <a href="https://afdian.com/a/zgitnetwork">爱发电</a>
+                            赞助。<br />您的每一笔赞助都将用于本项目的开发并标注在 <a href="https://www.zyghit.cn/sponsor">赞助者列表</a>。<br />
+                            <n-image width="300" src="https://r.zyghit.cn/images/ymawx.png" /><n-image width="200"
+                                src="https://r.zyghit.cn/images/ymaalyp.png" /><br />
                         </n-text>
                     </n-collapse-item>
                 </n-collapse>

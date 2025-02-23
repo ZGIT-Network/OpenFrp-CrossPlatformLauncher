@@ -92,11 +92,21 @@ onMounted(() => {
     }
     autoRestoreTunnels.value = localStorage.getItem('autoRestoreTunnels') === 'true'
 
+    // 添加自动启动状态的持久化
+    const savedAutoStart = localStorage.getItem('autoStart')
+    if (savedAutoStart !== null) {
+        autoStart.value = savedAutoStart === 'true'
+    }
+
     getCurrentVersion()
     checkAutoStartSettings()
     checkDeepLinkStatus()
 })
 
+// 监听自动启动状态变化
+watch(autoStart, (newValue) => {
+    localStorage.setItem('autoStart', newValue.toString())
+})
 // 保存设置
 const saveSettings = () => {
     userToken.value = tempToken.value
@@ -313,10 +323,8 @@ const helpDrawer = (type: string) => {
     <n-scrollbar>
         <n-card title="设置">
             <n-space vertical>
-                <n-alert title="技术测试版本警告" type="warning">
-                    当前版本属于非常早期的技术测试版本，可能存在很多问题，请谨慎使用。<br />
-                    若遇到问题，请及时联系我们。
-                </n-alert>
+                <n-alert type="warning">您当前正在使用 Alpha 测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+
 
                 <n-form>
                     <n-space>
@@ -338,7 +346,7 @@ const helpDrawer = (type: string) => {
                 <n-collapse v-model:expanded-names="activeNames" accordion>
                     <n-collapse-item title="版本信息" name="2">
                         <n-space vertical>
-                            <n-text>当前版本：v{{ currentVersion }}</n-text>
+                            <n-text>当前版本：Alpha v{{ currentVersion }}</n-text>
                             <n-space>
                                 <n-button @click="checkUpdate" :loading="checking">
                                     {{ checking ? '检查中...' : '检查更新' }}

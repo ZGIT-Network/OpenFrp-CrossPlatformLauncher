@@ -38,11 +38,7 @@ fetchBoardCast();
         </n-gradient-text> !
         <div style="margin-top: 10px;">
             <n-space vertical>
-                <n-alert title="警告" type="error">
-                    <b>这是非常早期的 TECH_TEST 技术测试版本，可能遇到各种问题，请谨慎使用。<br />
-                    请勿将此版本用于生产环境，造成的任何损失概不负责。</b><br />
-                    若遇到 BUG 或者有何意见，请在交流群内反馈。<br />
-                </n-alert>
+              <n-alert type="warning">您当前正在使用 Alpha 测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时与开发则反馈。</n-alert>
                
                 <div v-if="headAlert?.status" style="margin-bottom: -8px;">
                     <n-alert :title="headAlert.title" :type="headAlert.type" closable style="margin-bottom: 8px;">

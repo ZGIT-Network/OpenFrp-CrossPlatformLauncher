@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { useMessage, NButton, NCard, NLog, NSpace } from 'naive-ui'
+import { useMessage, NButton, NCard, NLog, NSpace,NSwitch } from 'naive-ui'
 import type { LogInst } from 'naive-ui'
 import hljs from 'highlight.js'
 import ansiToHtml from 'ansi-to-html'
@@ -26,50 +26,80 @@ const convert = new ansiToHtml({
 })
 
 const message = useMessage()
-const logs = ref('')
 const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
-
+const autoScroll = ref(true) // 添加自动滚动控制
+const logs = ref(localStorage.getItem('frpcLogs') || '')
 const cleanupFunctions = ref<(() => void)[]>([])
 const activeListeners = ref(new Map<string, boolean>())
 
-// 从 localStorage 加载日志
-const loadLogs = () => {
-  logs.value = localStorage.getItem('frpcLogs') || ''
-  logInst.value?.scrollTo({ position: 'bottom', silent: true },)
+// 添加日志滚动处理函数
+const handleScroll = ({ scrollTop, scrollHeight, containerHeight }: any) => {
+  // 当用户向上滚动时，禁用自动滚动
+  if (scrollHeight - (scrollTop + containerHeight) > 50) {
+    autoScroll.value = false
+  } else {
+    autoScroll.value = true
+  }
+}
+// 统一的日志追加函数
+const appendToLog = (content: string) => {
+  logs.value += content
+  localStorage.setItem('frpcLogs', logs.value)
+  
+  if (autoScroll.value) {
+    nextTick(() => {
+      logInst.value?.scrollTo({ position: 'bottom' })
+    })
+  }
 }
 
-// 添加系统日志的辅助函数
+// 修改现有的日志函数
 const appendSystemLog = (message: string) => {
   const timestamp = new Date().toLocaleTimeString()
-  logs.value += `[系统] [${timestamp}] ${message}\n`
-  localStorage.setItem('frpcLogs', logs.value)
+  appendToLog(`[系统] [${timestamp}] ${message}\n`)
 }
 
-// 修改隧道日志的辅助函数
 const appendTunnelLog = (tunnelId: string, message: string) => {
-  // 处理 ANSI 转义序列
+  const timestamp = new Date().toLocaleTimeString()
   const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'))
-  logs.value += `[<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`
-  localStorage.setItem('frpcLogs', logs.value)
+  appendToLog(`[${timestamp}] [<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`)
+}
+// const appendLog = (message: string) => {
+//   const timestamp = new Date().toLocaleTimeString()
+//   appendToLog(`[系统] [${timestamp}] ${message}\n`)
+// }
+
+// 修改加载日志函数
+const loadLogs = () => {
+  logs.value = localStorage.getItem('frpcLogs') || ''
+  if (autoScroll.value) {
+    nextTick(() => {
+      logInst.value?.scrollTo({ position: 'bottom', silent: true })
+    })
+  }
 }
 
+// 删除这里重复的 appendTunnelLog 函数声明
 // 添加普通日志的辅助函数
 const appendLog = (message: string) => {
   const timestamp = new Date().toLocaleTimeString()
   logs.value += `[系统] [${timestamp}] ${message}\n`
   localStorage.setItem('frpcLogs', logs.value)
+  
+  if (autoScroll.value && logInst.value) {
+    nextTick(() => {
+      logInst.value?.scrollTo({ position: 'bottom' })
+    })
+  }
 }
 
-
 onMounted(async () => {
-  // 加载已保存的日志
   loadLogs()
   
-  // 确保日志滚动到最底部
-  if (logInst.value) {
-    logInst.value.scrollTo({ position: 'bottom' })
-    
-  }
+  // 删除这个重复的滚动代码
+  // if (logInst.value) {
+  //   logInst.value.scrollTo({ position: 'bottom' })
+  // }
 
   try {
     // 监听全局日志
@@ -81,6 +111,11 @@ onMounted(async () => {
     // 监听隧道事件
     const tunnelEventUnlisten = await listen('tunnel-event', (event: any) => {
       const { type, tunnelId, tunnelName } = event.payload
+      // 当收到隧道启动事件时，立即设置日志监听器
+      if (type === 'start' && !activeListeners.value.has(`frpc-log-${tunnelId}`)) {
+        setupTunnelListener(tunnelId)
+      }
+      
       switch (type) {
         case 'start':
           appendSystemLog(`<span style="color: #2080f0">开始启动隧道 #${tunnelId} ${tunnelName}</span>`)
@@ -98,33 +133,32 @@ onMounted(async () => {
     })
     cleanupFunctions.value.push(tunnelEventUnlisten)
 
-    // 立即为所有可能的隧道ID设置监听器
+    // 提取设置隧道监听器的逻辑为独立函数
+    const setupTunnelListener = async (tunnelId: string) => {
+      const listenerKey = `frpc-log-${tunnelId}`
+      if (!activeListeners.value.has(listenerKey)) {
+        const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
+          appendTunnelLog(tunnelId, event.payload.message)
+        })
+        activeListeners.value.set(listenerKey, true)
+        cleanupFunctions.value.push(instanceLogUnlisten)
+      }
+    }
+
+    // 为已保存的隧道设置监听器
     const savedStates = localStorage.getItem('tunnelStates')
     if (savedStates) {
       const states = JSON.parse(savedStates)
       for (const id of Object.keys(states)) {
-        const instanceLogUnlisten = await listen(`frpc-log-${id}`, (event: any) => {
-          appendTunnelLog(id, event.payload.message)
-        })
-        cleanupFunctions.value.push(instanceLogUnlisten)
+        await setupTunnelListener(id)
       }
     }
 
     // 监听外部隧道事件
     const linkTunnelsStore = useLinkTunnelsStore()
-    
-    // 为外部隧道添加日志监听器
     watch(() => linkTunnelsStore.linkLaunchedTunnels, async (tunnels) => {
       for (const tunnelId of tunnels) {
-        // 检查是否已经有这个隧道的监听器
-        const listenerKey = `frpc-log-${tunnelId}`
-        if (!activeListeners.value.has(listenerKey)) {
-          const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
-            appendTunnelLog(tunnelId, event.payload.message)
-          })
-          activeListeners.value.set(listenerKey, true)
-          cleanupFunctions.value.push(instanceLogUnlisten)
-        }
+        await setupTunnelListener(tunnelId)
       }
     }, { immediate: true })
 
@@ -176,17 +210,24 @@ watch(logs, (newValue) => {
     localStorage.setItem('frpcLogs', truncatedLogs)
   }
 })
-logInst.value?.scrollTo({ position: 'bottom' })
-
+// logInst.value?.scrollTo({ position: 'bottom' })
+// 删除这行重复的滚动代码
+// logInst.value?.scrollTo({ position: 'bottom' })
 </script>
 
 <template>
   <n-space vertical>
     <n-card title="运行日志">
       <template #header-extra>
-        <n-button text type="primary" @click="clearLogs">
-          清除日志
-        </n-button>
+        <n-space>
+          <n-switch v-model:value="autoScroll">
+            <template #checked>自动滚动开启</template>
+            <template #unchecked>自动滚动关闭</template>
+          </n-switch>
+          <n-button text type="primary" @click="clearLogs">
+            清除日志
+          </n-button>
+        </n-space>
       </template>
       <n-log 
         :rows="25"
@@ -194,6 +235,7 @@ logInst.value?.scrollTo({ position: 'bottom' })
         :loading="false"
         :hljs="hljs"
         ref="logInst"
+        @scroll="handleScroll"
         language="naive-log"
         trim
       />

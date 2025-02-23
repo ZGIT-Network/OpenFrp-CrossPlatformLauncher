@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, NText, useNotification, NButton, useMessage } from 'naive-ui';
+import { useDialog, NText, useNotification, NButton, useMessage,NIcon } from 'naive-ui';
 import { onMounted, h, onUnmounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -8,8 +8,40 @@ import { RouterLink, useRouter } from 'vue-router';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
+import { Remove, Expand, Contract, Close } from '@vicons/ionicons5'
+const isMaximized = ref(false)
+const minimizeWindow = async () => {
+  const window = await getCurrentWindow()
+  await window.minimize()
+}
 
+const maximizeWindow = async () => {
+  const window = await getCurrentWindow()
+  if (await window.isMaximized()) {
+    await window.unmaximize()
+    isMaximized.value = false
+  } else {
+    await window.maximize()
+    isMaximized.value = true
+  }
+}
 
+const closeWindow = async () => {
+  const window = await getCurrentWindow()
+  await window.close()
+}
+
+// 监听窗口状态变化
+onMounted(async () => {
+  const window = await getCurrentWindow()
+  isMaximized.value = await window.isMaximized()
+  
+  await window.onResized(() => {
+    window.isMaximized().then(maximized => {
+      isMaximized.value = maximized
+    })
+  })
+})
 const dialog = useDialog()
 const notification = useNotification()
 const router = useRouter()
@@ -51,7 +83,9 @@ const requestNotificationPermission = async () => {
   }
 }
 
-
+const handleHeaderDoubleClick = async () => {
+  await maximizeWindow()
+}
 
 const linkTunnelsStore = useLinkTunnelsStore()
 const processingLinks = ref(new Set<string>())
@@ -369,9 +403,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="header">
-    <div class="header-left">
-      <div class="header-logo">
+   <div class="header" data-tauri-drag-region @dblclick="handleHeaderDoubleClick">
+    <div class="header-left" data-tauri-drag-region>
+      <div class="header-logo" data-tauri-drag-region>
         <div style="margin-top: 6px">
           <svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 361.29 51.55">
             <path
@@ -394,13 +428,33 @@ onUnmounted(() => {
               transform="translate(-72.79 -105.36)" />
           </svg>
         </div>
-        Cross Platform Launcher (Tauri)
+        Cross Platform Launcher Alpha 0.2.0
       </div>
     </div>
-    <div class="header-right">
-      <n-text>
-        v{{ currentVersion }} (Tech_Test)
-      </n-text>
+    <div class="header-right" data-tauri-drag-region>
+
+      <div class="window-controls">
+        <n-button quaternary size="small" @click="minimizeWindow">
+          <template #icon>
+            <n-icon><Remove /></n-icon>
+          </template>
+        </n-button>
+        <n-button quaternary size="small" @click="maximizeWindow">
+          <template #icon>
+            <n-icon v-if="isMaximized">
+              <Contract />
+            </n-icon>
+            <n-icon v-else>
+              <Expand />
+            </n-icon>
+          </template>
+        </n-button>
+        <n-button quaternary size="small" @click="closeWindow" class="close-button">
+          <template #icon>
+            <n-icon><Close /></n-icon>
+          </template>
+        </n-button>
+      </div>
     </div>
   </div>
 </template>
@@ -476,5 +530,45 @@ onUnmounted(() => {
 
 .header-avatar {
   padding: 15px 18px 10px 0;
+}
+
+
+.window-controls {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 16px;
+  align-items: center;
+}
+
+.window-controls .n-button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-button:hover {
+  background-color: #e81123 !important;
+  color: white !important;
+}
+
+[data-tauri-drag-region] {
+  cursor: move;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+[data-tauri-drag-region="false"] {
+  -webkit-app-region: no-drag;
+}
+
+.window-controls .n-button {
+  -webkit-app-region: no-drag;
+}
+
+.header-logo {
+  -webkit-app-region: drag;
 }
 </style>

@@ -20,4 +20,15 @@ app.directive('external', {
     }
   }
 })
+app.config.errorHandler = (err, instance, info) => {
+  console.error('全局错误:', err)
+  console.error('错误组件:', instance)
+  console.error('错误信息:', info)
+}
+
+app.config.warnHandler = (msg, instance, trace) => {
+  console.warn('警告:', msg)
+  console.warn('警告组件:', instance)
+  console.warn('调用栈:', trace)
+}
 app.mount('#app')

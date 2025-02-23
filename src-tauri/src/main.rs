@@ -88,7 +88,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.1.6".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.2.0".to_string()));
         }
 
         // 更新版本号
@@ -404,14 +404,42 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     config.frpc_filename = Some(target_filename);
     save_config(&config)?;
 
+    // 设置文件权限
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&target_path)
-            .map_err(|e| e.to_string())?
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&target_path, perms).map_err(|e| e.to_string())?;
+        match fs::metadata(&target_path) {
+            Ok(metadata) => {
+                let mut perms = metadata.permissions();
+                perms.set_mode(0o755); // 设置可执行权限
+                if let Err(e) = fs::set_permissions(&target_path, perms) {
+                    app.emit(
+                        "log",
+                        LogPayload {
+                            message: format!("警告：无法设置文件权限: {}", e),
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                } else {
+                    app.emit(
+                        "log",
+                        LogPayload {
+                            message: "已设置文件可执行权限".into(),
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                }
+            }
+            Err(e) => {
+                app.emit(
+                    "log",
+                    LogPayload {
+                        message: format!("警告：无法获取文件元数据: {}", e),
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+            }
+        }
     }
 
     app.emit(
@@ -964,7 +992,7 @@ async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.1.6".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.2.0".to_string()))
 }
 
 #[tauri::command]
@@ -1145,4 +1173,3 @@ fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
     
     Ok(())
 }
-
