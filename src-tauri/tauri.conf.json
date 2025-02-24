@@ -24,7 +24,7 @@
   },
   "bundle": {
     "active": true,
-    "category": "OpenFrpCrossPlatfromLauncher",
+    "category": "Utility",
     "copyright": "ZGIT Network",
     "targets": "all",
     "icon": [
