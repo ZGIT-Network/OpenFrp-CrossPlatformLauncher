@@ -1,6 +1,6 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, NText, useNotification, NButton, useMessage,NIcon } from 'naive-ui';
+import { useDialog, /*NText,*/ useNotification, NButton, useMessage,NIcon } from 'naive-ui';
 import { onMounted, h, onUnmounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
