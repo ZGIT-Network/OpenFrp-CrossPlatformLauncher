@@ -1,9 +1,9 @@
 name: Release
 on:
   push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+    branches: [ main ]  # 开发构建：推送到主分支时触发
+    tags: [ 'v*' ]     # 发布构建：推送标签时触发
+  workflow_dispatch:  
 
 jobs:
   release:
