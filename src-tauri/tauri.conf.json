@@ -28,7 +28,11 @@
     "copyright": "ZGIT Network",
     "targets": "all",
     "icon": [
-      "icons/desktop.ico"
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
     ],
     "macOS": {
       "dmg": {
@@ -43,8 +47,7 @@
         "windowSize": {
           "height": 400,
           "width": 660
-        },
-        "background": "src/assets/pexels-ocean.jpg"
+        }
       },
       "files": {},
       "hardenedRuntime": true,
