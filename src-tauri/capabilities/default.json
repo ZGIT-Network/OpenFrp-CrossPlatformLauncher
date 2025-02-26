@@ -65,7 +65,24 @@
     "deep-link:default",
     "deep-link:allow-get-current",
     "core:window:allow-show",
-    "core:window:allow-set-focus"
-  ],
-  "deepLinks": ["openfrp"]
+    "core:window:allow-set-focus",
+    "updater:default",
+    "updater:allow-check",
+    "updater:allow-download-and-install",
+    "core:window:allow-start-dragging",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://*.openfrp.net"
+        },
+        {
+          "url": "https://api.openfrp.net"
+        }
+      ]
+    }
+    ],
+  "deepLinks": [
+    "openfrp"
+  ]
 }

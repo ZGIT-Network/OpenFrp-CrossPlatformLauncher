@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { NCard, NAlert, NSpace, NCollapse, NCollapseItem, NList, NListItem, NThing, NTable, NScrollbar, NImage, NGradientText, NText } from 'naive-ui';
-import { ref } from 'vue';
+import { ref,onMounted } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { darkTheme } from 'naive-ui'
 
@@ -18,6 +18,19 @@ const getCurrentVersion = async () => {
     }
 }
 getCurrentVersion()
+
+const systemInfo = ref('')
+const buildInfo = ref('')
+
+onMounted(async () => {
+    try {
+        currentVersion.value = await invoke('get_cpl_version')
+        systemInfo.value = await invoke('get_system_info')
+        buildInfo.value = await invoke('get_build_info')
+    } catch (e) {
+        console.error('获取版本信息失败:', e)
+    }
+})
 
 </script>
 <template>
@@ -39,7 +52,7 @@ getCurrentVersion()
                             to: 'rgb(166 203 255) ',
                             }"> OpenFrp Ocean</n-gradient-text>
                         <n-text :depth="2" style="margin-bottom: 0;color:#fff">
-                            欢迎使用 OpenFrp Cross Platform Launcher 跨平台启动器<br />基于 Tauri 技术构建
+                            欢迎使用 OpenFrp Cross Platform Launcher 跨平台启动器<br/>基于 Tauri 技术构建<br/>
                         </n-text>
                     </n-space>
                 </n-card>
@@ -52,6 +65,14 @@ getCurrentVersion()
                         <tr>
                             <td>OpenFrp Cross Platform Launcher</td>
                             <td>Alpha v{{ currentVersion }}</td>
+                        </tr>
+                        <tr>
+                            <td>系统架构</td>
+                            <td>{{ systemInfo }}</td>
+                        </tr>
+                        <tr>
+                            <td>构建号</td>
+                            <td>{{ buildInfo }}</td>
                         </tr>
                     </tbody>
                 </n-table>

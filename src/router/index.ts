@@ -5,6 +5,7 @@ import Home from '../components/Home.vue'
 import ProxyList from '../components/ProxyList.vue'
 import Info from '../components/Info.vue'
 import CreateProxy from '../components/CreateProxy.vue'
+import Login from '@/components/Login.vue'
 
 const routes = [
   {
@@ -27,6 +28,11 @@ const routes = [
     component: ProxyList
   },
   {
+    path: '/login',
+    name: 'Login',
+    component: Login
+  },
+  {
     path: '/frpc',
     name: 'FrpcManager',
     component: FrpcManager
@@ -40,7 +46,11 @@ const routes = [
     path: '/info',
     name: 'Info',
     component: Info
-  }
+  },
+  {
+    path: '/oauth_callback',
+    component: Login,
+  },
 ]
 
 const router = createRouter({

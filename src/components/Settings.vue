@@ -32,6 +32,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 
+
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 
 // const router = useRouter()
@@ -219,7 +220,16 @@ const checkUpdate = async () => {
                 negativeText: '取消',
                 onPositiveClick: async () => {
                     try {
+                        message.loading('正在下载更新...', { duration: 0 })
                         await invoke('download_and_update')
+                        dialog.success({
+                            title: '更新下载完成',
+                            content: '更新已下载完成，重启应用后生效',
+                            positiveText: '立即重启',
+                            onPositiveClick: async () => {
+                                await invoke('exit_app')
+                            }
+                        })
                     } catch (e) {
                         message.error(`更新失败: ${e}`)
                     }
@@ -306,6 +316,26 @@ const toggleDeepLink = async (value: boolean) => {
     }
 }
 
+// const router = useRouter()
+import getLoginUrl from '@/requests/oauth/getLoginUrl'
+
+const oauthLogin = () => {
+    message.info('正在拉起登录...')
+    getLoginUrl()
+        .then((res) => {
+          if (!res.data.flag) {
+            message.error('无法获取登录url');
+            return;
+          }
+          window.open(res.data.data,'_blank');
+        })
+        .catch((err) => {
+          console.log(err);
+          message.error('请求时发生错误, 请重试');
+        });
+    // router.push('/login')
+}
+
 interface CplUpdate {
     title: string;
     latest: string;
@@ -332,6 +362,8 @@ const helpDrawer = (type: string) => {
                             <n-space>
                                 <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
                                 <n-button type="primary" @click="saveSettings">保存设置</n-button>
+
+                                <br/>测试：    <n-button type="primary" @click="oauthLogin">oauth登录</n-button>
                             </n-space>
                         </n-form-item>
                         <n-form-item label="主题">
@@ -393,7 +425,7 @@ const helpDrawer = (type: string) => {
                                     </template>
                                     允许通过“快速启动”链接启动隧道
                                 </n-tooltip>
-                                <span>启用"快速启动"功能 </span><n-button quaternary circle  @click="helpDrawer('quickstart')">
+                                <span>启用"快速启动"功能 </span><n-button quaternary circle :disabled="true"  @click="helpDrawer('quickstart')">
                                     <template #icon>
                                         <n-icon><HelpCircleOutline /></n-icon>
                                     </template>

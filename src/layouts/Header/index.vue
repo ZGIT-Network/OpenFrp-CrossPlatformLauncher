@@ -100,8 +100,49 @@ const isSuccessLog = (log: string): boolean => {
 
 const handleDeepLink = async (url: string) => {
   const urlObj = new URL(url)
+  console.log('deep link:', url);
   if (urlObj.protocol !== 'openfrp:') return
+  // 直接解析 URL 字符串
+  const match = url.match(/^openfrp:\/\/([^/?]+)/)
+  if (!match) return
+  
+  const path = match[1]
+  console.log('解析路径:', path)
+  // 将窗口提升到最前方
+  try {
+    const appWindow = await getCurrentWindow()
+    await appWindow.show()
+    await appWindow.setFocus()
+  } catch (e) {
+    console.error('窗口提升失败:', e)
+  }
+  // 处理登录回调
+  if (path === 'login') {
+    const params = new URLSearchParams(urlObj.search)
+    const code = params.get('code')
+    
+    if (code) {
+      // 保存 token
+      // localStorage.setItem('userToken', token)
+      message.success('获取到登录码')
+      urlObj.searchParams.delete('code')
+      // 发送事件到日志系统
 
+
+      router.push(`/oauth_callback?code=${code}`)
+      
+      // 可选：刷新页面或更新状态
+      // window.location.reload()
+      return
+    } else {
+      message.error('登录失败：未获取到 token')
+      return
+    }
+    
+  }
+
+  // 处理登录回调
+  if (path === 'start_proxy') {
   const params = new URLSearchParams(urlObj.search)
   const user = params.get('user')
   const proxyId = params.get('proxy')
@@ -113,25 +154,15 @@ const handleDeepLink = async (url: string) => {
     console.error('链接格式错误')
     return
   }
-
-  // 将窗口提升到最前方
-  try {
-    const appWindow = await getCurrentWindow()
-    await appWindow.show()
-    await appWindow.setFocus()
-  } catch (e) {
-    console.error('窗口提升失败:', e)
-  }
-
+  
   // 检查是否正在处理
   if (processingLinks.value.has(proxyId)) {
     console.log('隧道正在启动中，跳过:', proxyId)
     return
   }
-
   try {
     processingLinks.value.add(proxyId)
-
+  
     // 发送启动事件到日志系统
     await invoke('emit_event', {
       event: 'tunnel-event',
@@ -141,9 +172,9 @@ const handleDeepLink = async (url: string) => {
         tunnelName: proxyName
       }
     })
-
+  
     message.loading('正在启动隧道', { duration: 1000 })
-
+  
     // 等待日志响应
     const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
       const timeout = setTimeout(async () => {
@@ -260,6 +291,10 @@ const handleDeepLink = async (url: string) => {
   } finally {
     processingLinks.value.delete(proxyId)
   }
+    return
+  }
+
+  message.error('错误:未知链接操作')
 }
 
 // 创建事件清理函数的引用

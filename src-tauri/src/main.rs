@@ -13,6 +13,7 @@ use std::io::Cursor;
 use std::io::Write;
 // use std::io::{BufRead, BufReader};
 //use std::path::Path;
+use std::error::Error;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -22,12 +23,10 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
 use tauri::{command, Emitter, Runtime, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_deep_link;
-// use std::sync::atomic;
-// use std::sync::Arc;
-// use tauri::PhysicalPosition;
-// use tauri::WindowEvent;
+use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_updater;
+mod update;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -94,6 +93,23 @@ impl Config {
         // 更新版本号
         self.config_version = Some(CONFIG_VERSION);
         self
+    }
+}
+
+#[command]
+async fn check_update(app_handle: tauri::AppHandle) -> Result<bool, String> {
+    match crate::update::check_update().await {
+        Ok(Some(_update)) => Ok(true),
+        Ok(None) => Ok(false),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+#[command]
+async fn install_update(app_handle: tauri::AppHandle) -> Result<(), String> {
+    match crate::update::download_and_install_update(app_handle).await {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -542,6 +558,20 @@ async fn start_frpc_instance<R: Runtime>(
 }
 
 #[command]
+fn get_system_info() -> String {
+    let arch = std::env::consts::ARCH;
+    let os = std::env::consts::OS;
+    format!("{}-{}", os, arch)
+}
+
+#[command]
+fn get_build_info() -> String {
+    let build_time = env!("BUILD_TIME", "未知构建时间");
+    let commit_id = env!("GIT_HASH", "未知提交");
+    format!("build.{}", build_time)
+}
+
+#[command]
 async fn stop_frpc_instance<R: Runtime>(
     _app: tauri::AppHandle<R>,
     processes: State<'_, FrpcProcesses>,
@@ -827,167 +857,6 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 }
 
 // 添加更新相关的结构体
-#[derive(Serialize, Deserialize, Debug)]
-struct CplUpdate {
-    latest: String,
-    url: String,
-    msg: String,
-    title: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct UpdateData {
-    latest: String,
-    latest_full: String,
-    latest_ver: String,
-    latest_msg: String,
-    common_details: String,
-    #[serde(rename = "cplUpdate")]
-    cpl_update: CplUpdate,
-    // 其他字段可以暂时忽略
-    #[serde(skip)]
-    launcherUpdate: Option<serde_json::Value>,
-    #[serde(skip)]
-    source: Option<serde_json::Value>,
-    #[serde(skip)]
-    soft: Option<serde_json::Value>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct ApiResponse {
-    data: UpdateData,
-    flag: bool,
-    msg: String,
-}
-
-#[command]
-async fn check_update() -> Result<Option<CplUpdate>, String> {
-    let response = reqwest::get("https://api.openfrp.net/commonQuery/get?key=software")
-        .await
-        .map_err(|e| format!("请求失败: {}", e))?;
-
-    let text = response
-        .text()
-        .await
-        .map_err(|e| format!("读取响应失败: {}", e))?;
-    // println!("API Response: {}", text); // 输出完整响应
-
-    if text.is_empty() {
-        return Err("API 响应为空".to_string());
-    }
-
-    let api_response: ApiResponse =
-        serde_json::from_str(&text).map_err(|e| format!("解析错误: {} \n原始数据: {}", e, text))?;
-
-    let current_version = env!("CARGO_PKG_VERSION");
-    println!(
-        "Current version: {}, Latest version: {}",
-        current_version, api_response.data.cpl_update.latest
-    );
-
-    if current_version != api_response.data.cpl_update.latest {
-        Ok(Some(api_response.data.cpl_update))
-    } else {
-        Ok(None)
-    }
-}
-
-// 添加下载和更新命令
-#[command]
-async fn download_and_update(app: tauri::AppHandle) -> Result<(), String> {
-    let response = reqwest::get("https://api.openfrp.net/commonQuery/get?key=software")
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let api_response: ApiResponse = response.json().await.map_err(|e| e.to_string())?;
-    let download_url = format!(
-        "{}/ofcpl_{}_{}.zip",
-        api_response.data.cpl_update.url,
-        std::env::consts::OS,
-        std::env::consts::ARCH
-    );
-
-    // 下载更新包
-    let response = reqwest::get(&download_url)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-
-    // 获取临时目录
-    let app_dir = get_app_dir();
-    let temp_dir = app_dir.join("temp");
-    fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
-
-    // 保存并解压更新包
-    let temp_zip = temp_dir.join("update.zip");
-    fs::write(&temp_zip, &bytes).map_err(|e| e.to_string())?;
-
-    // 解压更新包
-    let file = File::open(&temp_zip).map_err(|e| e.to_string())?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-    archive.extract(&temp_dir).map_err(|e| e.to_string())?;
-
-    // 准备重启命令
-    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    let new_exe = temp_dir.join("openfrpcrossplatformlauncher");
-
-    // 创建更新脚本
-    #[cfg(target_os = "windows")]
-    {
-        let bat_content = format!(
-            "@echo off\n\
-             timeout /t 1 /nobreak >nul\n\
-             copy /y \"{}\" \"{}\"\n\
-             start \"\" \"{}\"\n",
-            new_exe.display(),
-            current_exe.display(),
-            current_exe.display()
-        );
-        let bat_path = temp_dir.join("update.bat");
-        fs::write(&bat_path, bat_content).map_err(|e| e.to_string())?;
-
-        Command::new("cmd")
-            .args(["/C", "start", "/b", bat_path.to_str().unwrap()])
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-
-    #[cfg(target_family = "unix")]
-    {
-        let sh_content = format!(
-            "#!/bin/sh\n\
-             sleep 1\n\
-             cp -f \"{}\" \"{}\"\n\
-             \"{}\" &",
-            new_exe.display(),
-            current_exe.display(),
-            current_exe.display()
-        );
-        let sh_path = temp_dir.join("update.sh");
-        fs::write(&sh_path, &sh_content).map_err(|e| e.to_string())?;
-        fs::set_permissions(
-            &sh_path,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .map_err(|e| e.to_string())?;
-
-        Command::new("sh")
-            .arg(sh_path)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-
-    // 更新配置文件中的版本号
-    let mut config = load_config()?;
-    config.cpl_version = Some(api_response.data.cpl_update.latest);
-    save_config(&config)?;
-
-    // 退出当前进程
-    app.exit(0);
-
-    Ok(())
-}
 
 #[command]
 fn get_cpl_version() -> Result<String, String> {
@@ -1045,9 +914,53 @@ async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
 #[derive(Default)]
 struct DeepLinkState(Mutex<Option<String>>);
 
+
+#[derive(Serialize, Deserialize)]
+struct OAuthResponse {
+    authorization: String,
+    flag: bool,
+    msg: String,
+    data: String,
+}
+
+#[command]
+async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
+    let client = reqwest::Client::new();
+    let mut form = std::collections::HashMap::new();
+    form.insert("code", code);
+    form.insert("redirect_url", "openfrp://login".to_string());
+
+    let res = client
+        .post("https://api.openfrp.net/oauth2/callback")
+        .form(&form)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let headers = res.headers();
+    let auth = headers.get("authorization")
+        .ok_or("登录失败: 未能找到 Authorization")?
+        .to_str()
+        .map_err(|e| e.to_string())?
+        .to_string();
+
+    let json = res.json::<serde_json::Value>()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(OAuthResponse {
+        authorization: auth,
+        flag: json["flag"].as_bool().unwrap_or(false),
+        msg: json["msg"].as_str().unwrap_or("").to_string(),
+        data: json["data"].as_str().unwrap_or("").to_string(),
+    })
+}
+
 // 修改 main 函数
 fn main() {
     let mut app = tauri::Builder::default()
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -1076,7 +989,6 @@ fn main() {
 
             // 检查是否是通过自启动启动的
             let args: Vec<String> = env::args().collect();
-            
            
             let is_autostart = args.iter().any(|arg| arg == "--autostart");
 
@@ -1122,8 +1034,7 @@ fn main() {
         })
         .manage(FrpcProcesses::default())
         .invoke_handler(tauri::generate_handler![
-            check_update,
-            download_and_update,
+
             check_frpc_status,
             download_frpc,
             start_frpc_instance,
@@ -1137,6 +1048,11 @@ fn main() {
             get_cpl_version,
             toggle_auto_start,
             check_auto_start,
+            oauth_callback,
+            check_update,
+            install_update,
+            get_build_info,
+            get_system_info,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -1156,7 +1072,6 @@ fn main() {
 
 #[cfg(target_os = "windows")]
 fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
-    use std::path::PathBuf;
     use winreg::enums::*;
     use winreg::RegKey;
 
@@ -1167,9 +1082,9 @@ fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = format!("SOFTWARE\\Classes\\AppUserModelId\\{}", app_id);
     let (key, _) = hkcu.create_subkey(&path)?;
-    
+
     key.set_value("DisplayName", &app_name)?;
     key.set_value("IconPath", &app_path.to_string_lossy().to_string())?;
-    
+
     Ok(())
 }
