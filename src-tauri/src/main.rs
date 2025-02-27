@@ -27,6 +27,8 @@ use tauri_plugin_deep_link;
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater;
 mod update;
+mod api_proxy; // 添加这一行
+
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -97,7 +99,7 @@ impl Config {
 }
 
 #[command]
-async fn check_update(app_handle: tauri::AppHandle) -> Result<bool, String> {
+async fn check_update(_app_handle: tauri::AppHandle) -> Result<bool, String> {
     match crate::update::check_update().await {
         Ok(Some(_update)) => Ok(true),
         Ok(None) => Ok(false),
@@ -567,7 +569,7 @@ fn get_system_info() -> String {
 #[command]
 fn get_build_info() -> String {
     let build_time = env!("BUILD_TIME", "未知构建时间");
-    let commit_id = env!("GIT_HASH", "未知提交");
+    let _commit_id = env!("GIT_HASH", "未知提交");
     format!("build.{}", build_time)
 }
 
@@ -968,7 +970,7 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec![]),
         ))
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // 当收到第二个实例的启动参数时
             println!("新实例参数: {:?}", argv);
             // 发送事件到前端
@@ -1053,6 +1055,7 @@ fn main() {
             install_update,
             get_build_info,
             get_system_info,
+            api_proxy::proxy_api, 
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

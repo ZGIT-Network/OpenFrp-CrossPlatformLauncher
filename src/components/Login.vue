@@ -2,7 +2,9 @@
 import { ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 
-import Cookies from 'js-cookie';
+// 添加类型声明以解决 TypeScript 报错
+import Cookies from '@/utils/cookies';
+
 import { useLoadingBar, useMessage } from 'naive-ui';
 
 import oauthCallback from '@/requests/oauth/oauthCallback';
@@ -14,11 +16,11 @@ const loadingbar = useLoadingBar();
 const loginErr = ref<string | undefined>(undefined);
 const callbackCode = ref<any>();
 
-// if (Cookies.get('authorization')) {
-//   console.log('发现token, 尝试自动登录');
-//   console.log(Cookies.get('authorization'))
-// //   router.push('/Home');
-// } else {
+if (Cookies.get('authorization')) {
+  message.success('已自动登录')
+  console.log(Cookies.get('authorization'))
+  router.push('/home');
+} else {
   loadingbar.start();
   callbackCode.value = route.query.code; // 先copy一份
   router.replace({ query: {} }); // 清除query
@@ -54,7 +56,7 @@ const callbackCode = ref<any>();
       
     }, 1000);
   }
-// }
+}
 </script>
 <template>
   <div style="margin-top: 15vh">

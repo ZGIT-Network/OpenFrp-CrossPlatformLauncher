@@ -1,14 +1,69 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useDialog, /*NText,*/ useNotification, NButton, useMessage,NIcon } from 'naive-ui';
-import { onMounted, h, onUnmounted, ref } from 'vue';
+import { onMounted, h, onUnmounted, ref,provide } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RouterLink, useRouter } from 'vue-router';
+import { RouterLink, useRouter ,useRoute} from 'vue-router';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import { Remove, Expand, Contract, Close } from '@vicons/ionicons5'
+import { AxiosError } from 'axios';
+
+
+import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
+
+import Cookies from '@/utils/cookies';
+
+const notification = useNotification();
+const router = useRouter();
+const route = useRoute();
+const userInfo = ref<Struct.UserInfo>();
+
+const errorMessage = ref<{
+  statusCode: number;
+  title: string;
+}>({ statusCode: 500, title: '加载中' });
+const loaded = ref<boolean>(false);
+
+// 获取用户信息
+const getUserInfo = () => {
+  frpApiGetUserInfo()
+    .then((res) => {
+      console.log(res);
+      if (res.flag) {
+        console.log(res.data)
+        userInfo.value = res.data;
+        // 在这里提供用户信息，确保在数据加载后立即提供
+        provide('userInfo', { userInfo, getUserInfo });
+        setTimeout(() => {
+          loaded.value = true;
+        }, 250);
+      } else {
+        // 需要登录的情况
+        sessionStorage.setItem('redirectPath', route.fullPath);
+        Cookies.remove('authorization');
+        router.push('/settings');
+      }
+    })
+    .catch((res: AxiosError) => {
+      errorMessage.value = {
+        statusCode: Number(res.response?.status),
+        title: res.response?.statusText ?? '发生了未知错误',
+      };
+      notification.error({
+        content: res.message,
+        meta: '这可能是由于服务器的问题，请稍后重试。',
+        duration: 4500,
+      });
+      loaded.value = false;
+    });
+};
+getUserInfo();
+
+
+
 const isMaximized = ref(false)
 const minimizeWindow = async () => {
   const window = await getCurrentWindow()
@@ -43,8 +98,6 @@ onMounted(async () => {
   })
 })
 const dialog = useDialog()
-const notification = useNotification()
-const router = useRouter()
 import './style.less';
 const message = useMessage()
 
@@ -127,8 +180,7 @@ const handleDeepLink = async (url: string) => {
       message.success('获取到登录码')
       urlObj.searchParams.delete('code')
       // 发送事件到日志系统
-
-
+    
       router.push(`/oauth_callback?code=${code}`)
       
       // 可选：刷新页面或更新状态
@@ -435,6 +487,9 @@ onUnmounted(() => {
   if (cleanupOpenUrl) cleanupOpenUrl()
   if (cleanupSecondInstance) cleanupSecondInstance()
 })
+
+// 移除这里的 provide，因为我们已经在 getUserInfo 成功回调中提供了
+// provide('userInfo', { userInfo, getUserInfo });
 </script>
 
 <template>

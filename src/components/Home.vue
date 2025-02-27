@@ -1,11 +1,28 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { inject, Ref, ref, watch } from 'vue';
 import { NAlert, NGradientText, useMessage, NCard, NSpace } from 'naive-ui'
 import axios from 'axios'
 import { marked } from 'marked'
 
 const message = useMessage()
 
+// 尝试注入对象
+const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
+console.log('注入的对象:', userInfoObj);
+
+// 创建本地用户名变量
+const username = ref('用户');
+const userInfo = userInfoObj?.userInfo;
+
+// 监听用户信息变化
+if (userInfoObj?.userInfo) {
+  watch(userInfoObj.userInfo, (newVal) => {
+    if (newVal) {
+      username.value = newVal.username || '用户';
+      console.log('用户名已更新:', username.value);
+    }
+  }, { immediate: true });
+}
 
 const boardCast = ref('加载中...');
 const headAlert = ref();
@@ -32,7 +49,8 @@ fetchBoardCast();
 
 <template>
     <div>
-        <span class="hometitle">欢迎回来</span><br />
+        <!-- 使用本地用户名变量 -->
+        <span class="hometitle">欢迎回来 {{ userInfo.username }}</span><br />
         欢迎使用全新 <n-gradient-text type="info">
             OpenFrp Cross Platform Launcher
         </n-gradient-text> !
@@ -52,8 +70,6 @@ fetchBoardCast();
             </n-space>
         </div>
     </div>
-
-
 </template>
 
 <style scoped>
