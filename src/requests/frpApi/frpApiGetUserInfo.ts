@@ -8,6 +8,7 @@ interface Response {
   msg: string;
 }
 
+
 export default async () => {
   try {
     const response = await callApi<Response>('getUserInfo', {

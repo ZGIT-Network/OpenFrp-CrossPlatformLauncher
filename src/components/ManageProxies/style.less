@@ -1,0 +1,130 @@
+.managechannel {
+  padding: 24px;
+
+  .n-card {
+    overflow: hidden;
+    .n-data-table.n-data-table--bottom-bordered .n-data-table-td.n-data-table-td--last-row {
+      border-bottom: 0 transparent !important;
+    }
+  }
+  @media screen and (max-width: 600px) {
+    .tb-matches {
+      display: none;
+    }
+  }
+
+  .flag {
+    &-offline {
+      width: 8px;
+      margin-left: 4px;
+      height: 8px;
+
+      border-radius: 50%;
+
+      &.small {
+        width: 10px;
+        height: 10px;
+        margin-right: 0.5em;
+      }
+
+      .actual-light & {
+        background-color: #ccc;
+      }
+
+      .actual-dark & {
+        background-color: #565656;
+      }
+    }
+
+    &-online {
+      width: 6px;
+      height: 6px;
+      margin-left: 4px;
+      border-radius: 50%;
+
+      .actual-light & {
+        background-color: #2dca62;
+      }
+
+      .actual-dark & {
+        background-color: #08ad60;
+      }
+
+      &.small {
+        width: 10px;
+        height: 10px;
+        margin-right: 0.5em;
+      }
+    }
+  }
+
+  .of-custom-header {
+    align-items: center;
+    display: flex;
+    flex-direction: row;
+    vertical-align: middle;
+    margin-left: -0.25em;
+  }
+}
+
+.managechannel-edit {
+  .n-layout,
+  .n-layout-sider {
+    background-color: transparent !important;
+  }
+
+  .n-input-number {
+    width: 100%;
+  }
+
+  .n-scrollbar {
+    height: auto !important;
+
+    .n-scrollbar-container .n-scrollbar-content {
+      width: inherit !important;
+    }
+  }
+
+  .ovf {
+    .n-scrollbar-container {
+      overflow: hidden;
+    }
+  }
+}
+
+.appCommu__root {
+  border-radius: 4px;
+
+  .actual-light & {
+    background: linear-gradient(14deg, #ffebc8, #ffffff);
+  }
+
+  .actual-dark & {
+    background: linear-gradient(14deg, #2a1b00, #282828);
+  }
+
+  .appCommu__info {
+    .actual-light & {
+      .n-text {
+        --n-text-color: rgba(0, 0, 0, 0.406);
+      }
+    }
+  }
+
+  .appCommu__container {
+    height: 100%;
+    overflow: hidden;
+
+    .appCommu {
+      border-radius: 4px;
+      border: rgb(62, 62, 62) solid 1px;
+      margin-top: 32px;
+      background-repeat: no-repeat !important;
+      background-size: contain !important;
+      height: 250%;
+      width: 250%;
+      max-width: 650px;
+      //width: auto;
+    }
+  }
+}

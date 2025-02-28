@@ -1,8 +1,8 @@
-import axios from 'axios';
-import Cookies from 'js-cookie';
+import { callApi } from '../../utils/apiClient';
 
 interface Request {
-  code: string;
+  proxy_id: bigint;
+  proxy_do: boolean;
 }
 
 interface Response {
@@ -11,15 +11,26 @@ interface Response {
   msg: string;
 }
 
-export default (req: Request) => {
-  return axios.request<Response>({
-    url: 'https://api.openfrp.net/frp/api/useCode',
-    method: 'post',
-    headers: {
-      Authorization: Cookies.get('authorization') || '',
-    },
-    data: {
-      ...req,
-    },
-  });
+export default async (req: Request) => {
+  try {
+    const response = await callApi<Response>('changeProxy', {
+      method: 'POST',
+      body: req,
+    });
+    
+    // 检查响应是否为 null 或 undefined
+    if (!response) {
+      throw new Error('API 返回了空响应');
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('更改隧道状态失败:', error);
+    // 返回一个默认响应，避免 null 引用错误
+    return {
+      data: null,
+      flag: false,
+      msg: error instanceof Error ? error.message : '未知错误'
+    };
+  }
 };

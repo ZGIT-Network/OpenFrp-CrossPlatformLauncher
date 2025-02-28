@@ -36,7 +36,7 @@ onMounted(async () => {
 <template>
     <n-scrollbar>
         <n-space vertical>
-            <n-alert type="warning">您当前正在使用 Alpha 测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+            <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
 
             <n-config-provider :theme="darkTheme">
                 <n-card :bordered="false" :style="{ background: `url(${cardImage}),rgba(0, 0, 0, 0.2)` }" style="
@@ -64,7 +64,7 @@ onMounted(async () => {
                     <tbody>
                         <tr>
                             <td>OpenFrp Cross Platform Launcher</td>
-                            <td>Alpha v{{ currentVersion }}</td>
+                            <td>Beta v{{ currentVersion }}</td>
                         </tr>
                         <tr>
                             <td>系统架构</td>

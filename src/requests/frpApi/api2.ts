@@ -1,5 +1,4 @@
-import axios from 'axios';
-import Cookies from 'js-cookie';
+import { callApi } from '../../utils/apiClient';
 
 interface Response {
   data: any;
@@ -8,34 +7,75 @@ interface Response {
 }
 
 function logoutCurr() {
-  return axios.request<Response>({
-    url: 'https://api.openfrp.net/frp/api/logout',
-    method: 'post',
-    headers: {
-      Authorization: Cookies.get('authorization') || '',
-    },
-  });
+  try {
+    const response = callApi<Response>('logout', {
+      method: 'POST',
+      body: {},
+    });
+    
+    // 检查响应是否为 null 或 undefined
+    if (!response) {
+      throw new Error('API 返回了空响应');
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('更改隧道状态失败:', error);
+    // 返回一个默认响应，避免 null 引用错误
+    return {
+      data: null,
+      flag: false,
+      msg: error instanceof Error ? error.message : '未知错误'
+    };
+  }
 }
 
 function logoutAll() {
-  return axios.request<Response>({
-    url: 'https://api.openfrp.net/frp/api/logoutAll',
-    method: 'post',
-    headers: {
-      Authorization: Cookies.get('authorization') || '',
-    },
-  });
+  try {
+    const response = callApi<Response>('logoutAll', {
+      method: 'POST',
+      body: {},
+    });
+    
+    // 检查响应是否为 null 或 undefined
+    if (!response) {
+      throw new Error('API 返回了空响应');
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('更改隧道状态失败:', error);
+    // 返回一个默认响应，避免 null 引用错误
+    return {
+      data: null,
+      flag: false,
+      msg: error instanceof Error ? error.message : '未知错误'
+    };
+  }
 }
 
 function argoAccept(data: any) {
-  return axios.request<Response>({
-    url: 'https://api.openfrp.net/ext/argoAccept',
-    method: 'post',
-    headers: {
-      Authorization: Cookies.get('authorization') || '',
-    },
-    data: data,
-  });
+  try {
+    const response = callApi<Response>('argoAccept', {
+      method: 'POST',
+      body: data,
+    });
+    
+    // 检查响应是否为 null 或 undefined
+    if (!response) {
+      throw new Error('API 返回了空响应');
+    }
+    
+    return response;
+  } catch (error) {
+    console.error('更改隧道状态失败:', error);
+    // 返回一个默认响应，避免 null 引用错误
+    return {
+      data: null,
+      flag: false,
+      msg: error instanceof Error ? error.message : '未知错误'
+    };
+  }
 }
 
 export { logoutCurr, logoutAll, argoAccept };

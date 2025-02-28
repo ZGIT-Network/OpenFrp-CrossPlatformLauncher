@@ -27,7 +27,7 @@ if (Cookies.get('authorization')) {
   if (callbackCode.value) {
     oauthCallback(String(callbackCode.value))
       .then((res) => {
-        console.log(res)
+        // console.log(res)
         if (res.data.flag) {
             const auth = (res.data as any).data['authorization'] || 
                   (res.data as any)?.data.authorization;
@@ -35,11 +35,12 @@ if (Cookies.get('authorization')) {
             expires: 7,
           });
           message.success((res.data as any).data?.msg);
-          message.info(auth)
           console.log(auth)
-          const redirectPath = sessionStorage.getItem('redirectPath') || '/home'; // 默认登录跳转
+          const redirectPath = '/home'; // 默认登录跳转
           sessionStorage.removeItem('redirectPath');
+          window.location.reload();
           router.push(redirectPath);
+
         } else {
           loginErr.value = (res.data as any).data.msg;
           message.error((res.data as any).data.msg);

@@ -2,7 +2,7 @@
 import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
 import { darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
 import { GlobalThemeOverrides } from 'naive-ui';
-import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutHeader, NLayoutContent, NText } from 'naive-ui';
+import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutHeader, NLayoutContent, NText, NScrollbar } from 'naive-ui';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { useRouter, useRoute } from 'vue-router';
@@ -173,6 +173,7 @@ document.oncontextmenu = function (event: any) {
 </script>
 
 <template>
+  <div id="captcha-box"></div>
   <n-config-provider :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" :theme="theme">
     <n-dialog-provider>
       <n-loading-bar-provider>
@@ -194,9 +195,11 @@ document.oncontextmenu = function (event: any) {
                   <n-layout-content content-style="padding: 24px;">
                     <n-text
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
-                      OpenFrp Cross Platform Launcher<br />Alpha v{{currentVersion}} 预览体验计划
+                      OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划
                     </n-text>
-                    <router-view></router-view>
+                    <n-scrollbar style="max-height: calc(100vh - 64px - 48px);">
+                      <router-view></router-view>
+                    </n-scrollbar>
                   </n-layout-content>
                 </n-layout>
               </n-layout>
@@ -208,6 +211,7 @@ document.oncontextmenu = function (event: any) {
     <n-global-style />
   </n-config-provider>
 </template>
+
 
 <style>
 html,

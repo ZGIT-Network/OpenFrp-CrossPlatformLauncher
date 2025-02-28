@@ -1,0 +1,308 @@
+<script lang="ts" setup>
+import { computed, ref } from 'vue';
+import { useRouter } from 'vue-router';
+
+// import classNames from 'classnames';
+import { useLoadingBar, useMessage, useNotification } from 'naive-ui';
+
+import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
+import frpApiNewProxy from '@/requests/frpApi/frpApiNewProxy';
+import { ArrowBackOutline, CloudUploadOutline } from '@vicons/ionicons5';
+
+import Edit from '../ManageProxies/Edit.vue';
+import Card from './Card.vue';
+
+// import frpApiNewProxy from '@/requests/frpApiNewProxy';
+import './style.less';
+
+// const total = ref<number>(0);
+const nodeList = ref<Struct.Node[]>();
+
+const router = useRouter();
+const notification = useNotification();
+const message = useMessage();
+const loadingBar = useLoadingBar();
+const watchDog = ref<boolean>(false);
+
+const fallbackConf = (success: boolean, body: Struct.EditOrNewUserProxy | undefined) => {
+  if (success && body !== undefined) {
+    // console.log(body);
+    createProxy(body);
+    // if (watchDog.value != null) {
+
+    // }
+  } else {
+    setTimeout(() => {
+      watchDog.value = false;
+    }, 1000);
+  }
+};
+const handleGetConf = () => {
+  watchDog.value = true;
+  // if (watchDog.value != null) {
+
+  // }
+};
+const getNodeList = () => {
+  loadingBar.start();
+  frpApiGetNodeList().then((res) => {
+    if (res.data.flag) {
+      //      total.value = res.data.total;
+      //    sourceList.value = res.data.list || [];
+      nodeList.value = res.data.list;
+      loadingBar.finish();
+    } else {
+      message.error(res.data.msg);
+      loadingBar.error();
+    }
+  });
+};
+const createProxy = (body: Struct.EditOrNewUserProxy) => {
+  frpApiNewProxy(body)
+    .then((res) => {
+      if (res.data.flag) {
+        message.info(`隧道 ${body.name} ${res.data.msg}`);
+        router.push('/manage-proxies');
+      } else {
+        message.error(res.data.msg);
+      }
+    })
+    .catch((res) => {
+      message.error(res.statusText);
+    });
+  watchDog.value = false;
+};
+getNodeList();
+
+const displayVIP = ref<boolean>(true);
+const displayCan = ref<boolean>(true);
+
+const currentState = ref<number>(1);
+const contentRef = ref();
+const expandItem = ref<string | null>('china-mainland');
+const selectedNode = ref<Struct.Node>({
+  allowEc: false,
+  fullyLoaded: false,
+  bandwidth: -1,
+  bandwidthMagnification: -1,
+  classify: -1,
+  comments: '',
+  group: '',
+  id: -1,
+  maxOnlineMagnification: -1,
+  name: '',
+  needRealname: false,
+  port: -1,
+  status: -1,
+  unitcostEc: -1,
+  description: '',
+  protocolSupport: {
+    tcp: false,
+    udp: false,
+    http: false,
+    https: false,
+  },
+  allowPort: null,
+});
+const handleSelected = (node: Struct.Node) => {
+  if (node.fullyLoaded) {
+    notification.destroyAll();
+    notification.error({
+      title: `无法选中 #${node.id} ${node.name}`,
+      content: '该节点现处于满载状态，可尝试刷新后再次选择或选用其他节点',
+      duration: 2500,
+    });
+    return;
+  }
+  selectedNode.value = node;
+  currentState.value = 2;
+
+  if (window.innerWidth < 745.5) {
+    setTimeout(() => {
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth',
+      });
+    }, 150);
+  } else {
+    setTimeout(() => {
+      contentRef.value.scrollIntoView({
+        behavior: 'smooth',
+      });
+    }, 150);
+  }
+};
+
+function nodeNumFilter(classify?: number) {
+  if (!classify || classify == 0) {
+    return 0;
+  }
+  let num: number = 0;
+  if (nodeList.value) {
+    nodeList.value.map((node) => {
+      if (node.classify === classify) {
+        num++
+      }
+    })
+  }
+  return num;
+}
+
+</script>
+
+<template>
+  <div className="createchannel">
+    <n-space :size="[0, 16]" vertical>
+      <n-h2>创建隧道</n-h2>
+      <div className="step-container">
+        <n-space :size="[20, 0]">
+          <n-button
+            v-if="currentState === 2"
+            circle
+            text
+            style="margin-top: 2px"
+            @click="() => (currentState = 1)"
+          >
+            <template #icon>
+              <n-icon :component="ArrowBackOutline"></n-icon>
+            </template>
+          </n-button>
+          <n-steps size="small" :current="currentState || -1">
+            <n-step title="选择隧道" />
+            <n-step title="填写配置" description="" />
+          </n-steps>
+        </n-space>
+      </div>
+
+      <div className="container">
+        <n-card title="创建隧道" :embedded="true">
+          <template #header-extra>
+            <n-space :className="`panel panel-ctrl-state-${currentState}`">
+              <n-checkbox :checked="displayCan" @update:checked="(x: boolean) => (displayCan = x)">
+                不可用
+              </n-checkbox>
+              <n-checkbox :checked="displayVIP" @update:checked="(x: boolean) => (displayVIP = x)">
+                会员节点
+              </n-checkbox>
+            </n-space>
+          </template>
+
+          <n-grid x-gap="16" y-gap="16" cols="1 650:12">
+            <n-gi span="7" :className="`panel panel-list-state-${currentState}`">
+              <n-skeleton v-if="!nodeList" height="30svh"></n-skeleton>
+              <n-collapse
+                v-else
+                accordion
+                default-expanded-names="china-mainland"
+                :expanded-names="expandItem"
+                @update:expanded-names="(x: string) => (expandItem = x)"
+              >
+                <n-collapse-item title="中国大陆" name="china-mainland">
+                  <template #header-extra>
+                    <n-tag type="info" size="small" round :bordered="false"> 均需实名 {{ nodeNumFilter(1) }}</n-tag>
+                  </template>
+                  <n-grid cols="1 450:2 650:3 850:4" y-gap="16" x-gap="16">
+                    <template v-for="node in nodeList">
+                      <n-gi
+                        v-if="
+                          node.classify === 1 &&
+                          (node.status == 200 || displayCan) &&
+                          (!node.fullyLoaded || displayCan) &&
+                          (node.group.includes('normal') || displayVIP)
+                        "
+                        :key="node.id"
+                      >
+                        <Card
+                          :fallback="handleSelected"
+                          :selected-id="selectedNode?.id"
+                          :node="node"
+                        ></Card>
+                      </n-gi>
+                    </template>
+                  </n-grid>
+                </n-collapse-item>
+                <n-collapse-item title="中国香港 / 中国台湾 / 中国澳门" name="china-hk&china-tw">
+                  <template #header-extra>
+                    <n-tag type="success" size="small" round :bordered="false"> 免备建站 {{ nodeNumFilter(2) }}</n-tag>
+                  </template>
+                  <n-grid cols="1 450:2 650:3 850:4" y-gap="16" x-gap="16">
+                    <template v-for="node in nodeList">
+                      <n-gi
+                        v-if="
+                          node.classify === 2 &&
+                          (node.status == 200 || displayCan) &&
+                          (!node.fullyLoaded || displayCan) &&
+                          (node.group.includes('normal') || displayVIP)
+                        "
+                        :key="node.id"
+                      >
+                        <Card
+                          :fallback="handleSelected"
+                          :selected-id="selectedNode?.id"
+                          :node="node"
+                        ></Card>
+                      </n-gi>
+                    </template>
+                  </n-grid>
+                </n-collapse-item>
+                <n-collapse-item title="海外" name="foreign">
+                  <template #header-extra>
+                    <n-tag type="warning" size="small" round :bordered="false"> 不建议中国大陆使用 {{ nodeNumFilter(3) }}</n-tag>
+                  </template>
+                  <n-grid cols="1 450:2 650:3 850:4" y-gap="16" x-gap="16">
+                    <template v-for="node in nodeList">
+                      <n-gi
+                        v-if="
+                          node.classify === 3 &&
+                          (node.status == 200 || displayCan) &&
+                          (!node.fullyLoaded || displayCan) &&
+                          (node.group.includes('normal') || displayVIP)
+                        "
+                        :key="node.id"
+                      >
+                        <Card
+                          :fallback="handleSelected"
+                          :selected-id="selectedNode?.id"
+                          :node="node"
+                        ></Card>
+                      </n-gi>
+                    </template>
+                  </n-grid>
+                </n-collapse-item>
+              </n-collapse>
+            </n-gi>
+
+            <n-gi span="5" :className="`panel panel-editor-state-${currentState}`">
+              <div
+                :ref="(child) => (contentRef = child)"
+                style="display: flex; justify-content: left"
+              >
+                <n-space id="wtf" vertical size="large" style="max-width: 650px; width: 100%">
+                  <Edit
+                    v-bind:node-config="computed(() => selectedNode)"
+                    :fallback="fallbackConf"
+                    v-bind:watch-dog="computed(() => watchDog)"
+                    :isEditMode="false"
+                    :editConfig="undefined"
+                  ></Edit>
+                  <n-button
+                    :loading="watchDog"
+                    :disabled="watchDog"
+                    type="primary"
+                    size="large"
+                    @click="handleGetConf"
+                  >
+                    <template #icon>
+                      <n-icon :component="CloudUploadOutline"></n-icon>
+                    </template>
+                    提交
+                  </n-button>
+                </n-space>
+              </div>
+            </n-gi>
+          </n-grid>
+        </n-card>
+      </div>
+    </n-space>
+  </div>
+</template>

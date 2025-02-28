@@ -1,0 +1,32 @@
+.createchannel {
+  .node-selector {
+    width: 300px;
+    cursor: pointer;
+    outline: 1px solid transparent;
+    .n-tag {
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+    }
+    &.node-selected {
+      &:hover {
+        box-shadow: 0 0 10px #00000018;
+      }
+
+      transition: outline 0.1s ease-out;
+      outline: 1px solid var(--n-color-target);
+    }
+
+    &.node-disabled {
+      .actual-dark & {
+        filter: grayscale(60%);
+      }
+      .actual-light & {
+        filter: grayscale(80%);
+      }
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+  }
+}

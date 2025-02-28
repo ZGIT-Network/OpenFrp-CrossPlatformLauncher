@@ -4,7 +4,7 @@ import Settings from '../components/Settings.vue'
 import Home from '../components/Home.vue'
 import ProxyList from '../components/ProxyList.vue'
 import Info from '../components/Info.vue'
-import CreateProxy from '../components/CreateProxy.vue'
+import CreateProxy from '../components/CreateProxies/index.vue'
 import Login from '@/components/Login.vue'
 
 const routes = [

@@ -177,7 +177,7 @@ const handleDeepLink = async (url: string) => {
     if (code) {
       // 保存 token
       // localStorage.setItem('userToken', token)
-      message.success('获取到登录码')
+      message.success('获取到登录码，您可以关闭刚刚打开的窗口了')
       urlObj.searchParams.delete('code')
       // 发送事件到日志系统
     
@@ -518,7 +518,7 @@ onUnmounted(() => {
               transform="translate(-72.79 -105.36)" />
           </svg>
         </div>
-        Cross Platform Launcher Alpha 0.2.0
+        Cross Platform Launcher Beta 0.3.1
       </div>
     </div>
     <div class="header-right" data-tauri-drag-region>

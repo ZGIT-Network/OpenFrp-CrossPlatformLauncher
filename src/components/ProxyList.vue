@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted,h, computed, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted,h, computed, nextTick, watch,inject,Ref } from 'vue'
 import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
@@ -13,6 +13,13 @@ const notification = useNotification()
 const tunnels = ref<any[]>([])
 const loading = ref(false)
 const loadingTunnels = ref<Set<string>>(new Set())
+
+
+const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
+const userInfo = userInfoObj?.userInfo;
+
+
+  
 
 const linkTunnelsStore = useLinkTunnelsStore()
 
@@ -33,9 +40,12 @@ const getUserToken = () => {
 
 // 获取隧道列表并检查状态
 const fetchProxyList = async () => {
-  const token = getUserToken()
+  // 修改这里：确保从用户信息中获取 token
+  const token = userInfo?.value?.token
+
   if (!token) {
-    message.warning('请先在设置页面配置用户密钥')
+    message.error('未获取到用户 token，请确保已登录')
+    loading.value = false
     return
   }
 
@@ -130,7 +140,14 @@ const copyToClipboard = async (text: string) => {
 }
 
 const toggleTunnel = async (tunnel: any) => {
-  const token = getUserToken()
+  // 修改这里：优先使用 userInfo 中的 token
+  const token = userInfo?.value?.token
+
+  if (!token) {
+    message.error('未获取到用户 token，请确保已登录')
+    return
+  }
+
   try {
     loadingTunnels.value.add(tunnel.id.toString())
 
@@ -165,7 +182,6 @@ const toggleTunnel = async (tunnel: any) => {
           tunnelName: tunnel.name
         }
       })
-
       // 等待日志响应
       message.loading('正在启动隧道', {duration: 1000})
       let logMessage = ''
@@ -191,11 +207,11 @@ const toggleTunnel = async (tunnel: any) => {
             resolve({success: false, message: errorMessage})
           }
         })
-        
+        // 修复这里：添加 invoke 调用
         invoke('start_frpc_instance', {
           id: tunnel.id.toString(),
-          token: token,
-          tunnelId: tunnel.id.toString()
+          token: token,  // 确保这里的 token 是有效的
+          tunnelId: tunnel.id.toString()  // 确保这是正确的隧道 ID
         }).catch((error) => {
           clearTimeout(timeout)
           logListener.then(unlisten => unlisten())
@@ -246,7 +262,6 @@ const toggleTunnel = async (tunnel: any) => {
     loadingTunnels.value.delete(tunnel.id.toString())
   }
 }
-
 // 保存隧道状态
 const saveTunnelStates = () => {
   // 只保存当前正在运行的隧道

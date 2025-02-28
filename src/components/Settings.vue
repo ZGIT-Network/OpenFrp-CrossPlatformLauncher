@@ -25,14 +25,14 @@ import {
     NH3
     
 } from 'naive-ui'
-import { inject, watch } from 'vue'
+import { inject, watch, Ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
 import { HelpCircleOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 
-
+import { logoutCurr } from '@/requests/frpApi/api2'
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
 
 // const router = useRouter()
@@ -52,7 +52,13 @@ const dialog = useDialog()
 
 const downloading = ref(false)
 const logs = ref('')
-const userToken = ref('')
+
+const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
+const userInfo = userInfoObj?.userInfo;
+
+console.log(userInfo)
+
+const userToken = ref(userInfo?.value?.token)
 const tempToken = ref('') // 临时存储用户输入的token
 const currentVersion = ref('获取中...')
 const checking = ref(false)
@@ -120,9 +126,6 @@ let unlistenLog: any = null
 let unlistenNeedDownload: any = null
 
 // 将用户Token保存到localStorage
-watch(userToken, (newValue) => {
-    localStorage.setItem('userToken', newValue)
-})
 
 onMounted(async () => {
     unlistenLog = await listen('log', (event: any) => {
@@ -347,25 +350,50 @@ const helpDrawer = (type: string) => {
     helpDrawerVisible.value = true
     helpDrawerContent.value = type
 }
+// 添加退出登录函数
+const logout = () => {
+  
+  dialog.warning({
+    title: '确认退出',
+    content: '确定要退出登录吗？',
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      // 清除用户token
+      logoutCurr()
+      userToken.value = ''
+      tempToken.value = ''
+      localStorage.removeItem('userToken')
+      message.success('已成功退出登录')
+      window.location.reload()
+    }
+  })
+}
 </script>
 
 <template>
     <n-scrollbar>
         <n-card title="设置">
             <n-space vertical>
-                <n-alert type="warning">您当前正在使用 Alpha 测试版本，可能存在很多问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+                <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
 
 
                 <n-form>
                     <n-space>
-                        <n-form-item label="用户密钥">
+                        <n-form-item label="用户登录">
                             <n-space>
-                                <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
-                                <n-button type="primary" @click="saveSettings">保存设置</n-button>
+                                <!-- <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
+                                <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
 
-                                <br/>测试：    <n-button type="primary" @click="oauthLogin">oauth登录</n-button>
+                                <n-button v-if="!userToken" type="primary" @click="oauthLogin">oauth登录</n-button>
+
+                                <n-space v-else>
+                                  已登录至: {{userInfo?.username}}
+                                  <n-button type="error" @click="logout">退出登录</n-button>
+                                </n-space>
                             </n-space>
                         </n-form-item>
+                        
                         <n-form-item label="主题">
                             <n-switch v-model:value="isDark">
                                 <template #checked>深色</template>
@@ -378,7 +406,7 @@ const helpDrawer = (type: string) => {
                 <n-collapse v-model:expanded-names="activeNames" accordion>
                     <n-collapse-item title="版本信息" name="2">
                         <n-space vertical>
-                            <n-text>当前版本：Alpha v{{ currentVersion }}</n-text>
+                            <n-text>当前版本：Beta v{{ currentVersion }}</n-text>
                             <n-space>
                                 <n-button @click="checkUpdate" :loading="checking">
                                     {{ checking ? '检查中...' : '检查更新' }}

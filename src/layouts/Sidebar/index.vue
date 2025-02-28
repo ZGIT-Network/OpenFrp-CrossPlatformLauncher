@@ -1,10 +1,22 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, watch, inject, computed, Ref } from 'vue';
 import { h } from 'vue';
-import { RouterLink } from 'vue-router';
-import { NMenu,NMenuItem, NIcon, NLayout, NLayoutHeader, NLayoutContent, NText, NLayoutSider } from 'naive-ui';
+import { RouterLink, useRoute } from 'vue-router';
+import { NMenu, NLayoutSider } from 'naive-ui';
 import type { MenuOption } from 'naive-ui';
 import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5';
+
+// 获取当前路由
+const route = useRoute();
+
+// 注入用户信息
+const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
+const userInfo = userInfoObj?.userInfo;
+
+// 计算用户是否已登录
+const isLoggedIn = computed(() => {
+  return !!userInfo?.value?.token;
+});
 
 const props = defineProps({
   collapsed: {
@@ -13,6 +25,9 @@ const props = defineProps({
   }
 });
 
+// 使用计算属性或直接使用props.collapsed，而不是创建独立的ref
+// const collapsed = ref(props.collapsed);
+
 const emit = defineEmits(['update:collapsed']);
 
 const toggleCollapse = (value: boolean) => {
@@ -20,7 +35,7 @@ const toggleCollapse = (value: boolean) => {
 };
 
 // 菜单配置
-const menuOptions: MenuOption[] = [
+const menuOptions = computed(() => [
   {
     label: () => h(RouterLink, { to: { name: 'Home' } }, { default: () => '主页' }),
     key: 'home',
@@ -29,7 +44,8 @@ const menuOptions: MenuOption[] = [
   {
     label: () => h(RouterLink, { to: { name: 'CreateProxy' } }, { default: () => '新建隧道' }),
     key: 'newproxy',
-    icon: () => h(AddOutline)
+    icon: () => h(AddOutline),
+    disabled: !isLoggedIn.value // 未登录时禁用
   },
   {
     label: () => h(RouterLink, { to: { name: 'ProxyList' } }, { default: () => '隧道管理' }),
@@ -56,10 +72,24 @@ const menuOptions: MenuOption[] = [
     key: 'webpanel',
     icon: () => h(EnterOutline)
   }
-];
+]);
 
 // 设置默认选中的菜单项
 const selectedKey = ref('home');
+
+// 监听路由变化，更新选中的菜单项
+watch(() => route.name, (newRouteName) => {
+  if (newRouteName) {
+    // 将路由名称转换为小写，以匹配菜单key
+    const routeKey = newRouteName.toString().toLowerCase();
+    
+    // 检查是否有匹配的菜单项
+    const menuItem = menuOptions.value.find(item => item.key === routeKey);
+    if (menuItem) {
+      selectedKey.value = routeKey;
+    }
+  }
+}, { immediate: true });
 </script>
 
 <template>
@@ -68,13 +98,13 @@ const selectedKey = ref('home');
     collapse-mode="width" 
     :collapsed-width="64" 
     :width="240" 
-    :collapsed="collapsed"
+    :collapsed="props.collapsed"
     show-trigger 
     @collapse="toggleCollapse(true)" 
     @expand="toggleCollapse(false)"
   >
     <n-menu 
-      :collapsed="collapsed" 
+      :collapsed="props.collapsed" 
       :collapsed-width="64" 
       :collapsed-icon-size="22" 
       :options="menuOptions"
