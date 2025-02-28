@@ -50,6 +50,54 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
+      
+       # 这下面是macOS需要要搞的一些东西
+      - name: Import Code Signing Certificates (macOS only)
+        if: matrix.platform == 'macos-latest'
+        # 此处使用 import-codesign-certs action 简化证书导入工作
+        uses: apple-actions/import-codesign-certs@v3
+        with: 
+          p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
+          p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
+
+      - name: Sign .app with Hardened Runtime (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          echo "Currently signing the .app file and trying to enable Hardened Runtime"
+          codesign --deep --force --verify --verbose \
+            --options runtime \
+            --entitlements /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/macos.entitlements \
+            --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
+            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+
+      - name: Create Signed DMG (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          echo "Use signed .app file to pack a brand new DMG file"
+          brew install create-dmg || true
+          create-dmg \
+            --volname "OpenFrp-CrossPlatformLauncher" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon "OpenFrp-CrossPlatformLauncher.app" 200 190 \
+            --app-drop-link 600 185 \
+            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/dmg/OpenFrp-CrossPlatformLauncher_aarch64_signed.dmg \
+            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+
+      # 女士们先生们，下面是苹果臭名昭著的公证环节！(bushi))))
+      - name: Notarize DMG (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          echo "Submit DMG to Apple Notarizaton"
+          xcrun notarytool submit /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/dmg/OpenFrp-CrossPlatformLauncher_aarch64_signed.dmg \
+            --apple-id "${{ secrets.APPLE_ID }}" \
+            --password "${{ secrets.APPLE_SPECIFIC_PASSWORD }}" \
+            --team-id "${{ secrets.TEAM_ID }}" \
+            --wait
+          echo "Stapling DMG..."
+          xcrun stapler staple /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/dmg/OpenFrp-CrossPlatformLauncher_aarch64_signed.dmg
+
+
       - name: Upload artifacts (dev build only)
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4    # 更新到 v4 版本
