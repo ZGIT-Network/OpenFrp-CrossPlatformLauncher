@@ -356,7 +356,10 @@ const oauthLogin = () => {
                     action: () => h(NInput, {
                       value: res.data.data,
                       readonly: true,
-                      onFocus: (e) => e.target.select()
+                      onFocus: (e: FocusEvent) => {
+                        const target = e.target as HTMLInputElement;
+                        target?.select();
+                      }
                     })
                   });
                 });

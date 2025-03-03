@@ -99,7 +99,7 @@ const getSignInfo = (retries = 2) => {
 // 添加一个直接获取用户信息的函数，以防注入失败
 // 修改获取用户信息的函数
 const fetchUserInfo = (retries = 2) => {
-  if (!isLoggedIn()) {
+  if (!isLoggedIn.value) {
     loading.value = false;
     return;
   }

@@ -40,8 +40,7 @@ onMounted(() => {
         if (res.data.flag) {
           // 统一获取授权信息
           const authData = res.data.data || {};
-          // 修复授权信息获取逻辑
-          const authorization = authData.authorization;
+          const authorization = (authData as any).authorization;
           
           if (!authorization) {
             throw new Error('未获取到授权信息');
@@ -52,7 +51,7 @@ onMounted(() => {
             expires: 7,
           });
           
-          message.success(authData.msg || '登录成功');
+          message.success((authData as any).msg || '登录成功');
           loginStatus.value = 'success';
           
           // 处理重定向
@@ -66,11 +65,10 @@ onMounted(() => {
             });
           }, 1000);
         } else {
-          const errorMsg = res.data.data?.msg || '登录失败';
+          const errorMsg = (res.data.data as any)?.msg || '登录失败';
           loginErr.value = errorMsg;
           message.error(errorMsg);
           loadingbar.error();
-          loginStatus.value = 'error';
         }
       })
       .catch((error) => {
