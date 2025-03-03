@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-
-// 添加类型声明以解决 TypeScript 报错
 import Cookies from '@/utils/cookies';
-
+// 修复组件导入，确保从naive-ui中正确导入所需组件
 import { useLoadingBar, useMessage } from 'naive-ui';
-
+import { NResult, NSpin } from 'naive-ui';
 import oauthCallback from '@/requests/oauth/oauthCallback';
 
 const message = useMessage();
@@ -14,94 +12,137 @@ const router = useRouter();
 const route = useRoute();
 const loadingbar = useLoadingBar();
 const loginErr = ref<string | undefined>(undefined);
-const callbackCode = ref<any>();
+const isProcessing = ref(false);
+const loginStatus = ref<'processing' | 'success' | 'error' | 'idle'>('idle');
 
-if (Cookies.get('authorization')) {
-  console.log(Cookies.get('authorization'))
-  router.push('/home');
-} else {
+// 处理登录逻辑
+onMounted(() => {
+  // 如果已经登录，直接跳转到首页
+  if (Cookies.get('authorization')) {
+    console.log('已登录，跳转到首页');
+    router.push('/home');
+    return;
+  }
+
+  // 开始处理OAuth回调
   loadingbar.start();
-  callbackCode.value = route.query.code; // 先copy一份
-  router.replace({ query: {} }); // 清除query
-  if (callbackCode.value) {
-    oauthCallback(String(callbackCode.value))
+  const callbackCode = route.query.code;
+  
+  // 清除URL中的查询参数
+  router.replace({ query: {} });
+  
+  if (callbackCode) {
+    isProcessing.value = true;
+    loginStatus.value = 'processing';
+    
+    oauthCallback(String(callbackCode))
       .then((res) => {
-        // console.log(res)
         if (res.data.flag) {
-            const auth = (res.data as any).data['authorization'] || 
-                  (res.data as any)?.data.authorization;
-          Cookies.set('authorization', (res.data.data as any)?.authorization , {
+          // 统一获取授权信息
+          const authData = res.data.data || {};
+          // 修复授权信息获取逻辑
+          const authorization = authData.authorization;
+          
+          if (!authorization) {
+            throw new Error('未获取到授权信息');
+          }
+          
+          // 保存授权信息
+          Cookies.set('authorization', authorization, {
             expires: 7,
           });
-          message.success((res.data as any).data?.msg);
-          console.log(auth)
-          const redirectPath = '/home'; // 默认登录跳转
+          
+          message.success(authData.msg || '登录成功');
+          loginStatus.value = 'success';
+          
+          // 处理重定向
+          const redirectPath = sessionStorage.getItem('redirectPath') || '/home';
           sessionStorage.removeItem('redirectPath');
           
-          // 使用平滑过渡而不是直接刷新
-          // 创建一个过渡元素
-          const transitionEl = document.createElement('div');
-          transitionEl.style.position = 'fixed';
-          transitionEl.style.top = '0';
-          transitionEl.style.left = '0';
-          transitionEl.style.width = '100%';
-          transitionEl.style.height = '100%';
-          transitionEl.style.backgroundColor = '#121212'; // 深色背景
-          transitionEl.style.zIndex = '9999';
-          transitionEl.style.opacity = '0';
-          transitionEl.style.transition = 'opacity 0.3s ease';
-          
-          // 添加加载动画
-          const spinner = document.createElement('div');
-          spinner.style.width = '40px';
-          spinner.style.height = '40px';
-          spinner.style.border = '4px solid rgba(255, 255, 255, 0.1)';
-          spinner.style.borderRadius = '50%';
-          spinner.style.borderTopColor = '#18a058';
-          spinner.style.position = 'absolute';
-          spinner.style.top = '50%';
-          spinner.style.left = '50%';
-          spinner.style.transform = 'translate(-50%, -50%)';
-          spinner.style.animation = 'spin 1s linear infinite';
-          
-          // 添加动画关键帧
-          const style = document.createElement('style');
-          style.textContent = '@keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }';
-          document.head.appendChild(style);
-          
-          transitionEl.appendChild(spinner);
-          document.body.appendChild(transitionEl);
-          
-          // 淡入过渡元素
+          // 使用平滑过渡
           setTimeout(() => {
-            transitionEl.style.opacity = '1';
-            
-            // 淡入后再跳转并刷新
-            setTimeout(() => {
-              router.push(redirectPath).then(() => {
-                window.location.reload();
-              });
-            }, 300);
-          }, 10);
-      } else {
-        loginErr.value = (res.data as any).data.msg;
-        message.error((res.data as any).data.msg);
+            router.push(redirectPath).then(() => {
+              window.location.reload();
+            });
+          }, 1000);
+        } else {
+          const errorMsg = res.data.data?.msg || '登录失败';
+          loginErr.value = errorMsg;
+          message.error(errorMsg);
+          loadingbar.error();
+          loginStatus.value = 'error';
+        }
+      })
+      .catch((error) => {
+        console.error('登录过程出错:', error);
+        loginErr.value = error.message || '登录过程出错';
+        message.error(error.message || '登录过程出错');
         loadingbar.error();
-      }
-    })
-    .catch((x) => message.error(x))
-    .finally(() => {
-      loadingbar.finish();
-    });
+        loginStatus.value = 'error';
+      })
+      .finally(() => {
+        isProcessing.value = false;
+        loadingbar.finish();
+      });
   } else {
+    // 没有回调代码，可能是直接访问登录页
     setTimeout(() => {
       loadingbar.finish();
-      
     }, 1000);
   }
-}
+});
 </script>
+
 <template>
-  <div style="margin-top: 15vh">
+  <div class="login-container">
+    <n-result
+      v-if="loginStatus === 'processing'"
+      status="info"
+      title="登录处理中"
+      description="正在验证您的身份，请稍候..."
+    >
+      <template #footer>
+        <n-spin size="large" />
+      </template>
+    </n-result>
+
+    <n-result
+      v-else-if="loginStatus === 'error'"
+      status="error"
+      title="登录失败"
+      :description="loginErr || '登录过程中发生错误'"
+    />
+
+    <n-result
+      v-else-if="loginStatus === 'success'"
+      status="success"
+      title="登录成功"
+      description="正在跳转到系统..."
+    >
+      <template #footer>
+        <n-spin size="small" />
+      </template>
+    </n-result>
+
+    <n-result
+      v-else
+      status="info"
+      title="欢迎使用"
+      description="请通过授权链接登录系统"
+    />
   </div>
 </template>
+
+<style scoped>
+.login-container {
+  margin-top: 15vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>

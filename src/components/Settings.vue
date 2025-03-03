@@ -32,7 +32,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener';
-
+import Cookies from '@/utils/cookies'
+import { callApi } from '@/utils/apiClient'
+import authhelpimage from '@/assets/authhelpimage.vue'
 
 import { logoutCurr } from '@/requests/frpApi/api2'
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -57,6 +59,9 @@ const logs = ref('')
 
 const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
 const userInfo = userInfoObj?.userInfo;
+const Authorization = ref('')
+
+
 
 console.log(userInfo)
 
@@ -94,6 +99,8 @@ onMounted(() => {
         userToken.value = savedToken
         tempToken.value = savedToken
     }
+
+    Authorization.value = Cookies.get('authorization') || ''
 
     // 设置默认值
     if (localStorage.getItem('autoRestoreTunnels') === null) {
@@ -325,20 +332,44 @@ const toggleDeepLink = async (value: boolean) => {
 import getLoginUrl from '@/requests/oauth/getLoginUrl'
 
 const oauthLogin = () => {
-    message.loading('正在拉起登录...')
+    message.loading('正在准备登录...', { duration: 3000 });
     getLoginUrl()
         .then((res) => {
           if (!res.data.flag) {
-            message.error('无法获取登录url');
+            message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
             return;
           }
-          openUrl(res.data.data);
+          
+          try {
+            // 在打开URL前显示提示
+            message.info('正在打开登录页面，请在浏览器中完成授权');
+            // 使用 setTimeout 确保消息显示后再打开URL
+            setTimeout(() => {
+              openUrl(res.data.data)
+                .catch(err => {
+                  console.error('打开URL失败:', err);
+                  message.error('无法打开浏览器，请手动复制链接进行登录');
+                  // 提供复制链接的选项
+                  dialog.info({
+                    title: '手动登录',
+                    content: '请复制以下链接在浏览器中打开完成登录:',
+                    action: () => h(NInput, {
+                      value: res.data.data,
+                      readonly: true,
+                      onFocus: (e) => e.target.select()
+                    })
+                  });
+                });
+            }, 500);
+          } catch (error) {
+            console.error('打开URL过程中出错:', error);
+            message.error('打开登录页面失败，请稍后重试');
+          }
         })
         .catch((err) => {
-          console.log(err);
-          message.error('请求时发生错误, 请重试');
+          console.error('获取登录URL失败:', err);
+          message.error('请求登录URL时发生错误: ' + (err.message || '未知错误'));
         });
-    // router.push('/login')
 }
 
 interface CplUpdate {
@@ -365,11 +396,70 @@ const logout = () => {
       logoutCurr()
       userToken.value = ''
       tempToken.value = ''
+      Cookies.remove('authorization');
       localStorage.removeItem('userToken')
       message.success('已成功退出登录')
       window.location.reload()
     }
   })
+}
+
+const Authlogout = () => {
+  
+  dialog.warning({
+    title: '确认退出',
+    content: '确定要退出登录吗？',
+    positiveText: '确定',
+    negativeText: '取消',
+    onPositiveClick: () => {
+      // 清除用户token
+      logoutCurr()
+      Cookies.remove('authorization');
+      userToken.value = ''
+      tempToken.value = ''
+      localStorage.removeItem('userToken')
+      message.success('已成功退出登录')
+      window.location.reload()
+    }
+  })
+}
+const AuthLogin = async () => {
+  if (!Authorization.value) {
+    message.error('请输入 Authorization');
+    return;
+  }
+  message.loading('正在登录...', { duration: 2000 });
+  
+  try {
+    // 直接使用 invoke 而不是 callApi，避免循环检查
+    const testResponse = await invoke('proxy_api', {
+      url: 'getUserInfo',
+      method: 'POST',
+      headers: {
+        Authorization: Authorization.value
+      },
+      body: {},
+    });
+    console.log(testResponse);
+
+    if (!testResponse || !(testResponse as any).flag) {
+      message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
+      return;
+    }
+
+    // Authorization 有效，保存登录状态
+    Cookies.set('authorization', Authorization.value, {
+      expires: 7,
+    });
+    userToken.value = Authorization.value;
+    localStorage.setItem('userToken', Authorization.value);
+    tempToken.value = Authorization.value;
+    message.success('登录成功');
+    window.location.reload();
+  } catch (error: any) {
+    console.error('登录失败:', error);
+    message.error(error?.message || '登录失败：无效的 Authorization');
+  }
 }
 </script>
 
@@ -386,13 +476,31 @@ const logout = () => {
                             <n-space>
                                 <!-- <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
                                 <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
+                                <n-space v-if="userToken">
+                                    已登录至: {{userInfo?.username}}
+                                    <n-button type="error" @click="logout">退出登录</n-button>
+                                  </n-space>
+                                <n-tabs v-else type="bar" animated >
+                                    <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
+                                        <n-button v-if="!userToken" type="primary" @click="oauthLogin">oauth登录</n-button>
 
-                                <n-button v-if="!userToken" type="primary" @click="oauthLogin">oauth登录</n-button>
+                                        
+                                    </n-tab-pane>
+                                    <n-tab-pane name="authorization" tab="通过 Authorization 登录">
+                                        <n-form-item-row label="请输入在面板获取的 Authorization"> 
+                                            <n-input v-model:value="Authorization" type="password" placeholder="Authorization" />
+                                            <n-button quaternary circle  @click="helpDrawer('authorization')">
+                                                <template #icon>
+                                                    <n-icon><HelpCircleOutline /></n-icon>
+                                                </template>
+                                            </n-button>
+                                        </n-form-item-row>
+                                         <n-button v-if="!userToken"  type="primary" @click="AuthLogin">登录</n-button>
 
-                                <n-space v-else>
-                                  已登录至: {{userInfo?.username}}
-                                  <n-button type="error" @click="logout">退出登录</n-button>
-                                </n-space>
+                                    
+                                    </n-tab-pane>
+                                </n-tabs>
+                                
                             </n-space>
                         </n-form-item>
                         
@@ -479,6 +587,19 @@ const logout = () => {
                     <br/>
                     <br/>
                         * 通过“快速启动”功能启动的隧道无法开机自启动
+                    </n-text>
+                </n-thing>
+
+                <n-thing v-if="helpDrawerContent === 'authorization'">
+                    <n-h3>通过 Authorization 登录</n-h3>
+                    <n-text>
+                       可在 网页面板-个人中心 中的 “第三方客户端安全登录” 功能获取 Authorization 会话密钥。
+                    <br/>在无法使用Oauth回调登录时可尝试使用本方案。
+                    <br/>
+                    <authhelpimage/>
+
+                    <br/>
+                        * 虽然说是官方客户端，但是还是这样最简单来说
                     </n-text>
                 </n-thing>
                 <n-thing v-if="helpDrawerContent === 'none'">

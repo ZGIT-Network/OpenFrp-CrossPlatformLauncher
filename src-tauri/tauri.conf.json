@@ -50,7 +50,9 @@
       },
       "files": {},
       "hardenedRuntime": true,
-      "minimumSystemVersion": "10.15"
+      "minimumSystemVersion": "10.15",
+      "exceptionDomain": "",
+      "providerShortName": "openfrp"
     },
     "linux": {
       "deb": {
@@ -96,7 +98,7 @@
         "https://r.zyghit.cn/ofcpl/update/{{target}}/{{current_version}}"
       ],
       "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMjgzNjI4RTY2MkFFMkMKUldRc3JtTG1LRFlvS2lXS1lrSXkzVGJhYkIxeTJBVTl0NzNabWNYS2Z5YmQ3Z2RJdDJHRHhVRjcK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRCM0UzMTQzRTI5OENDODMKUldTRHpKamlRekUrUzU5V2NIY29SNlNwRmFrMENhemZlb1J2NkF0eGhLeWxPRC9jWDhRK2t2VEkK"
     }
   }
 }

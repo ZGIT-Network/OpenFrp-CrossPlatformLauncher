@@ -7,10 +7,19 @@ interface ApiOptions {
   body?: any;
 }
 
+// 添加登录状态检查
+export function isLoggedIn(): boolean {
+  return !!Cookies.get('authorization');
+}
+
 export async function callApi<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
+  // 检查是否登录
+  if (!isLoggedIn()) {
+    throw new Error('未登录');
+  }
+
   const { method = 'GET', headers = {}, body } = options;
   
-  // 添加授权头
   const authHeaders = {
     ...headers,
     Authorization: Cookies.get('authorization') || '',
@@ -23,13 +32,6 @@ export async function callApi<T>(endpoint: string, options: ApiOptions = {}): Pr
       headers: authHeaders,
       body,
     });
-    
-    console.log(`API 响应 (${endpoint}):`, response);
-    
-    // 检查响应是否为 null
-    if (response === null || response === undefined) {
-      console.error(`API 返回了空响应: ${endpoint}`);
-    }
     
     return response;
   } catch (error) {

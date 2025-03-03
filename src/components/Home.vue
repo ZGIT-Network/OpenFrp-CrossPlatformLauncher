@@ -97,39 +97,54 @@ const getSignInfo = (retries = 2) => {
 };
 
 // 添加一个直接获取用户信息的函数，以防注入失败
+// 修改获取用户信息的函数
 const fetchUserInfo = (retries = 2) => {
+  if (!isLoggedIn()) {
+    loading.value = false;
+    return;
+  }
+
   if (userInfo?.value) {
-    // 如果已经有用户信息，不需要再次获取
+    loading.value = false;
     return;
   }
   
-  console.log('直接获取用户信息');
+  console.log('获取用户信息');
   frpApiGetUserInfo().then((res) => {
     if (res.flag) {
-      // if (!userInfoObj) {
-      //   // 如果没有注入对象，创建一个本地的用户信息
-      //   const localUserInfo = ref(res.data);
-      //   userInfo.value = localUserInfo.value;
-      //   username.value = localUserInfo.value.username || '';
-      // } else 
       if (userInfoObj && !userInfoObj.userInfo.value) {
-        // 如果注入对象存在但值为空，设置值
         userInfoObj.userInfo.value = res.data;
       }
-      loading.value = false; // 用户信息加载完成
+      loading.value = false;
     } else {
       if (retries > 0) {
-        console.log(`获取用户信息失败，尝试重试，剩余次数: ${retries-1}`);
         setTimeout(() => {
           fetchUserInfo(retries - 1);
-        }, 500);
+        }, 1000); // 增加重试间隔
       } else {
-        message.error('获取用户信息失败，请尝试刷新页面');
+        loading.value = false;
+        message.error('获取用户信息失败');
       }
     }
+  }).catch(() => {
+    loading.value = false;
   });
 };
 
+// 修改检查函数
+const checkinfo = () => {
+  if (!isLoggedIn.value) {  // 修改这里，使用 .value 访问计算属性的值
+    loading.value = false;
+    return;
+  }
+
+  if(userInfo?.value) {
+    getSignInfo();
+    checkRealname(); 
+  } else {
+    fetchUserInfo();
+  }
+}
 const checkRealname = () => {
   if (!userInfo?.value?.realname) {
     message.warning('您尚未实名认证，请尽快进行实名认证以体验最佳服务');
@@ -154,15 +169,15 @@ const goToLogin = () => {
   message.info('请在设置页面完成登录');
 };
 
-const checkinfo = () => {
-  if(isLoggedIn.value) {
-    getSignInfo();
-    checkRealname(); 
-  } else {
-    // 如果没有登录状态，但有可能是因为注入失败，尝试直接获取用户信息
-    fetchUserInfo();
-  }
-}
+// const checkinfo = () => {
+//   if(isLoggedIn.value) {
+//     getSignInfo();
+//     checkRealname(); 
+//   } else {
+//     // 如果没有登录状态，但有可能是因为注入失败，尝试直接获取用户信息
+//     fetchUserInfo();
+//   }
+// }
 
 // 添加一个超时检查，如果长时间加载不出来，提示用户刷新
 onMounted(() => {
