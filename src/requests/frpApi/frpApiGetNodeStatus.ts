@@ -10,7 +10,7 @@ interface Response {
 export default async () => {
   try {
     const response = await callApi<Response>('getNodeStatus', {
-      method: 'POST',
+      method: 'GET',
       body: {},
     });
     

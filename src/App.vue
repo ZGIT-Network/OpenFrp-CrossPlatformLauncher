@@ -149,7 +149,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   // 清理所有监听器
-  cleanupFunctions.value.forEach(cleanup => cleanup());
+  cleanupFunctions.value.forEach((cleanup: any) => cleanup());
 });
 
 // 禁止右键菜单
@@ -195,7 +195,7 @@ document.oncontextmenu = function (event: any) {
                   <n-layout-content content-style="padding: 24px;">
                     <n-text
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
-                      OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划
+                      OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划 {{ userInfo?.username }}
                     </n-text>
                     <n-scrollbar style="max-height: calc(100vh - 64px - 48px);">
                       <router-view></router-view>

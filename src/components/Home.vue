@@ -7,6 +7,8 @@ import copy from 'copy-to-clipboard';
 import dayjs from 'dayjs';
 import { useRouter } from 'vue-router';
 
+// 导入获取用户信息的API
+import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
 
 import { CalendarOutline, CheckmarkCircle, KeyOutline } from '@vicons/ionicons5';
 
@@ -19,7 +21,7 @@ import frpApiUserSign from '@/requests/frpApi/frpApiUserSign';
 
 const signInfo = ref<Struct.SignInfo>();
 const signed = ref<boolean>();
-
+const loading = ref(true); // 添加一个加载状态变量
 
 const router = useRouter();
 import '@/assets/tianai/tac.min.js';
@@ -49,6 +51,7 @@ if (userInfoObj?.userInfo) {
     if (newVal) {
       username.value = newVal.username || '';
       console.log('用户名已更新:', username.value);
+      loading.value = false; // 用户信息加载完成
     }
   }, { immediate: true });
 }
@@ -73,13 +76,56 @@ const fetchBoardCast = async () => {
   }
 }
 
-const getSignInfo = () => {
+// 修改获取签到信息的函数，添加重试机制
+const getSignInfo = (retries = 2) => {
   frpApiGetSignInfo().then((res) => {
     if (res.flag) {
       signInfo.value = res.data;
       signed.value = dayjs(res.data.signdate).diff(dayjs().startOf('day')) >= 0;
+      loading.value = false; // 签到信息加载完成
     } else {
-      message.error(res.msg);
+      if (retries > 0) {
+        console.log(`获取签到信息失败，尝试重试，剩余次数: ${retries-1}`);
+        setTimeout(() => {
+          getSignInfo(retries - 1);
+        }, 500);
+      } else {
+        message.error(res.msg);
+      }
+    }
+  });
+};
+
+// 添加一个直接获取用户信息的函数，以防注入失败
+const fetchUserInfo = (retries = 2) => {
+  if (userInfo?.value) {
+    // 如果已经有用户信息，不需要再次获取
+    return;
+  }
+  
+  console.log('直接获取用户信息');
+  frpApiGetUserInfo().then((res) => {
+    if (res.flag) {
+      // if (!userInfoObj) {
+      //   // 如果没有注入对象，创建一个本地的用户信息
+      //   const localUserInfo = ref(res.data);
+      //   userInfo.value = localUserInfo.value;
+      //   username.value = localUserInfo.value.username || '';
+      // } else 
+      if (userInfoObj && !userInfoObj.userInfo.value) {
+        // 如果注入对象存在但值为空，设置值
+        userInfoObj.userInfo.value = res.data;
+      }
+      loading.value = false; // 用户信息加载完成
+    } else {
+      if (retries > 0) {
+        console.log(`获取用户信息失败，尝试重试，剩余次数: ${retries-1}`);
+        setTimeout(() => {
+          fetchUserInfo(retries - 1);
+        }, 500);
+      } else {
+        message.error('获取用户信息失败，请尝试刷新页面');
+      }
     }
   });
 };
@@ -97,27 +143,41 @@ const checkRealname = () => {
 };
 
 const isLoggedIn = computed(() => {
-  return !!userInfo?.value?.token;
+  const loggedIn = !!userInfo?.value?.token;
+  console.log('登录状态:', loggedIn, '用户信息:', userInfo?.value);
+  return loggedIn;
 });
+
 // 跳转到设置页面进行登录
 const goToLogin = () => {
   router.push('/settings');
   message.info('请在设置页面完成登录');
-  
 };
 
 const checkinfo = () => {
   if(isLoggedIn.value) {
     getSignInfo();
     checkRealname(); 
+  } else {
+    // 如果没有登录状态，但有可能是因为注入失败，尝试直接获取用户信息
+    fetchUserInfo();
   }
 }
 
-checkinfo();
-
-fetchBoardCast();
+// 添加一个超时检查，如果长时间加载不出来，提示用户刷新
+onMounted(() => {
+  setTimeout(() => {
+    if (loading.value && !userInfo?.value) {
+      message.warning('加载用户信息超时，请尝试刷新页面');
+    }
+  }, 5000);
+  
+  checkinfo();
+  fetchBoardCast();
+});
 
 function userSign() {
+  console.log('开始签到流程');
   const config = {
     requestCaptchaDataUrl: 'https://captcha.naids.com/gen',
     validCaptchaUrl: 'https://captcha.naids.com/check',
@@ -128,33 +188,135 @@ function userSign() {
       // 销毁
       window.document.body.classList.remove('no-scroll');
       t.destroyWindow();
-      // 修改这里，确保传递正确的参数格式
-      frpApiUserSign({
+      
+      console.log('验证码验证成功，准备签到', result);
+      console.log('验证码验证结果:', result.data.token);
+      console.log('验证码验证结果:', result.data.randstr)
+
+      
+      // 确保传递正确的参数格式
+      const signParams = {
         ticket: result.data.token,
         randstr: result.data.randstr || ''
-      }).then((res) => {
+      };
+      
+      console.log('签到参数:', signParams);
+      
+      // 调用签到API
+      frpApiUserSign(signParams).then((res) => {
+        console.log('签到API响应:', res);
         if (res.flag) {
           message.success(res.data);
           getSignInfo();
         } else {
-          notification.error({ duration: 4500, content: res.msg });
+          notification.error({ 
+            title: '签到失败',
+            content: res.msg,
+            duration: 4500 
+          });
         }
+      }).catch(error => {
+        console.error('签到API调用出错:', error);
+        notification.error({ 
+          title: '签到失败',
+          content: '请求发生错误，请稍后重试',
+          duration: 4500 
+        });
       });
     },
+    validFail: (err: any) => {
+      console.error('验证码验证失败:', err);
+      notification.error({ 
+        title: '验证失败',
+        content: '验证码验证失败，请重试',
+        duration: 3000 
+      });
+      window.document.body.classList.remove('no-scroll');
+    }
   };
-  window.document.body.classList.add('no-scroll');
-  new (window as any).TAC(config).init();
-  document.getElementById('tianai-captcha-slider-close-btn')?.addEventListener('click', () => {
+  
+  try {
+    window.document.body.classList.add('no-scroll');
+    console.log('初始化验证码组件');
+    
+    // 确保有一个容器元素
+    if (!document.getElementById('captcha-box')) {
+      const captchaBox = document.createElement('div');
+      captchaBox.id = 'captcha-box';
+      document.body.appendChild(captchaBox);
+    }
+    
+    const tacInstance = new (window as any).TAC(config);
+    tacInstance.init();
+    
+    // 添加关闭按钮事件监听
+    setTimeout(() => {
+      const closeBtn = document.getElementById('tianai-captcha-slider-close-btn');
+      if (closeBtn) {
+        closeBtn.addEventListener('click', () => {
+          window.document.body.classList.remove('no-scroll');
+          console.log('用户关闭了验证码');
+        });
+      }
+    }, 500);
+  } catch (error) {
+    console.error('初始化验证码组件失败:', error);
     window.document.body.classList.remove('no-scroll');
-  });
+    notification.error({ 
+      title: '签到失败',
+      content: '初始化验证码失败，请稍后重试',
+      duration: 3000 
+    });
+  }
 }
 
 // 添加刷新整个窗体的函数
 const refreshEntireWindow = () => {
   console.log('刷新整个窗体');
-  window.location.reload();
+  
+  // 创建一个过渡元素
+  const transitionEl = document.createElement('div');
+  transitionEl.style.position = 'fixed';
+  transitionEl.style.top = '0';
+  transitionEl.style.left = '0';
+  transitionEl.style.width = '100%';
+  transitionEl.style.height = '100%';
+  transitionEl.style.backgroundColor = '#121212'; // 深色背景
+  transitionEl.style.zIndex = '9999';
+  transitionEl.style.opacity = '0';
+  transitionEl.style.transition = 'opacity 0.3s ease';
+  
+  // 添加加载动画
+  const spinner = document.createElement('div');
+  spinner.style.width = '40px';
+  spinner.style.height = '40px';
+  spinner.style.border = '4px solid rgba(255, 255, 255, 0.1)';
+  spinner.style.borderRadius = '50%';
+  spinner.style.borderTopColor = '#18a058';
+  spinner.style.position = 'absolute';
+  spinner.style.top = '50%';
+  spinner.style.left = '50%';
+  spinner.style.transform = 'translate(-50%, -50%)';
+  spinner.style.animation = 'spin 1s linear infinite';
+  
+  // 添加动画关键帧
+  const style = document.createElement('style');
+  style.textContent = '@keyframes spin { to { transform: translate(-50%, -50%) rotate(360deg); } }';
+  document.head.appendChild(style);
+  
+  transitionEl.appendChild(spinner);
+  document.body.appendChild(transitionEl);
+  
+  // 淡入过渡元素
+  setTimeout(() => {
+    transitionEl.style.opacity = '1';
+    
+    // 淡入后再刷新页面
+    setTimeout(() => {
+      window.location.reload();
+    }, 300);
+  }, 10);
 };
-
 onMounted(() => {
   // 检查是否需要刷新页面
   if (sessionStorage.getItem('needRefreshHome') === 'true') {
@@ -198,18 +360,18 @@ onMounted(() => {
           </n-alert>
         </div>
         <n-card v-if="!isLoggedIn">
-
-<n-result  status="warning" title="您尚未登录" description="请先登录以使用完整功能">
-  <template #footer>
-    <n-button type="primary" @click="goToLogin">
-      前往登录
-    </n-button>
-  </template>
-</n-result>
-</n-card>
+          <n-result status="warning" title="您尚未登录" description="请先登录以使用完整功能">
+            <template #footer>
+              <n-button type="primary" @click="goToLogin">
+                前往登录
+              </n-button>
+            </template>
+          </n-result>
+        </n-card>
 
         <n-card v-else style="height: 100%">
-          <n-skeleton v-if="signInfo == null || userInfo == null" style="margin-top: 0.75rem" height="250px"
+          <!-- 修改骨架屏显示条件，使用loading状态 -->
+          <n-skeleton v-if="loading" style="margin-top: 0.75rem" height="250px"
             width="100%" :sharp="false" size="medium" />
           <n-flex v-else style="height: 100%" justify="space-between" vertical>
             <n-descriptions :column="2">
@@ -233,31 +395,25 @@ onMounted(() => {
                 <!-- {{ dayjs((userInfo?.regTime || 0) * 1000).format('YYYY-MM-DD') }} -->
               </n-descriptions-item>
               <n-descriptions-item label="剩余流量">{{
-          numbro((userInfo?.traffic || 0) * 1024 * 1024).format({
-            output: 'byte',
-            base: 'binary',
-            mantissa: 2,
-          })
-        }}
-              </n-descriptions-item>
-              <n-descriptions-item label="上次签到">
-                {{ dayjs(signInfo?.signdate).format('YYYY-MM-DD') }}
-              </n-descriptions-item>
-              <n-descriptions-item :label="`${signInfo?.totalsign} 签到总量`">
-                {{ signInfo?.totaltraffic.replace('GB', 'GiB') }}
+                numbro((userInfo?.traffic || 0) * 1024 * 1024).format({
+                  output: 'byte',
+                  base: 'binary',
+                  mantissa: 2,
+                })
+              }}
               </n-descriptions-item>
             </n-descriptions>
             <n-space vertical :size="[0, 8]">
-              <n-text v-if="!signed" :depth="3">签到可获得{{ signInfo?.sign_min }}MB - {{ signInfo?.sign_max }}MB
-                的流量。数值随着你的已有的流量值变化。
+              <n-text :depth="3">签到可以获得免费流量，打开网页面板完成立即完成每日签到。
               </n-text>
-              <n-space v-if="!(signInfo == null || userInfo == null)" :size="[24, 0]">
+              <!-- 修改这里的条件判断 -->
+              <n-space v-if="userInfo != null" :size="[24, 0]">
                 <n-tooltip trigger="hover">
                   <template #trigger>
                     <n-button type="warning" text strong @click="
-          userInfo?.token && copy(userInfo.token);
-        message.success('已复制至剪贴板,请妥善保管。');
-        ">
+                      userInfo?.token && copy(userInfo.token);
+                      message.success('已复制至剪贴板,请妥善保管。');
+                    ">
                       <template #icon>
                         <n-icon>
                           <KeyOutline />
@@ -268,9 +424,9 @@ onMounted(() => {
                   </template>
                   复制访问密钥
                 </n-tooltip>
-                <n-tooltip v-if="!signed" trigger="hover">
+                <!-- <n-tooltip v-if="!signed" trigger="hover">
                   <template #trigger>
-                    <n-button :disabled="true" type="success" text @click="userSign">
+                    <n-button :disabled="false" type="success" text @click="userSign">
                       <template #icon>
                         <n-icon>
                           <CalendarOutline />
@@ -280,7 +436,7 @@ onMounted(() => {
                     </n-button>
                   </template>
                   CPL 暂时无法使用签到功能，请打开网页版签到。
-                </n-tooltip>
+                </n-tooltip> -->
               </n-space>
             </n-space>
           </n-flex>

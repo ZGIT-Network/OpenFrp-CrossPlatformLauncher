@@ -36,7 +36,7 @@ onMounted(async () => {
 <template>
     <n-scrollbar>
         <n-space vertical>
-            <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+            <!-- <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert> -->
 
             <n-config-provider :theme="darkTheme">
                 <n-card :bordered="false" :style="{ background: `url(${cardImage}),rgba(0, 0, 0, 0.2)` }" style="
@@ -77,12 +77,13 @@ onMounted(async () => {
                     </tbody>
                 </n-table>
                 <br />
-                感谢您使用OpenFrp Cross Platform Launcher。<br />
+                感谢您使用 OpenFrp Cross Platform Launcher。<br />
                 本项目是 OpenFrp 的跨平台启动器，基于新技术 Tauri 2 开发。<br /><br />
                 得益于 Tauri2 的强大能力，本项目可以跨平台使用，支持 Windows、MacOS、Linux 等操作系统。<br />
                 由于相关问题过多，我们暂时不准备开源本项目，但欢迎开发者们联系我们参与到本项目的开发中。<br />
                 <br />
                 作者：云默安 <br />
+                特别鸣谢：Kent Ye<br/>
                 Copyright © 2025 ZGIT Network. All rights reserved.
             </n-card>
             <n-card>

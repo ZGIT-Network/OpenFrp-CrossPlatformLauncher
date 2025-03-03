@@ -8,6 +8,9 @@ import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { listen } from '@tauri-apps/api/event'
 import { useRoute } from 'vue-router'
 
+import frpApiGetUserProxies from '@/requests/frpApi/frpApiGetUserProxies';
+
+
 const message = useMessage()
 const notification = useNotification()
 const tunnels = ref<any[]>([])
@@ -15,6 +18,7 @@ const loading = ref(false)
 const loadingTunnels = ref<Set<string>>(new Set())
 
 
+  
 const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
 const userInfo = userInfoObj?.userInfo;
 
@@ -44,11 +48,10 @@ const fetchProxyList = async () => {
   const token = userInfo?.value?.token
 
   if (!token) {
-    message.error('未获取到用户 token，请确保已登录')
     loading.value = false
+    tunnels.value = [] // 清空隧道列表
     return
   }
-
   loading.value = true
   try {
     const response = await axios.get(`https://api.openfrp.net/api`, {
@@ -74,14 +77,23 @@ const fetchProxyList = async () => {
       // 立即检查所有隧道的实际运行状态
       await Promise.all(tunnels.value.map(tunnel => checkTunnelStatus(tunnel)))
     } else {
-      message.error('获取隧道列表失败')
+      tunnels.value = [] // 清空隧道列表
     }
   } catch (e) {
-    message.error(`请求失败: ${e}`)
+    tunnels.value = [] // 清空隧道列表
+    console.error('获取隧道列表失败:', e)
   } finally {
     loading.value = false
   }
 }
+// 添加对 userInfo 的监听
+watch(() => userInfo?.value?.token, (newToken) => {
+  if (!newToken) {
+    // 当 token 不存在时（退出登录），清空隧道列表
+    tunnels.value = []
+    loading.value = false
+  }
+}, { immediate: true })
 
 // 请求通知权限
 const requestNotificationPermission = async () => {
@@ -538,8 +550,7 @@ onMounted(async () => {
                       :loading="loadingTunnels.has(tunnel.id.toString())"
                       :disabled="loadingTunnels.has(tunnel.id.toString())" />
                   </template>
-                  控制隧道启动/停止
-                </n-tooltip>
+                  控制隧道启动/停止</n-tooltip>
               </n-space>
             </n-space>
           </n-card>

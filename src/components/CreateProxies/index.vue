@@ -77,13 +77,13 @@ const getNodeList = () => {
   nodeList.value = [];
   loadingBar.start();
   frpApiGetNodeList().then((res) => {
-    if (res.data.flag) {
+    if (res.flag) {
       //      total.value = res.data.total;
       //    sourceList.value = res.data.list || [];
       nodeList.value = Object.freeze(res.data.list);
       loadingBar.finish();
     } else {
-      message.error(res.data.msg);
+      message.error(res.msg);
       loadingBar.error();
     }
   });
@@ -91,11 +91,11 @@ const getNodeList = () => {
 const createProxy = (body: Struct.EditOrNewUserProxy) => {
   frpApiNewProxy(body)
     .then((res) => {
-      if (res.data.flag) {
-        message.info(`隧道 ${body.name} ${res.data.msg}`);
-        router.push('/manage-proxies');
+      if (res.flag) {
+        message.info(`隧道 ${body.name} ${res.msg}`);
+        router.push('/proxylist');
       } else {
-        message.error(res.data.msg);
+        message.error(res.msg);
       }
     })
     .catch((res) => {

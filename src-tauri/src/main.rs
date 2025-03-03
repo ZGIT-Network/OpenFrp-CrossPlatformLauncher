@@ -13,7 +13,7 @@ use std::io::Cursor;
 use std::io::Write;
 // use std::io::{BufRead, BufReader};
 //use std::path::Path;
-use std::error::Error;
+// use std::error::Error;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -24,11 +24,10 @@ use tauri::Manager;
 use tauri::{command, Emitter, Runtime, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_deep_link;
-use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+// use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater;
-mod update;
-mod api_proxy; // 添加这一行
-
+mod api_proxy;
+mod update; // 添加这一行
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -500,7 +499,6 @@ async fn start_frpc_instance<R: Runtime>(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-
     cmd.args(&["-u", &token, "-p", &tunnel_id])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -582,12 +580,13 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
+        if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
                 cmd.creation_flags(CREATE_NO_WINDOW);
-                cmd.args(&["/F", "/T", "/PID"])
+                let _ = cmd
+                    .args(&["/F", "/T", "/PID"])
                     .arg(process_info.group_id.to_string())
                     .output();
             }
@@ -815,7 +814,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, mut process_info) in map.drain() {
+                        for (_, process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")
@@ -899,6 +898,7 @@ async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), St
     Ok(())
 }
 
+
 #[tauri::command]
 async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
     let autostart_manager = app.autolaunch();
@@ -918,7 +918,6 @@ async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
 #[derive(Default)]
 struct DeepLinkState(Mutex<Option<String>>);
 
-
 #[derive(Serialize, Deserialize)]
 struct OAuthResponse {
     authorization: String,
@@ -932,7 +931,7 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
     let client = reqwest::Client::new();
     let mut form = std::collections::HashMap::new();
     form.insert("code", code);
-    form.insert("redirect_url", "openfrp://login".to_string());
+    form.insert("redirect_url", "https://www.zyghit.cn/ofcpl_login".to_string());
 
     let res = client
         .post("https://api.openfrp.net/oauth2/callback")
@@ -942,13 +941,15 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
         .map_err(|e| e.to_string())?;
 
     let headers = res.headers();
-    let auth = headers.get("authorization")
+    let auth = headers
+        .get("authorization")
         .ok_or("登录失败: 未能找到 Authorization")?
         .to_str()
         .map_err(|e| e.to_string())?
         .to_string();
 
-    let json = res.json::<serde_json::Value>()
+    let json = res
+        .json::<serde_json::Value>()
         .await
         .map_err(|e| e.to_string())?;
 
@@ -962,7 +963,8 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
 
 // 修改 main 函数
 fn main() {
-    let mut app = tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -1017,7 +1019,6 @@ fn main() {
             } else {
                 "frpc_linux_amd64"
             });
-
             if !frpc_path.exists() {
                 // 如果 frpc 不存在，发送事件通知前端
                 let window = app.get_webview_window("main").unwrap();

@@ -4,7 +4,11 @@ import { h } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { NMenu, NLayoutSider } from 'naive-ui';
 import type { MenuOption } from 'naive-ui';
-import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5';
+import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline,ServerOutline } from '@vicons/ionicons5';
+import { invoke } from '@tauri-apps/api/core';
+import  Coockies  from '@/utils/cookies';
+
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // 获取当前路由
 const route = useRoute();
@@ -33,7 +37,6 @@ const emit = defineEmits(['update:collapsed']);
 const toggleCollapse = (value: boolean) => {
   emit('update:collapsed', value);
 };
-
 // 菜单配置
 const menuOptions = computed(() => [
   {
@@ -42,16 +45,32 @@ const menuOptions = computed(() => [
     icon: () => h(HomeOutline)
   },
   {
-    label: () => h(RouterLink, { to: { name: 'CreateProxy' } }, { default: () => '新建隧道' }),
+    label: () => {
+      // 根据登录状态决定是否使用RouterLink或普通span
+      return isLoggedIn.value 
+        ? h(RouterLink, { to: { name: 'CreateProxy' } }, { default: () => '新建隧道' })
+        : h('span', { class: 'disabled-menu-item' }, '新建隧道');
+    },
     key: 'newproxy',
     icon: () => h(AddOutline),
-    disabled: !isLoggedIn.value // 未登录时禁用
+    disabled: !isLoggedIn.value
   },
   {
     label: () => h(RouterLink, { to: { name: 'ProxyList' } }, { default: () => '隧道管理' }),
     key: 'proxylist',
     icon: () => h(BuildOutline)
   },
+  // {
+  //   label: () => {
+  //     // 根据登录状态决定是否使用RouterLink或普通span
+  //     return isLoggedIn.value 
+  //       ? h(RouterLink, { to: { name: 'NodeStatus' } }, { default: () => '节点状态' })
+  //       : h('span', { class: 'disabled-menu-item' }, '节点状态');
+  //   },
+  //   key: 'NodeStatus',
+  //   icon: () => h(ServerOutline),
+  //   disabled: !isLoggedIn.value
+  // },
   {
     label: () => h(RouterLink, { to: { name: 'FrpcManager' } }, { default: () => '日志' }),
     key: 'frpc',
@@ -68,7 +87,12 @@ const menuOptions = computed(() => [
     icon: () => h(InformationOutline)
   },
   {
-    label: () => h('a', { href: 'https://console.openfrp.net' }, { default: () => '打开网页面板' }),
+    label: () => h('div', { 
+      style: 'cursor: pointer;',
+      onClick: async() => {
+        await openUrl('https://console.openfrp.net/fastlogin?auth='+Coockies.get('authorization'))
+        }
+    }, { default: () => '打开网页面板' }),
     key: 'webpanel',
     icon: () => h(EnterOutline)
   }

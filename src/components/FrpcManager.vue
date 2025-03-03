@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from 'vue'
 import { listen } from '@tauri-apps/api/event'
-import { useMessage, NButton, NCard, NLog, NSpace,NSwitch } from 'naive-ui'
-import type { LogInst } from 'naive-ui'
+import { useMessage, NButton, NCard, NLog, NSpace, NSwitch, NSelect } from 'naive-ui'
+import type { LogInst, SelectOption } from 'naive-ui'
 import hljs from 'highlight.js'
 import ansiToHtml from 'ansi-to-html'
 import { useLinkTunnelsStore } from '../stores/linkTunnels'
+
 
 const convert = new ansiToHtml({
   fg: '#FFF',
@@ -28,9 +29,72 @@ const convert = new ansiToHtml({
 const message = useMessage()
 const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
 const autoScroll = ref(true) // 添加自动滚动控制
-const logs = ref(localStorage.getItem('frpcLogs') || '')
+const rawLogs = ref(localStorage.getItem('frpcLogs') || '')
+const logs = ref('')
 const cleanupFunctions = ref<(() => void)[]>([])
 const activeListeners = ref(new Map<string, boolean>())
+
+// 添加隧道筛选功能
+const tunnelOptions = ref<SelectOption[]>([
+  { label: '全部日志', value: 'all' }
+])
+const selectedTunnel = ref('all')
+
+// 解析日志并按隧道ID分类
+const parsedLogs = computed(() => {
+  const logLines = rawLogs.value.split('\n')
+  const result: Record<string, string[]> = { all: [] }
+  
+  logLines.forEach((line: any) => {
+    if (line.trim()) {
+      result.all.push(line)
+      
+      // 检查是否包含隧道ID - 修改正则表达式以正确匹配所有可能的格式
+      const tunnelMatch = line.match(/\[隧道\s+(\d+)\]/) || 
+                          line.match(/隧道\s+#(\d+)/) || 
+                          line.match(/\[<span style="color: #2080f0">隧道\s+(\d+)<\/span>\]/)
+      
+      if (tunnelMatch && tunnelMatch[1]) {
+        const tunnelId = tunnelMatch[1]
+        if (!result[tunnelId]) {
+          result[tunnelId] = []
+        }
+        result[tunnelId].push(line)
+      } else if (line.includes('[系统]')) {
+        // 系统日志添加到所有隧道的日志中
+        Object.keys(result).forEach(key => {
+          if (key !== 'all') {
+            result[key].push(line)
+          }
+        })
+      }
+    }
+  })
+  
+  // 调试输出
+  console.log('解析的日志分类:', Object.keys(result));
+  
+  return result
+})
+
+// 根据选择的隧道过滤日志
+watch([parsedLogs, selectedTunnel], () => {
+  if (selectedTunnel.value === 'all') {
+    logs.value = parsedLogs.value.all.join('\n')
+  } else {
+    // 如果选定隧道的日志不存在，显示空字符串
+    logs.value = (parsedLogs.value[selectedTunnel.value] || []).join('\n')
+  }
+  
+  // 添加调试日志
+  console.log(`已选择隧道: ${selectedTunnel.value}, 日志行数: ${logs.value.split('\n').length}`);
+  
+  if (autoScroll.value) {
+    nextTick(() => {
+      logInst.value?.scrollTo({ position: 'bottom', silent: true })
+    })
+  }
+}, { immediate: true })
 
 // 添加日志滚动处理函数
 const handleScroll = ({ scrollTop, scrollHeight, containerHeight }: any) => {
@@ -41,10 +105,11 @@ const handleScroll = ({ scrollTop, scrollHeight, containerHeight }: any) => {
     autoScroll.value = true
   }
 }
+
 // 统一的日志追加函数
 const appendToLog = (content: string) => {
-  logs.value += content
-  localStorage.setItem('frpcLogs', logs.value)
+  rawLogs.value += content
+  localStorage.setItem('frpcLogs', rawLogs.value)
   
   if (autoScroll.value) {
     nextTick(() => {
@@ -59,48 +124,35 @@ const appendSystemLog = (message: string) => {
   appendToLog(`[系统] [${timestamp}] ${message}\n`)
 }
 
+// 修复类型错误
 const appendTunnelLog = (tunnelId: string, message: string) => {
   const timestamp = new Date().toLocaleTimeString()
   const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'))
   appendToLog(`[${timestamp}] [<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`)
-}
-// const appendLog = (message: string) => {
-//   const timestamp = new Date().toLocaleTimeString()
-//   appendToLog(`[系统] [${timestamp}] ${message}\n`)
-// }
-
-// 修改加载日志函数
-const loadLogs = () => {
-  logs.value = localStorage.getItem('frpcLogs') || ''
-  if (autoScroll.value) {
-    nextTick(() => {
-      logInst.value?.scrollTo({ position: 'bottom', silent: true })
+  
+  // 如果是新隧道，添加到选项中
+  if (!tunnelOptions.value.some((option: SelectOption) => option.value === tunnelId)) {
+    tunnelOptions.value.push({
+      label: `隧道 ${tunnelId}`,
+      value: tunnelId
     })
   }
 }
 
-// 删除这里重复的 appendTunnelLog 函数声明
 // 添加普通日志的辅助函数
 const appendLog = (message: string) => {
   const timestamp = new Date().toLocaleTimeString()
-  logs.value += `[系统] [${timestamp}] ${message}\n`
-  localStorage.setItem('frpcLogs', logs.value)
-  
-  if (autoScroll.value && logInst.value) {
-    nextTick(() => {
-      logInst.value?.scrollTo({ position: 'bottom' })
-    })
-  }
+  appendToLog(`[系统] [${timestamp}] ${message}\n`)
+}
+
+// 修改加载日志函数
+const loadLogs = () => {
+  rawLogs.value = localStorage.getItem('frpcLogs') || ''
 }
 
 onMounted(async () => {
   loadLogs()
   
-  // 删除这个重复的滚动代码
-  // if (logInst.value) {
-  //   logInst.value.scrollTo({ position: 'bottom' })
-  // }
-
   try {
     // 监听全局日志
     const globalLogUnlisten = await listen('log', (event: any) => {
@@ -114,6 +166,14 @@ onMounted(async () => {
       // 当收到隧道启动事件时，立即设置日志监听器
       if (type === 'start' && !activeListeners.value.has(`frpc-log-${tunnelId}`)) {
         setupTunnelListener(tunnelId)
+      }
+      
+      // 如果是新隧道，添加到选项中
+      if (!tunnelOptions.value.some(option => option.value === tunnelId)) {
+        tunnelOptions.value.push({
+          label: `隧道 ${tunnelId} (${tunnelName})`,
+          value: tunnelId
+        })
       }
       
       switch (type) {
@@ -151,6 +211,14 @@ onMounted(async () => {
       const states = JSON.parse(savedStates)
       for (const id of Object.keys(states)) {
         await setupTunnelListener(id)
+        
+        // 添加到选项中
+        if (!tunnelOptions.value.some(option => option.value === id)) {
+          tunnelOptions.value.push({
+            label: `隧道 ${id}`,
+            value: id
+          })
+        }
       }
     }
 
@@ -159,6 +227,14 @@ onMounted(async () => {
     watch(() => linkTunnelsStore.linkLaunchedTunnels, async (tunnels) => {
       for (const tunnelId of tunnels) {
         await setupTunnelListener(tunnelId)
+        
+        // 添加到选项中
+        if (!tunnelOptions.value.some(option => option.value === tunnelId)) {
+          tunnelOptions.value.push({
+            label: `隧道 ${tunnelId}`,
+            value: tunnelId
+          })
+        }
       }
     }, { immediate: true })
 
@@ -170,13 +246,6 @@ onMounted(async () => {
 
   // 每秒更新一次日志显示
   const updateInterval = setInterval(loadLogs, 1000)
-
-  // 监听 logs 的变化并滚动到底部
-  watch(logs, () => {
-    if (logInst.value) {
-      logInst.value.scrollTo({ position: 'bottom' })   
-     }
-  })
 
   onUnmounted(() => {
     // 清理所有监听器
@@ -193,20 +262,19 @@ onMounted(async () => {
   })
 })
 
-
 // 清除日志
 const clearLogs = () => {
-  logs.value = ''
+  rawLogs.value = ''
   localStorage.removeItem('frpcLogs')
 }
 
 // 防止日志过长，定期清理
 const MAX_LOG_LENGTH = 50000 // 最大日志长度
-watch(logs, (newValue) => {
+watch(rawLogs, (newValue) => {
   if (newValue.length > MAX_LOG_LENGTH) {
     // 保留后半部分的日志
     const truncatedLogs = newValue.slice(-MAX_LOG_LENGTH / 2)
-    logs.value = truncatedLogs
+    rawLogs.value = truncatedLogs
     localStorage.setItem('frpcLogs', truncatedLogs)
   }
 })
@@ -220,6 +288,12 @@ watch(logs, (newValue) => {
     <n-card title="运行日志">
       <template #header-extra>
         <n-space>
+          <n-select 
+            v-model:value="selectedTunnel" 
+            :options="tunnelOptions" 
+            placeholder="选择隧道" 
+            style="width: 180px"
+          />
           <n-switch v-model:value="autoScroll">
             <template #checked>自动滚动开启</template>
             <template #unchecked>自动滚动关闭</template>

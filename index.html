@@ -8,9 +8,26 @@
     <script src="/src/assets/crypto-js.min.js"></script>
     <script src="/src/assets/jsencrypt.min.js"></script>
   </head>
-
   <body>
+    <!-- 添加加载动画元素 -->
+    <div id="app-loading">
+      <div class="spinner"></div>
+    </div>
+    
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
+    
+    <script>
+      // 页面加载完成后隐藏加载动画
+      window.addEventListener('load', () => {
+        const loading = document.getElementById('app-loading');
+        if (loading) {
+          loading.style.opacity = '0';
+          setTimeout(() => {
+            loading.style.display = 'none';
+          }, 300);
+        }
+      });
+    </script>
   </body>
 </html>

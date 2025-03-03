@@ -31,6 +31,8 @@ import { HelpCircleOutline } from '@vicons/ionicons5'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
+import { openUrl } from '@tauri-apps/plugin-opener';
+
 
 import { logoutCurr } from '@/requests/frpApi/api2'
 // import { enable, disable, isEnabled } from '@tauri-apps/plugin-autostart'
@@ -323,14 +325,14 @@ const toggleDeepLink = async (value: boolean) => {
 import getLoginUrl from '@/requests/oauth/getLoginUrl'
 
 const oauthLogin = () => {
-    message.info('正在拉起登录...')
+    message.loading('正在拉起登录...')
     getLoginUrl()
         .then((res) => {
           if (!res.data.flag) {
             message.error('无法获取登录url');
             return;
           }
-          window.open(res.data.data,'_blank');
+          openUrl(res.data.data);
         })
         .catch((err) => {
           console.log(err);
@@ -448,12 +450,12 @@ const logout = () => {
                             <n-space align="center">
                                 <n-tooltip trigger="hover">
                                     <template #trigger>
-                                        <n-switch v-model:value="deepLinkEnabled" @update:value="toggleDeepLink" />
+                                        <n-switch v-model:value="deepLinkEnabled"  :disabled="true"  @update:value="toggleDeepLink" />
                                        
                                     </template>
                                     允许通过“快速启动”链接启动隧道
                                 </n-tooltip>
-                                <span>启用"快速启动"功能 </span><n-button quaternary circle :disabled="true"  @click="helpDrawer('quickstart')">
+                                <span>启用"快速启动"功能 </span><n-button quaternary circle  @click="helpDrawer('quickstart')">
                                     <template #icon>
                                         <n-icon><HelpCircleOutline /></n-icon>
                                     </template>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>正在登录至启动器</title>
+    <script>
+        var redriect = function (){
+            // 构造openfrp协议链接
+            const frpUrl = `openfrp://login?code=${encodeURIComponent(authCode)}`;
+                
+                
+                    // 尝试跳转
+            window.location.href = frpUrl;
+        
+        
+                
+        }
+        // 页面加载完成后立即执行
+        window.onload = function() {
+            // 解析URL参数
+            const urlParams = new URLSearchParams(window.location.search);
+            const authCode = urlParams.get('code');
+
+            if (authCode) {
+            setTimeout(redriect, 1000);
+        
+                
+            } else {
+                // 缺少code参数的处理
+                document.getElementById("status").innerHTML = `
+                     <div class="card">
+                        <h1 class="title">登录失败：参数缺失</h1>
+                        <p class="tips">URL中未找到code参数，请检查访问链接是否正确</p>
+                        <p class="tips"> 
+                            请确保已安装最新版 OpenFrp Cross Platform Launcher<br/>
+                            检查浏览器是否阻止了打开客户端的操作
+                        
+                        </p>
+                    </div>
+                `;
+            }
+        };
+        
+    </script>
+    <style>
+        :root {
+            --color-blue: #6684a7;
+            --color-white: #fff;
+            --curve: cubic-bezier(0.420, 0.000, 0.275, 1.155)
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            text-align: center;
+            padding: 40px 0;
+            background: #f5f3f3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh
+        }
+
+        .bg-pattern {
+            background: radial-gradient(circle at top left, transparent 9%, var(--color-blue) 10%, var(--color-blue) 15%, transparent 16%), radial-gradient(circle at bottom left, transparent 9%, var(--color-blue) 10%, var(--color-blue) 15%, transparent 16%), radial-gradient(circle at top right, transparent 9%, var(--color-blue) 10%, var(--color-blue) 15%, transparent 16%), radial-gradient(circle at bottom right, transparent 9%, var(--color-blue) 10%, var(--color-blue) 15%, transparent 16%), radial-gradient(circle, transparent 25%, #fcfcfc 26%), linear-gradient(45deg, transparent 46%, var(--color-blue) 47%, var(--color-blue) 52%, transparent 53%), linear-gradient(135deg, transparent 46%, var(--color-blue) 47%, var(--color-blue) 52%, transparent 53%);
+            background-size: 8em 8em;
+            background-color: #fcfcfc;
+            opacity: 1;
+            height: 100vh;
+            width: 100vw;
+            z-index: -10;
+            position: absolute
+        }
+
+        .bg {
+            height: 100vh;
+            width: 100vw;
+            z-index: -5;
+            position: absolute
+        }
+
+
+        .container {
+            padding: 40px 0
+        }
+
+        .card {
+            background: #fff;
+            padding: 60px;
+            border-radius: 4px;
+            box-shadow: 0 2px 3px #c8d0d8;
+            display: inline-block;
+            margin: 0 auto;
+            text-align: center
+        }
+
+        .star {
+            position: absolute;
+            fill: var(--color-blue);
+            opacity: 0;
+            animation: grow 3s infinite;
+
+            &:nth-child(1) {
+                width: 12px;
+                height: 12px;
+                left: 40px;
+                top: 40px;
+                animation-delay: 1.5s;
+            }
+
+            &:nth-child(2) {
+                width: 18px;
+                height: 18px;
+                left: 200px;
+                top: 84px;
+                animation-delay: 2s;
+            }
+
+            &:nth-child(3) {
+                width: 10px;
+                height: 10px;
+                left: 22px;
+                top: 175px;
+                animation-delay: 4s;
+            }
+
+            &:nth-child(4) {
+                width: 20px;
+                height: 20px;
+                left: 132px;
+                top: -12px;
+                animation-delay: 6.5s;
+            }
+
+            &:nth-child(5) {
+                width: 114px;
+                height: 14px;
+                left: 125px;
+                top: 162px;
+                animation-delay: 8s;
+            }
+
+            &:nth-child(6) {
+                width: 10px;
+                height: 10px;
+                left: 240px;
+                top: 220px;
+                animation-delay: 9.5s;
+            }
+        }
+
+        .checkmark {
+            position: relative;
+            padding: 30px;
+            animation: checkmark 5m var(--curve) both
+        }
+
+        .checkmark__check {
+            animation: checkmark 5m var(--curve) both;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            z-index: 10;
+            transform: translate3d(-50%, -50%, 0);
+            fill: var(--color-white)
+        }
+
+        .checkmark__background {
+            position: relative;
+            fill: var(--color-blue);
+            animation: rotate 35s linear both infinite
+        }
+
+        @keyframes rotate {
+            0% {
+                transform: rotate(0)
+            }
+
+            100% {
+                transform: rotate(360deg)
+            }
+        }
+
+        @keyframes grow {
+
+            0%,
+            100% {
+                transform: scale(0);
+                opacity: 0
+            }
+
+            50% {
+                transform: scale(1);
+                opacity: 1
+            }
+        }
+
+        @keyframes checkmark {
+
+            0%,
+            100% {
+                opacity: 0;
+                transform: scale(0)
+            }
+
+            10%,
+            50%,
+            90% {
+                opacity: 1;
+                transform: scale(1)
+            }
+        }
+
+        .title {
+            margin-top: 20px
+        }
+
+        .tips {
+            margin-top: 10px
+        }
+    </style>
+</head>
+<body>
+    <div class="container" id="status">
+        <div class="card">
+            <div class="checkmark"><svg class="star" height="19" viewBox="0 0 19 19" width="19"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="star" height="19" viewBox="0 0 19 19" width="19" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="star" height="19" viewBox="0 0 19 19" width="19" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="star" height="19" viewBox="0 0 19 19" width="19" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="star" height="19" viewBox="0 0 19 19" width="19" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="star" height="19" viewBox="0 0 19 19" width="19" xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M8.296.747c.532-.972 1.393-.973 1.925 0l2.665 4.872 4.876 2.66c.974.532.975 1.393 0 1.926l-4.875 2.666-2.664 4.876c-.53.972-1.39.973-1.924 0l-2.664-4.876L.76 10.206c-.972-.532-.973-1.393 0-1.925l4.872-2.66L8.296.746z">
+                    </path>
+                </svg><svg class="checkmark__check" height="36" viewBox="0 0 48 36" width="48"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M47.248 3.9L43.906.667a2.428 2.428 0 0 0-3.344 0l-23.63 23.09-9.554-9.338a2.432 2.432 0 0 0-3.345 0L.692 17.654a2.236 2.236 0 0 0 .002 3.233l14.567 14.175c.926.894 2.42.894 3.342.01L47.248 7.128c.922-.89.922-2.34 0-3.23">
+                    </path>
+                </svg><svg class="checkmark__background" height="115" viewBox="0 0 120 115" width="120"
+                    xmlns="http://www.w3.org/2000/svg">
+                    <path
+                        d="M107.332 72.938c-1.798 5.557 4.564 15.334 1.21 19.96-3.387 4.674-14.646 1.605-19.298 5.003-4.61 3.368-5.163 15.074-10.695 16.878-5.344 1.743-12.628-7.35-18.545-7.35-5.922 0-13.206 9.088-18.543 7.345-5.538-1.804-6.09-13.515-10.696-16.877-4.657-3.398-15.91-.334-19.297-5.002-3.356-4.627 3.006-14.404 1.208-19.962C10.93 67.576 0 63.442 0 57.5c0-5.943 10.93-10.076 12.668-15.438 1.798-5.557-4.564-15.334-1.21-19.96 3.387-4.674 14.646-1.605 19.298-5.003C35.366 13.73 35.92 2.025 41.45.22c5.344-1.743 12.628 7.35 18.545 7.35 5.922 0 13.206-9.088 18.543-7.345 5.538 1.804 6.09 13.515 10.696 16.877 4.657 3.398 15.91.334 19.297 5.002 3.356 4.627-3.006 14.404-1.208 19.962C109.07 47.424 120 51.562 120 57.5c0 5.943-10.93 10.076-12.668 15.438z">
+                    </path>
+                </svg></div>
+            <h1 class="title">登录已授权</h1>
+            <p class="tips">请点击浏览器提示中的“打开”操作，将自动拉起启动器。<br/>之后，您可以安全关闭本窗口。</p>
+            <p class="tips">请回到 OpenFrp Cross Platform Launcher 以继续</p>
+        </div>
+    </div>
+</body>
+</html>

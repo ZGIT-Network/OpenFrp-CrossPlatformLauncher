@@ -1,14 +1,14 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, /*NText,*/ useNotification, NButton, useMessage,NIcon } from 'naive-ui';
-import { onMounted, h, onUnmounted, ref,provide } from 'vue';
+import { useDialog, /*NText,*/ useNotification, NButton, useMessage, NIcon } from 'naive-ui';
+import { onMounted, h, onUnmounted, ref, provide } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RouterLink, useRouter ,useRoute} from 'vue-router';
+import { RouterLink, useRouter, useRoute } from 'vue-router';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
-import { Remove, Expand, Contract, Close } from '@vicons/ionicons5'
+import { Remove, Expand, Contract, Close, Refresh } from '@vicons/ionicons5'
 import { AxiosError } from 'axios';
 
 
@@ -20,6 +20,7 @@ const notification = useNotification();
 const router = useRouter();
 const route = useRoute();
 const userInfo = ref<Struct.UserInfo>();
+
 
 const errorMessage = ref<{
   statusCode: number;
@@ -86,13 +87,18 @@ const closeWindow = async () => {
   await window.close()
 }
 
+// 刷新当前窗口
+const refreshWebview = async () => {
+  window.location.reload()
+}
+
 // 监听窗口状态变化
 onMounted(async () => {
   const window = await getCurrentWindow()
   isMaximized.value = await window.isMaximized()
-  
+
   await window.onResized(() => {
-    window.isMaximized().then(maximized => {
+    window.isMaximized().then((maximized: any) => {
       isMaximized.value = maximized
     })
   })
@@ -158,7 +164,7 @@ const handleDeepLink = async (url: string) => {
   // 直接解析 URL 字符串
   const match = url.match(/^openfrp:\/\/([^/?]+)/)
   if (!match) return
-  
+
   const path = match[1]
   console.log('解析路径:', path)
   // 将窗口提升到最前方
@@ -174,178 +180,188 @@ const handleDeepLink = async (url: string) => {
     const params = new URLSearchParams(urlObj.search)
     const code = params.get('code')
     
+
     if (code) {
       // 保存 token
       // localStorage.setItem('userToken', token)
-      message.success('获取到登录码，您可以关闭刚刚打开的窗口了')
+      message.success('获取到登录码')
       urlObj.searchParams.delete('code')
       // 发送事件到日志系统
-    
+
       router.push(`/oauth_callback?code=${code}`)
       
-      // 可选：刷新页面或更新状态
-      // window.location.reload()
+      // 清除URL缓存，防止重复处理
+      try {
+        // 使用本地存储记录已处理的URL
+        const processedUrls = JSON.parse(localStorage.getItem('processedUrls') || '[]')
+        processedUrls.push(url)
+        // 只保留最近的10个URL
+        if (processedUrls.length > 10) {
+          processedUrls.shift()
+        }
+        localStorage.setItem('processedUrls', JSON.stringify(processedUrls))
+      } catch (e) {
+        console.error('保存已处理URL失败:', e)
+      }
+      
       return
     } else {
       message.error('登录失败：未获取到 token')
       return
     }
-    
   }
-
   // 处理登录回调
   if (path === 'start_proxy') {
-  const params = new URLSearchParams(urlObj.search)
-  const user = params.get('user')
-  const proxyId = params.get('proxy')
-  const remoteAddress = params.get('remote')
-  const proxyName = params.get('name')
+    const params = new URLSearchParams(urlObj.search)
+    const user = params.get('user')
+    const proxyId = params.get('proxy')
+    const remoteAddress = params.get('remote')
+    const proxyName = params.get('name')
 
-  if (!user || !proxyId || !remoteAddress || !proxyName) {
-    await sendNotification({ title: '快速启动链接格式错误', body: '请检查链接格式是否正确' })
-    console.error('链接格式错误')
-    return
-  }
-  
-  // 检查是否正在处理
-  if (processingLinks.value.has(proxyId)) {
-    console.log('隧道正在启动中，跳过:', proxyId)
-    return
-  }
-  try {
-    processingLinks.value.add(proxyId)
-  
-    // 发送启动事件到日志系统
-    await invoke('emit_event', {
-      event: 'tunnel-event',
-      payload: {
-        type: 'start',
-        tunnelId: proxyId,
-        tunnelName: proxyName
-      }
-    })
-  
-    message.loading('正在启动隧道', { duration: 1000 })
-  
-    // 等待日志响应
-    const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
-      const timeout = setTimeout(async () => {
-        // 超时时检查隧道是否实际在运行
-        try {
-          const isRunning = await invoke('check_frpc_status', { id: proxyId })
-          if (isRunning) {
-            resolve({ success: true, message: '隧道已启动' })
-          } else {
+    if (!user || !proxyId || !remoteAddress || !proxyName) {
+      await sendNotification({ title: '快速启动链接格式错误', body: '请检查链接格式是否正确' })
+      console.error('链接格式错误')
+      return
+    }
+
+    // 检查是否正在处理
+    if (processingLinks.value.has(proxyId)) {
+      console.log('隧道正在启动中，跳过:', proxyId)
+      return
+    }
+    try {
+      processingLinks.value.add(proxyId)
+
+      // 发送启动事件到日志系统
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'start',
+          tunnelId: proxyId,
+          tunnelName: proxyName
+        }
+      })
+
+      message.loading('正在启动隧道', { duration: 1000 })
+
+      // 等待日志响应
+      const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
+        const timeout = setTimeout(async () => {
+          // 超时时检查隧道是否实际在运行
+          try {
+            const isRunning = await invoke('check_frpc_status', { id: proxyId })
+            if (isRunning) {
+              resolve({ success: true, message: '隧道已启动' })
+            } else {
+              resolve({ success: false, message: '启动超时，请检查日志。' })
+            }
+          } catch (e) {
             resolve({ success: false, message: '启动超时，请检查日志。' })
           }
-        } catch (e) {
-          resolve({ success: false, message: '启动超时，请检查日志。' })
-        }
-      }, 5000)
+        }, 5000)
 
-      const logListener = listen(`frpc-log-${proxyId}`, (event: any) => {
-        const log = event.payload.message
+        const logListener = listen(`frpc-log-${proxyId}`, (event: any) => {
+          const log = event.payload.message
 
-        if (isSuccessLog(log)) {
-          clearTimeout(timeout)
-          logListener.then(unlisten => unlisten())
-          resolve({ success: true, message: log })
-        } else if (log.includes('启动失败')) {
-          clearTimeout(timeout)
-          logListener.then(unlisten => unlisten())
-          const errorMatch = log.match(/启动失败:\s*(.+)/)
-          const errorMessage = errorMatch ? errorMatch[1] : log
-          resolve({ success: false, message: errorMessage })
-        }
-      })
-
-      // 先检查是否已经在运行
-      invoke('check_frpc_status', { id: proxyId })
-        .then(isRunning => {
-          if (isRunning) {
+          if (isSuccessLog(log)) {
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
-            resolve({ success: true, message: '隧道已在运行' })
-            return
+            resolve({ success: true, message: log })
+          } else if (log.includes('启动失败')) {
+            clearTimeout(timeout)
+            logListener.then(unlisten => unlisten())
+            const errorMatch = log.match(/启动失败:\s*(.+)/)
+            const errorMessage = errorMatch ? errorMatch[1] : log
+            resolve({ success: false, message: errorMessage })
           }
+        })
 
-          // 如果没有运行，则启动隧道
-          return invoke('start_frpc_instance', {
-            id: proxyId,
-            token: user,
-            tunnelId: proxyId,
-            logColors: true,
-            enableLog: true,
-            logUser: user
+        // 先检查是否已经在运行
+        invoke('check_frpc_status', { id: proxyId })
+          .then(isRunning => {
+            if (isRunning) {
+              clearTimeout(timeout)
+              logListener.then(unlisten => unlisten())
+              resolve({ success: true, message: '隧道已在运行' })
+              return
+            }
+
+            // 如果没有运行，则启动隧道
+            return invoke('start_frpc_instance', {
+              id: proxyId,
+              token: user,
+              tunnelId: proxyId,
+              logColors: true,
+              enableLog: true,
+              logUser: user
+            })
           })
-        })
-        .catch((error) => {
-          clearTimeout(timeout)
-          logListener.then(unlisten => unlisten())
-          resolve({ success: false, message: String(error) })
-        })
-    })
-
-    await requestNotificationPermission()
-
-    const copyToClipboard = async (text: string) => {
-      try {
-        await navigator.clipboard.writeText(text)
-        message.success('已复制到剪贴板')
-      } catch (err) {
-        message.error('复制失败')
-        console.error('复制失败:', err)
-      }
-    }
-
-    if (logResult.success) {
-      notification.success({
-        title: `隧道 #${proxyId} ${proxyName} 启动成功`,
-        description: `隧道启动成功！连接地址: ${remoteAddress}`,
-        content: () => h('div', [
-          h(NButton, {
-            type: 'success',
-            text: true,
-            onClick: () => copyToClipboard(remoteAddress)
-          }, '复制链接地址')
-        ]),
-        duration: 5000
+          .catch((error) => {
+            clearTimeout(timeout)
+            logListener.then(unlisten => unlisten())
+            resolve({ success: false, message: String(error) })
+          })
       })
-      await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `请使用链接地址：${remoteAddress}` })
-      linkTunnelsStore.addLinkTunnel(proxyId)
-      message.success('通过快速启动隧道成功')
-      setTimeout(() => {
-        message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
-      }, 1000);
-    } else {
-      notification.error({
-        title: `隧道 #${proxyId} ${proxyName} 启动失败`,
-        content: logResult.message,
-        duration: 5000
-      })
-      await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动失败`, body: logResult.message })
-      message.error(`启动隧道失败: ${logResult.message}`)
-    }
 
-  } catch (e) {
-    // 发送错误事件到日志系统
-    await invoke('emit_event', {
-      event: 'tunnel-event',
-      payload: {
-        type: 'error',
-        tunnelId: proxyId,
-        tunnelName: proxyName
+      await requestNotificationPermission()
+
+      const copyToClipboard = async (text: string) => {
+        try {
+          await navigator.clipboard.writeText(text)
+          message.success('已复制到剪贴板')
+        } catch (err) {
+          message.error('复制失败')
+          console.error('复制失败:', err)
+        }
       }
-    })
-    await sendNotification({ title: `隧道 #${proxyId} 启动失败`, body: e as any })
-    message.error(`启动隧道失败: ${e}`)
 
-  } finally {
-    processingLinks.value.delete(proxyId)
-  }
+      if (logResult.success) {
+        notification.success({
+          title: `隧道 #${proxyId} ${proxyName} 启动成功`,
+          description: `隧道启动成功！连接地址: ${remoteAddress}`,
+          content: () => h('div', [
+            h(NButton, {
+              type: 'success',
+              text: true,
+              onClick: () => copyToClipboard(remoteAddress)
+            }, '复制链接地址')
+          ]),
+          duration: 5000
+        })
+        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `请使用链接地址：${remoteAddress}` })
+        linkTunnelsStore.addLinkTunnel(proxyId)
+        message.success('通过快速启动隧道成功')
+        setTimeout(() => {
+          message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
+        }, 1000);
+      } else {
+        notification.error({
+          title: `隧道 #${proxyId} ${proxyName} 启动失败`,
+          content: logResult.message,
+          duration: 5000
+        })
+        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动失败`, body: logResult.message })
+        message.error(`启动隧道失败: ${logResult.message}`)
+      }
+
+    } catch (e) {
+      // 发送错误事件到日志系统
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'error',
+          tunnelId: proxyId,
+          tunnelName: proxyName
+        }
+      })
+      await sendNotification({ title: `隧道 #${proxyId} 启动失败`, body: e as any })
+      message.error(`启动隧道失败: ${e}`)
+
+    } finally {
+      processingLinks.value.delete(proxyId)
+    }
     return
   }
-
   message.error('错误:未知链接操作')
 }
 
@@ -493,7 +509,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-   <div class="header" data-tauri-drag-region @dblclick="handleHeaderDoubleClick">
+  <div class="header" data-tauri-drag-region @dblclick="handleHeaderDoubleClick">
     <div class="header-left" data-tauri-drag-region>
       <div class="header-logo" data-tauri-drag-region>
         <div style="margin-top: 6px">
@@ -524,9 +540,25 @@ onUnmounted(() => {
     <div class="header-right" data-tauri-drag-region>
 
       <div class="window-controls">
+        <n-tooltip>
+          刷新(遇到 bug 时可尝试)
+          
+          <template #trigger>
+            <n-button quaternary size="small" @click="refreshWebview">
+           
+              <template #icon>
+                <n-icon>
+                  <Refresh />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+        </n-tooltip>
         <n-button quaternary size="small" @click="minimizeWindow">
           <template #icon>
-            <n-icon><Remove /></n-icon>
+            <n-icon>
+              <Remove />
+            </n-icon>
           </template>
         </n-button>
         <n-button quaternary size="small" @click="maximizeWindow">
@@ -541,7 +573,9 @@ onUnmounted(() => {
         </n-button>
         <n-button quaternary size="small" @click="closeWindow" class="close-button">
           <template #icon>
-            <n-icon><Close /></n-icon>
+            <n-icon>
+              <Close />
+            </n-icon>
           </template>
         </n-button>
       </div>
