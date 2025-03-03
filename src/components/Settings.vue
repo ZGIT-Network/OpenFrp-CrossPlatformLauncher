@@ -485,7 +485,7 @@ const AuthLogin = async () => {
                                   </n-space>
                                 <n-tabs v-else type="bar" animated >
                                     <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
-                                        <n-button v-if="!userToken" type="primary" @click="oauthLogin">oauth登录</n-button>
+                                        <n-button  type="primary" @click="oauthLogin">oauth登录</n-button>
 
                                         
                                     </n-tab-pane>
@@ -498,7 +498,7 @@ const AuthLogin = async () => {
                                                 </template>
                                             </n-button>
                                         </n-form-item-row>
-                                         <n-button v-if="!userToken"  type="primary" @click="AuthLogin">登录</n-button>
+                                         <n-button  type="primary" @click="AuthLogin">登录</n-button>
 
                                     
                                     </n-tab-pane>
