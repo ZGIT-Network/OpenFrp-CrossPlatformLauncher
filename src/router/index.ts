@@ -6,7 +6,7 @@ import ProxyList from '../components/ProxyList.vue'
 import Info from '../components/Info.vue'
 import CreateProxy from '../components/CreateProxies/index.vue'
 import Login from '@/components/Login.vue'
-import NodeStatus from '@/components/NodeStatus.vue.bak'
+// import NodeStatus from '@/components/NodeStatus.vue.bak'
 
 const routes = [
   {
