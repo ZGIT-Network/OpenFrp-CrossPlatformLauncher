@@ -24,6 +24,12 @@ pub async fn proxy_api(
         _ => return Err("不支持的HTTP方法".into()),
     };
 
+    // 添加统一的 User-Agent
+    let os_name = std::env::consts::OS;
+    let version = env!("CARGO_PKG_VERSION");
+    let user_agent = format!("OpenFrp-CPL-{}/{}", version, os_name);
+    request_builder = request_builder.header("User-Agent", &user_agent);
+
     // 添加请求头
     if let Some(headers_value) = headers {
         // 创建一个新的 HeaderMap
@@ -45,6 +51,12 @@ pub async fn proxy_api(
 
         request_builder = request_builder.headers(header_map);
     }
+
+    // // 添加平台特定的请求头
+    // #[cfg(target_os = "macos")]
+    // {
+    //     request_builder = request_builder.header("User-Agent", "OpenFrp-Launcher/macOS");
+    // }
 
     // 添加请求体
     if let Some(body_value) = body {

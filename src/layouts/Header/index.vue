@@ -534,7 +534,7 @@ onUnmounted(() => {
               transform="translate(-72.79 -105.36)" />
           </svg>
         </div>
-        Cross Platform Launcher Beta 0.3.1
+        Cross Platform Launcher Beta 0.3.2
       </div>
     </div>
     <div class="header-right" data-tauri-drag-region>

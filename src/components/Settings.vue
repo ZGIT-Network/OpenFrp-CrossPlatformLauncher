@@ -23,7 +23,7 @@ import {
     NThing,
     NIcon,
     NH3
-    
+
 } from 'naive-ui'
 import { inject, watch, Ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -34,6 +34,8 @@ import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link
 import { openUrl } from '@tauri-apps/plugin-opener';
 import Cookies from '@/utils/cookies'
 import { callApi } from '@/utils/apiClient'
+import dayjs from 'dayjs';
+import numbro from 'numbro';
 import authhelpimage from '@/assets/authhelpimage.vue'
 
 import { logoutCurr } from '@/requests/frpApi/api2'
@@ -50,6 +52,13 @@ watch(isDark, (newValue) => {
         toggleColorScheme()
     }
 })
+
+const byteFormat = (num: number) => {
+    return numbro(num * 1024 * 8)
+        .format({ output: 'byte', base: 'general' })
+        .replace('B', 'b');
+};
+
 
 const message = useMessage()
 const dialog = useDialog()
@@ -335,43 +344,43 @@ const oauthLogin = () => {
     message.loading('正在准备登录...', { duration: 3000 });
     getLoginUrl()
         .then((res) => {
-          if (!res.data.flag) {
-            message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
-            return;
-          }
-          
-          try {
-            // 在打开URL前显示提示
-            message.info('正在打开登录页面，请在浏览器中完成授权');
-            // 使用 setTimeout 确保消息显示后再打开URL
-            setTimeout(() => {
-              openUrl(res.data.data)
-                .catch(err => {
-                  console.error('打开URL失败:', err);
-                  message.error('无法打开浏览器，请手动复制链接进行登录');
-                  // 提供复制链接的选项
-                  dialog.info({
-                    title: '手动登录',
-                    content: '请复制以下链接在浏览器中打开完成登录:',
-                    action: () => h(NInput, {
-                      value: res.data.data,
-                      readonly: true,
-                      onFocus: (e: FocusEvent) => {
-                        const target = e.target as HTMLInputElement;
-                        target?.select();
-                      }
-                    })
-                  });
-                });
-            }, 500);
-          } catch (error) {
-            console.error('打开URL过程中出错:', error);
-            message.error('打开登录页面失败，请稍后重试');
-          }
+            if (!res.data.flag) {
+                message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
+                return;
+            }
+
+            try {
+                // 在打开URL前显示提示
+                message.info('正在打开登录页面，请在浏览器中完成授权');
+                // 使用 setTimeout 确保消息显示后再打开URL
+                setTimeout(() => {
+                    openUrl(res.data.data)
+                        .catch(err => {
+                            console.error('打开URL失败:', err);
+                            message.error('无法打开浏览器，请手动复制链接进行登录');
+                            // 提供复制链接的选项
+                            dialog.info({
+                                title: '手动登录',
+                                content: '请复制以下链接在浏览器中打开完成登录:',
+                                action: () => h(NInput, {
+                                    value: res.data.data,
+                                    readonly: true,
+                                    onFocus: (e: FocusEvent) => {
+                                        const target = e.target as HTMLInputElement;
+                                        target?.select();
+                                    }
+                                })
+                            });
+                        });
+                }, 500);
+            } catch (error) {
+                console.error('打开URL过程中出错:', error);
+                message.error('打开登录页面失败，请稍后重试');
+            }
         })
         .catch((err) => {
-          console.error('获取登录URL失败:', err);
-          message.error('请求登录URL时发生错误: ' + (err.message || '未知错误'));
+            console.error('获取登录URL失败:', err);
+            message.error('请求登录URL时发生错误: ' + (err.message || '未知错误'));
         });
 }
 
@@ -388,195 +397,270 @@ const helpDrawer = (type: string) => {
 }
 // 添加退出登录函数
 const logout = () => {
-  
-  dialog.warning({
-    title: '确认退出',
-    content: '确定要退出登录吗？',
-    positiveText: '确定',
-    negativeText: '取消',
-    onPositiveClick: () => {
-      // 清除用户token
-      logoutCurr()
-      userToken.value = ''
-      tempToken.value = ''
-      Cookies.remove('authorization');
-      localStorage.removeItem('userToken')
-      message.success('已成功退出登录')
-      window.location.reload()
-    }
-  })
+
+    dialog.warning({
+        title: '确认退出',
+        content: '确定要退出登录吗？',
+        positiveText: '确定',
+        negativeText: '取消',
+        onPositiveClick: () => {
+            // 清除用户token
+            logoutCurr()
+            userToken.value = ''
+            tempToken.value = ''
+            Cookies.remove('authorization');
+            localStorage.removeItem('userToken')
+            message.success('已成功退出登录')
+            window.location.reload()
+        }
+    })
 }
 
 const Authlogout = () => {
-  
-  dialog.warning({
-    title: '确认退出',
-    content: '确定要退出登录吗？',
-    positiveText: '确定',
-    negativeText: '取消',
-    onPositiveClick: () => {
-      // 清除用户token
-      logoutCurr()
-      Cookies.remove('authorization');
-      userToken.value = ''
-      tempToken.value = ''
-      localStorage.removeItem('userToken')
-      message.success('已成功退出登录')
-      window.location.reload()
-    }
-  })
+
+    dialog.warning({
+        title: '确认退出',
+        content: '确定要退出登录吗？',
+        positiveText: '确定',
+        negativeText: '取消',
+        onPositiveClick: () => {
+            // 清除用户token
+            logoutCurr()
+            Cookies.remove('authorization');
+            userToken.value = ''
+            tempToken.value = ''
+            localStorage.removeItem('userToken')
+            message.success('已成功退出登录')
+            window.location.reload()
+        }
+    })
 }
 const AuthLogin = async () => {
-  if (!Authorization.value) {
-    message.error('请输入 Authorization');
-    return;
-  }
-  message.loading('正在登录...', { duration: 2000 });
-  
-  try {
-    // 直接使用 invoke 而不是 callApi，避免循环检查
-    const testResponse = await invoke('proxy_api', {
-      url: 'getUserInfo',
-      method: 'POST',
-      headers: {
-        Authorization: Authorization.value
-      },
-      body: {},
-    });
-    console.log(testResponse);
-
-    if (!testResponse || !(testResponse as any).flag) {
-      message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
-      return;
+    if (!Authorization.value) {
+        message.error('请输入 Authorization');
+        return;
     }
+    message.loading('正在登录...', { duration: 2000 });
 
-    // Authorization 有效，保存登录状态
-    Cookies.set('authorization', Authorization.value, {
-      expires: 7,
-    });
-    userToken.value = Authorization.value;
-    localStorage.setItem('userToken', Authorization.value);
-    tempToken.value = Authorization.value;
-    message.success('登录成功');
-    window.location.reload();
-  } catch (error: any) {
-    console.error('登录失败:', error);
-    message.error(error?.message || '登录失败：无效的 Authorization');
-  }
+    try {
+        // 直接使用 invoke 而不是 callApi，避免循环检查
+        const testResponse = await invoke('proxy_api', {
+            url: 'getUserInfo',
+            method: 'POST',
+            headers: {
+                Authorization: Authorization.value
+            },
+            body: {},
+        });
+        console.log(testResponse);
+
+        if (!testResponse || !(testResponse as any).flag) {
+            message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
+            return;
+        }
+
+        // Authorization 有效，保存登录状态
+        Cookies.set('authorization', Authorization.value, {
+            expires: 7,
+        });
+        userToken.value = Authorization.value;
+        localStorage.setItem('userToken', Authorization.value);
+        tempToken.value = Authorization.value;
+        message.success('登录成功');
+        window.location.reload();
+    } catch (error: any) {
+        console.error('登录失败:', error);
+        message.error(error?.message || '登录失败：无效的 Authorization');
+    }
 }
 </script>
 
 <template>
     <n-scrollbar>
-        <n-card title="设置">
-            <n-space vertical>
-                <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
+        <n-space vertical>
 
+            <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
 
-                <n-form>
-                    <n-space>
-                        <n-form-item label="用户登录">
-                            <n-space>
-                                <!-- <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
-                                <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
-                                <n-space v-if="userToken">
-                                    已登录至: {{userInfo?.username}}
-                                    <n-button type="error" @click="logout">退出登录</n-button>
-                                  </n-space>
-                                <n-tabs v-else type="bar" animated >
-                                    <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
-                                        <n-button  type="primary" @click="oauthLogin">oauth登录</n-button>
-
-                                        
-                                    </n-tab-pane>
-                                    <n-tab-pane name="authorization" tab="通过 Authorization 登录">
-                                        <n-form-item-row label="请输入在面板获取的 Authorization"> 
-                                            <n-input v-model:value="Authorization" type="password" placeholder="Authorization" />
-                                            <n-button quaternary circle  @click="helpDrawer('authorization')">
-                                                <template #icon>
-                                                    <n-icon><HelpCircleOutline /></n-icon>
-                                                </template>
-                                            </n-button>
-                                        </n-form-item-row>
-                                         <n-button  type="primary" @click="AuthLogin">登录</n-button>
-
-                                    
-                                    </n-tab-pane>
-                                </n-tabs>
-                                
-                            </n-space>
-                        </n-form-item>
-                        
-                        <n-form-item label="主题">
-                            <n-switch v-model:value="isDark">
-                                <template #checked>深色</template>
-                                <template #unchecked>浅色</template>
-                            </n-switch>
-                        </n-form-item>
-                    </n-space>
-                </n-form>
-
-                <n-collapse v-model:expanded-names="activeNames" accordion>
-                    <n-collapse-item title="版本信息" name="2">
-                        <n-space vertical>
-                            <n-text>当前版本：Beta v{{ currentVersion }}</n-text>
-                            <n-space>
-                                <n-button @click="checkUpdate" :loading="checking">
-                                    {{ checking ? '检查中...' : '检查更新' }}
-                                </n-button>
-                            </n-space>
-                        </n-space>
-                    </n-collapse-item>
-                    <n-collapse-item title="Frpc 管理" name="1">
-                        <template #header-extra>
-                            首次使用请在这里下载 Frpc
+            <n-card title="已通过 NatayarkID 登录" v-if="userToken" hoverable style="height: 100%">
+                <template #header-extra>
+                    <n-button type="tertiary" @click="logout">退出登录</n-button>
+                  </template>
+                <n-thing style="width: 100%">
+                    <template #avatar>
+                        <n-tooltip :show-arrow="false" trigger="hover" placement="bottom">
+                            <template #trigger>
+                        <n-avatar
+                        :size="48"
+                        :src="'https://api.zyghit.cn/avatar/?email='+userInfo?.email+'&s=48'"
+                        fallback-src="https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg"
+                      /> 
+                    </template>
+                      更换头像？请前往 Gravatar !
+                      </n-tooltip>
                         </template>
+                        <template #header>
+                            #{{ userInfo?.id }} {{ userInfo?.username }} <n-tag type="info">{{ userInfo?.friendlyGroup }}</n-tag>
+                          </template>
+                          <template #description>
+                            {{ userInfo?.email }}
+                          </template>
+                          
+                        <n-flex style="height: 100%" justify="space-between" vertical>
+               
+                            <n-descriptions :column="2">
+                             
+                             
+                
+                              <n-descriptions-item label="隧道数">{{ userInfo?.used }} / {{ userInfo?.proxies }}
+                              </n-descriptions-item>
+                             
+                              <n-descriptions-item label="带宽速率 (上 / 下)">
+                                <span>{{ byteFormat(userInfo?.outLimit || 0).replace('Mb', '') }} Mbps</span>
+                                /
+                                <span>{{ byteFormat(userInfo?.inLimit || 0).replace('Mb', '') }} Mbps</span>
+                              </n-descriptions-item>
+                
+                              <n-descriptions-item label="注册时间">
+                                {{ userInfo?.regTime }}
+                               
+                              </n-descriptions-item>
+                              <n-descriptions-item label="剩余流量">{{
+                                numbro((userInfo?.traffic || 0) * 1024 * 1024).format({
+                                  output: 'byte',
+                                  base: 'binary',
+                                  mantissa: 2,
+                                })
+                              }}
+                              </n-descriptions-item>
+                            </n-descriptions>
+                              <n-space vertical :size="[0, 8]">
+                                  <n-text :depth="3">签到可以获得免费流量，打开网页面板完成立即完成每日签到。
+                                  </n-text>
+                              </n-space>
+                              </n-flex>
+                    </n-thing>
+                   
+               
+                
+                
+            </n-card>
+
+            <n-card title="设置">
+                <n-space vertical>
+
+
+                    <n-form>
                         <n-space>
-                            <n-button @click="downloadFrpc" :loading="downloading" :disabled="downloading">
-                                {{ downloading ? '正在进行操作...' : '检查更新或者下载 Frpc' }}
-                            </n-button>
-                            <n-button @click="getFrpcVersion" :disabled="downloading">获取本地Frpc版本</n-button>
-                            <n-popconfirm @positive-click="killAllProcesses" :disabled="downloading">
-                                <template #trigger>
-                                    <n-button type="warning" :disabled="downloading">终止所有 frpc 进程</n-button>
-                                </template>
-                                确认终止所有 frpc 进程？这将会断开所有连接
-                            </n-popconfirm>
+
+                            <n-form-item  v-if="!userToken" label="用户登录">
+                                <n-space>
+                                    <!-- <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
+                                <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
+                                   
+                                    <n-tabs type="bar" animated>
+                                        <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
+                                            <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
+
+
+                                        </n-tab-pane>
+                                        <n-tab-pane name="authorization" tab="通过 Authorization 登录">
+                                            <n-form-item-row label="请输入在面板获取的 Authorization">
+                                                <n-input v-model:value="Authorization" type="password"
+                                                    placeholder="Authorization" />
+                                                <n-button quaternary circle @click="helpDrawer('authorization')">
+                                                    <template #icon>
+                                                        <n-icon>
+                                                            <HelpCircleOutline />
+                                                        </n-icon>
+                                                    </template>
+                                                </n-button>
+                                            </n-form-item-row>
+                                            <n-button type="primary" @click="AuthLogin">登录</n-button>
+
+
+                                        </n-tab-pane>
+                                    </n-tabs>
+
+                                </n-space>
+                            </n-form-item>
+
+                            <n-form-item label="主题">
+                                <n-switch v-model:value="isDark">
+                                    <template #checked>深色</template>
+                                    <template #unchecked>浅色</template>
+                                </n-switch>
+                            </n-form-item>
                         </n-space>
-                        <br />
-                        <n-card title="运行日志" class="mt-4">
-                            <n-log :rows="10" :log="logs" :loading="false" trim />
-                        </n-card>
-                    </n-collapse-item>
-                    <n-collapse-item title="启动设置" name="3">
-                        <n-space vertical>
-                            <n-space align="center">
-                                <n-switch v-model:value="autoStart" @update:value="toggleAutoStart" />
-                                <span>开机自启动</span>
+                    </n-form>
+
+                    <n-collapse v-model:expanded-names="activeNames" accordion>
+                        <n-collapse-item title="版本信息" name="2">
+                            <n-space vertical>
+                                <n-text>当前版本：Beta v{{ currentVersion }}</n-text>
+                                <n-space>
+                                    <n-button @click="checkUpdate" :loading="checking">
+                                        {{ checking ? '检查中...' : '检查更新' }}
+                                    </n-button>
+                                </n-space>
                             </n-space>
-                            <n-space align="center" v-if="autoStart">
-                                <n-switch v-model:value="autoRestoreTunnels" @update:value="toggleAutoRestoreTunnels" />
-                                <span>开机时恢复上次运行的隧道</span>
-                            </n-space>
-                            <n-space align="center">
-                                <n-tooltip trigger="hover">
-                                    <template #trigger>
-                                        <n-switch v-model:value="deepLinkEnabled"  :disabled="true"  @update:value="toggleDeepLink" />
-                                       
-                                    </template>
-                                    允许通过“快速启动”链接启动隧道
-                                </n-tooltip>
-                                <span>启用"快速启动"功能 </span><n-button quaternary circle  @click="helpDrawer('quickstart')">
-                                    <template #icon>
-                                        <n-icon><HelpCircleOutline /></n-icon>
-                                    </template>
+                        </n-collapse-item>
+                        <n-collapse-item title="Frpc 管理" name="1">
+                            <template #header-extra>
+                                首次使用请在这里下载 Frpc
+                            </template>
+                            <n-space>
+                                <n-button @click="downloadFrpc" :loading="downloading" :disabled="downloading">
+                                    {{ downloading ? '正在进行操作...' : '检查更新或者下载 Frpc' }}
                                 </n-button>
+                                <n-button @click="getFrpcVersion" :disabled="downloading">获取本地Frpc版本</n-button>
+                                <n-popconfirm @positive-click="killAllProcesses" :disabled="downloading">
+                                    <template #trigger>
+                                        <n-button type="warning" :disabled="downloading">终止所有 frpc 进程</n-button>
+                                    </template>
+                                    确认终止所有 frpc 进程？这将会断开所有连接
+                                </n-popconfirm>
                             </n-space>
-                        </n-space>
-                    </n-collapse-item>
-                </n-collapse>
-            </n-space>
-        </n-card>
+                            <br />
+                            <n-card title="运行日志" class="mt-4">
+                                <n-log :rows="10" :log="logs" :loading="false" trim />
+                            </n-card>
+                        </n-collapse-item>
+                        <n-collapse-item title="启动设置" name="3">
+                            <n-space vertical>
+                                <n-space align="center">
+                                    <n-switch v-model:value="autoStart" @update:value="toggleAutoStart" />
+                                    <span>开机自启动</span>
+                                </n-space>
+                                <n-space align="center" v-if="autoStart">
+                                    <n-switch v-model:value="autoRestoreTunnels"
+                                        @update:value="toggleAutoRestoreTunnels" />
+                                    <span>开机时恢复上次运行的隧道</span>
+                                </n-space>
+                                <n-space align="center">
+                                    <n-tooltip trigger="hover">
+                                        <template #trigger>
+                                            <n-switch v-model:value="deepLinkEnabled" :disabled="true"
+                                                @update:value="toggleDeepLink" />
+
+                                        </template>
+                                        允许通过“快速启动”链接启动隧道
+                                    </n-tooltip>
+                                    <span>启用"快速启动"功能 </span><n-button quaternary circle
+                                        @click="helpDrawer('quickstart')">
+                                        <template #icon>
+                                            <n-icon>
+                                                <HelpCircleOutline />
+                                            </n-icon>
+                                        </template>
+                                    </n-button>
+                                </n-space>
+                            </n-space>
+                        </n-collapse-item>
+                    </n-collapse>
+                </n-space>
+            </n-card>
+        </n-space>
+
         <n-drawer v-model:show="helpDrawerVisible" width="40%" placement="right">
             <n-drawer-content closable>
                 <template #header>
@@ -585,10 +669,10 @@ const AuthLogin = async () => {
                 <n-thing v-if="helpDrawerContent === 'quickstart'">
                     <n-h3>快速启动</n-h3>
                     <n-text>
-                       快速启动 是一种基于注册链接(deep link)快速启动隧道的方式
-                    <br/>通过在面板简单的点击链接，即可快速启动隧道
-                    <br/>
-                    <br/>
+                        快速启动 是一种基于注册链接(deep link)快速启动隧道的方式
+                        <br />通过在面板简单的点击链接，即可快速启动隧道
+                        <br />
+                        <br />
                         * 通过“快速启动”功能启动的隧道无法开机自启动
                     </n-text>
                 </n-thing>
@@ -596,20 +680,20 @@ const AuthLogin = async () => {
                 <n-thing v-if="helpDrawerContent === 'authorization'">
                     <n-h3>通过 Authorization 登录</n-h3>
                     <n-text>
-                       可在 网页面板-个人中心 中的 “第三方客户端安全登录” 功能获取 Authorization 会话密钥。
-                    <br/>在无法使用Oauth回调登录时可尝试使用本方案。
-                    <br/>
-                    <authhelpimage/>
+                        可在 网页面板-个人中心 中的 “第三方客户端安全登录” 功能获取 Authorization 会话密钥。
+                        <br />在无法使用Oauth回调登录时可尝试使用本方案。
+                        <br />
+                        <authhelpimage />
 
-                    <br/>
+                        <br />
                         * 虽然说是官方客户端，但是还是这样最简单来说
                     </n-text>
                 </n-thing>
                 <n-thing v-if="helpDrawerContent === 'none'">
                     你打开了一个什么都没有的提示框？
                 </n-thing>
-              
+
             </n-drawer-content>
-          </n-drawer>
+        </n-drawer>
     </n-scrollbar>
 </template>
