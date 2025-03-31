@@ -1,29 +1,16 @@
 name: Release
 on:
   push:
-    branches: [ main ]      # 开发构建：推送到主分支时触发
-    tags: [ 'v*' ]          # 发布构建：推送标签时触发
+    branches: [ main ]  # 开发构建：推送到主分支时触发
+    tags: [ 'v*' ]     # 发布构建：推送标签时触发
   workflow_dispatch:  
 
 jobs:
   release:
     strategy:
       fail-fast: false
-      # 原构件和新增的 x86 mac 构件同时构建
       matrix:
-        include:
-          - platform: windows-latest
-            target: ""
-            variant: "default"
-          - platform: ubuntu-latest
-            target: ""
-            variant: "default"
-          - platform: macos-latest
-            target: ""
-            variant: "default"
-          - platform: macos-latest
-            target: "x86_64-apple-darwin"
-            variant: "x86"
+        platform: [macos-latest, ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -33,16 +20,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          cache: 'npm'  # 添加 npm 缓存
 
       - name: Install Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust Cache
+      - name: Rust Cache  # 添加 Rust 缓存
         uses: Swatinem/rust-cache@v2
         with:
-          # 为不同平台和 variant 生成唯一的缓存 key
-          shared-key: "tauri-build-${{ matrix.platform }}-${{ matrix.variant }}"
+          shared-key: "tauri-build-${{ matrix.platform }}"
           cache-on-failure: true
 
       - name: Install Dependencies (ubuntu only)
@@ -54,15 +40,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build the app
+      - name: Build the app (other platform)
         uses: tauri-apps/tauri-action@v0
+        if: matrix.platform != 'macos-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
-          # 传入目标参数，只有 x86mac 构件时非空
-          target: ${{ matrix.target }}
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
           releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
@@ -71,11 +56,30 @@ jobs:
           includeRelease: true
           includeUpdaterJson: true
 
+
+      - name: Build the app (macos universal)
+        if: matrix.platform == 'macos-latest'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          includeRelease: true
+          includeUpdaterJson: true
+          args: --target universal-apple-darwin
+          
       - name: Generate Signatures File
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           echo "正在生成签名文件..."
           mkdir -p signatures
+          
           if [ "${{ matrix.platform }}" = "windows-latest" ]; then
             cargo tauri signer sign ./src-tauri/target/release/bundle/msi/*.msi > signatures/windows-signature.txt
             cargo tauri signer sign ./src-tauri/target/release/bundle/nsis/*.exe >> signatures/windows-signature.txt
@@ -89,13 +93,14 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/upload-artifact@v4
         with:
-          name: update-signatures-${{ matrix.platform }}-${{ matrix.variant }}
+          name: update-signatures-${{ matrix.platform }}
           path: signatures/*
           if-no-files-found: warn
 
-      # macOS 专用步骤
+      # 下面是 macOS 专用步骤
       - name: Import Code Signing Certificates (macOS only)
         if: matrix.platform == 'macos-latest'
+        # 使用 import-codesign-certs action 导入证书
         uses: apple-actions/import-codesign-certs@v3
         with: 
           p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
@@ -115,16 +120,11 @@ jobs:
         if: matrix.platform == 'macos-latest'
         id: dmg_name
         run: |
-          # 查找生成的 DMG 文件（假设只有一个）
+          # 查找生成的原始 DMG 文件（假设只有一个）
           original_dmg=$(ls ./src-tauri/target/release/bundle/dmg/*.dmg | head -n 1)
           echo "Found original DMG: $original_dmg"
-          # 根据 variant 为 DMG 文件命名添加后缀
-          if [ "${{ matrix.variant }}" = "x86" ]; then
-            suffix="_x86_signed"
-          else
-            suffix="_signed"
-          fi
-          signed_dmg="${original_dmg%.dmg}${suffix}.dmg"
+          # 构造新的 DMG 名称，在原始名称后加 _signed
+          signed_dmg="${original_dmg%.dmg}_signed.dmg"
           echo "Signed DMG will be: $signed_dmg"
           echo "signed_dmg=$signed_dmg" >> $GITHUB_OUTPUT
 
@@ -162,6 +162,7 @@ jobs:
           echo "Stapling DMG..."
           xcrun stapler staple "${{ steps.dmg_name.outputs.signed_dmg }}"
 
+      # 添加这个新步骤来上传签名后的 DMG 文件到 Release
       - name: Upload signed DMG to Release (macOS only)
         if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
@@ -175,7 +176,7 @@ jobs:
         if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v4
         with:
-          name: OpenFrp-CPL-${{ matrix.platform }}-${{ matrix.variant }}
+          name: OpenFrp-CPL-${{ matrix.platform }}
           path: |
             src-tauri/target/release/bundle/msi/*.msi
             src-tauri/target/release/bundle/nsis/*.exe
