@@ -143,7 +143,7 @@ jobs:
             --icon "OpenFrp-CrossPlatformLauncher.app" 200 190 \
             --app-drop-link 600 185 \
             "${{ steps.dmg_name.outputs.signed_dmg }}" \
-            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
 
       - name: Sign DMG (macOS only)
         if: matrix.platform == 'macos-latest'
