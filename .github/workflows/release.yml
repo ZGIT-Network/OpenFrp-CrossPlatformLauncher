@@ -117,7 +117,7 @@ jobs:
             --options runtime \
             --entitlements ./macos.entitlements \
             --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
-            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
 
       - name: Determine DMG filename (macOS only)
         if: matrix.platform == 'macos-latest'
