@@ -26,6 +26,8 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_deep_link;
 // use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater;
+use crate::update::UpdateInfo;
+use tauri::Listener;
 mod api_proxy;
 mod update; // 添加这一行
 
@@ -88,7 +90,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.3.2".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.3.3".to_string()));
         }
 
         // 更新版本号
@@ -98,11 +100,13 @@ impl Config {
 }
 
 #[command]
-async fn check_update(_app_handle: tauri::AppHandle) -> Result<bool, String> {
+async fn check_update(_app_handle: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
     match crate::update::check_update().await {
-        Ok(Some(_update)) => Ok(true),
-        Ok(None) => Ok(false),
-        Err(e) => Err(e.to_string()),
+        Ok(update) => Ok(update),
+        Err(e) => {
+            println!("检查更新失败: {}", e);
+            Err(e.to_string())
+        }
     }
 }
 
@@ -110,7 +114,10 @@ async fn check_update(_app_handle: tauri::AppHandle) -> Result<bool, String> {
 async fn install_update(app_handle: tauri::AppHandle) -> Result<(), String> {
     match crate::update::download_and_install_update(app_handle).await {
         Ok(_) => Ok(()),
-        Err(e) => Err(e.to_string()),
+        Err(e) => {
+            println!("安装更新失败: {}", e);
+            Err(e.to_string())
+        }
     }
 }
 
@@ -580,7 +587,7 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
+        if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
@@ -691,14 +698,14 @@ async fn check_and_download<R: Runtime>(app: tauri::AppHandle<R>) -> Result<Stri
     Ok("frpc 已存在".to_string())
 }
 
-// 添加一个检查进程状态的命令
+// 修改检查进程状态的命令
 #[command]
 async fn check_frpc_status(
     processes: State<'_, FrpcProcesses>,
     id: String,
 ) -> Result<bool, String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
+        if let Some(mut process_info) = map.remove(&id) {  // 添加mut关键字
             match process_info.child.try_wait() {
                 Ok(Some(_)) => {
                     // 进程已结束
@@ -814,7 +821,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, mut process_info) in map.drain() {
+                        for (_, process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")
@@ -864,7 +871,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.3.2".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.3.3".to_string()))
 }
 
 #[tauri::command]
@@ -1034,6 +1041,14 @@ fn main() {
                     eprintln!("Failed to register app for notifications: {}", e);
                 }
             }
+
+            app.listen("tauri://update-available", |event| {
+                println!("有更新可用: {}", event.payload());
+            });
+
+            app.listen("tauri://update-status", |event| {
+                println!("更新状态: {}", event.payload());
+            });
 
             Ok(())
         })

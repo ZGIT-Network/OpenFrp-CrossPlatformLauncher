@@ -225,8 +225,15 @@ const getCurrentVersion = async () => {
 const checkUpdate = async () => {
     checking.value = true
     try {
-        const update = await invoke('check_update') as CplUpdate
+        console.log("当前版本:", currentVersion.value);
+        
+        // 先从我们的 API 获取更新信息
+        const update = await invoke('check_update') as UpdateInfo | null
+        console.log("检查更新结果:", update);
+        
         if (update) {
+            console.log("发现更新:", update.latest, "当前版本:", currentVersion.value);
+            
             dialog.info({
                 title: update.title,
                 content: () =>
@@ -241,8 +248,57 @@ const checkUpdate = async () => {
                 negativeText: '取消',
                 onPositiveClick: async () => {
                     try {
-                        message.loading('正在下载更新...', { duration: 0 })
-                        await invoke('download_and_update')
+                        // 创建一个进度对话框
+                        const loadingMsg = message.loading({
+                            content: '正在准备更新...',
+                            duration: 0
+                        })
+                        
+                        // 添加原始状态监听，用于调试
+                        const unlistenRawStatus = await listen('update-raw-status', (event) => {
+                            console.log('原始更新状态:', event.payload)
+                        })
+                        
+                        // 监听更新进度
+                        const unlistenProgress = await listen('update-progress', (event) => {
+                            console.log('更新进度:', event.payload)
+                            loadingMsg.content = `正在下载更新...${event.payload}`
+                        })
+                        
+                        // 监听更新状态
+                        const unlistenStatus = await listen('update-status', (event) => {
+                            console.log('更新状态:', event.payload)
+                            loadingMsg.content = event.payload as string
+                        })
+                        
+                        // 监听更新错误
+                        const unlistenError = await listen('update-error', (event) => {
+                            console.error('更新错误:', event.payload)
+                            loadingMsg.destroy()
+                            message.error(`更新失败: ${event.payload}`)
+                            
+                            // 清理所有监听器
+                            unlistenRawStatus()
+                            unlistenProgress()
+                            unlistenStatus()
+                            unlistenError()
+                        })
+                        
+                        console.log('开始调用安装更新...')
+                        // 开始下载和安装更新
+                        await invoke('install_update')
+                        console.log('安装更新调用完成')
+                        
+                        // 清理监听器
+                        unlistenRawStatus()
+                        unlistenProgress()
+                        unlistenStatus()
+                        unlistenError()
+                        
+                        // 关闭加载消息
+                        loadingMsg.destroy()
+                        
+                        // 显示成功对话框
                         dialog.success({
                             title: '更新下载完成',
                             content: '更新已下载完成，重启应用后生效',
@@ -252,6 +308,7 @@ const checkUpdate = async () => {
                             }
                         })
                     } catch (e) {
+                        console.error('更新过程中发生错误:', e)
                         message.error(`更新失败: ${e}`)
                     }
                 }
@@ -261,7 +318,7 @@ const checkUpdate = async () => {
         }
     } catch (e) {
         console.error('检查更新错误:', e)
-        message.error('检查更新失败，请稍后重试')
+        message.error(`检查更新失败: ${e}`)
     } finally {
         checking.value = false
     }
@@ -288,7 +345,7 @@ const toggleAutoStart = async () => {
         message.success(`${autoStart.value ? '启用' : '禁用'}开机自启动成功`)
         if (autoStart.value && deepLinkEnabled.value) {
             setTimeout(() => {
-                message.warning('注意，通过“快速启动”功能启动的隧道无法开机自启动')
+                message.warning('注意，通过"快速启动"功能启动的隧道无法开机自启动')
             }, 200)
         }
     } catch (e) {
@@ -643,7 +700,7 @@ const AuthLogin = async () => {
                                                 @update:value="toggleDeepLink" />
 
                                         </template>
-                                        允许通过“快速启动”链接启动隧道
+                                        允许通过"快速启动"链接启动隧道
                                     </n-tooltip>
                                     <span>启用"快速启动"功能 </span><n-button quaternary circle
                                         @click="helpDrawer('quickstart')">
@@ -673,14 +730,14 @@ const AuthLogin = async () => {
                         <br />通过在面板简单的点击链接，即可快速启动隧道
                         <br />
                         <br />
-                        * 通过“快速启动”功能启动的隧道无法开机自启动
+                        * 通过"快速启动"功能启动的隧道无法开机自启动
                     </n-text>
                 </n-thing>
 
                 <n-thing v-if="helpDrawerContent === 'authorization'">
                     <n-h3>通过 Authorization 登录</n-h3>
                     <n-text>
-                        可在 网页面板-个人中心 中的 “第三方客户端安全登录” 功能获取 Authorization 会话密钥。
+                        可在 网页面板-个人中心 中的 "第三方客户端安全登录" 功能获取 Authorization 会话密钥。
                         <br />在无法使用Oauth回调登录时可尝试使用本方案。
                         <br />
                         <authhelpimage />
