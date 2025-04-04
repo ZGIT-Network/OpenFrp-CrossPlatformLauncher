@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { Ref, ref, watch } from 'vue';
+import { Ref, ref, watch, inject } from 'vue';
 
 import { FormItemRule, useMessage } from 'naive-ui';
 
@@ -18,7 +18,9 @@ const props = defineProps<{
 const customConfigString = ref<string>('');
 
 const autoTlsName = ref<string>('false');
-const message = useMessage();
+// 尝试从父组件注入message，如果不存在则创建本地message
+const injectedMessage = inject('message', null);
+const message = injectedMessage || useMessage();
 
 const autoTlsType = ref([
   {

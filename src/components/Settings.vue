@@ -227,15 +227,8 @@ const getCurrentVersion = async () => {
 const checkUpdate = async () => {
     checking.value = true
     try {
-        console.log("当前版本:", currentVersion.value);
-
-        // 先从我们的 API 获取更新信息
-        const update = await invoke('check_update') as UpdateInfo | null
-        console.log("检查更新结果:", update);
-
+        const update = await invoke('check_update') as CplUpdate
         if (update) {
-            console.log("发现更新:", update.latest, "当前版本:", currentVersion.value);
-
             dialog.info({
                 title: update.title,
                 content: () =>
@@ -250,50 +243,9 @@ const checkUpdate = async () => {
                 negativeText: '取消',
                 onPositiveClick: async () => {
                     try {
-                        // 创建一个进度对话框
-                        const loadingMsg = message.loading('正在下载更新...', { duration: 0 })
-
-                        // 监听更新进度
-                        const unlistenProgress = await listen('update-progress', (event) => {
-                            message.destroyAll()
-                            message.loading(`正在下载更新...${event.payload}`, { duration: 0 })
-                        })
-
-                        // 监听更新状态
-                        const unlistenStatus = await listen('update-status', (event) => {
-                            message.destroyAll()
-                            message.loading(event.payload as string, { duration: 0 })
-                        })
-
-                        // 监听更新错误
-                        const unlistenError = await listen('update-error', (event) => {
-                            message.destroyAll()
-                            message.error(`更新失败: ${event.payload}`)
-                            unlistenProgress()
-                            unlistenStatus()
-                            unlistenError()
-                        })
-
-                        // 开始下载和安装更新
-                        await invoke('install_update')
-
-                        // 清理监听器
-                        unlistenProgress()
-                        unlistenStatus()
-                        unlistenError()
-
-                        // 关闭加载消息
-                        message.destroyAll()
-
-                        // 显示成功对话框
-                        dialog.success({
-                            title: '更新下载完成',
-                            content: '更新已下载完成，重启应用后生效',
-                            positiveText: '立即重启',
-                            onPositiveClick: async () => {
-                                await invoke('exit_app')
-                            }
-                        })
+                        message.loading('正在下载更新...', { duration: 0 })
+                        await invoke('download_and_update')
+                        message.success('更新已下载完成，重启应用后生效')
                     } catch (e) {
                         message.error(`更新失败: ${e}`)
                     }
@@ -304,7 +256,7 @@ const checkUpdate = async () => {
         }
     } catch (e) {
         console.error('检查更新错误:', e)
-        message.error(`检查更新失败: ${e}`)
+        message.error('检查更新失败，请稍后重试')
     } finally {
         checking.value = false
     }

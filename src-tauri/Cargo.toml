@@ -1,6 +1,6 @@
 [package]
-name = "OpenFrp-CrossPlatformLauncher"
-version = "0.3.3"
+name = "openfrp_cpl"
+version = "0.4.0"
 description = "OpenFrp Cross Platform Launcher"
 authors = ["云默安", "ZGIT"]
 edition = "2021"

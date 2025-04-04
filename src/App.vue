@@ -118,7 +118,7 @@ const cleanupFunctions = ref<(() => void)[]>([]);
 // 添加日志的辅助函数
 const appendLog = (message: string) => {
   const timestamp = new Date().toLocaleTimeString();
-  const logMessage = `[系统] [${timestamp}] ${message}\n`;
+  const logMessage = `[${timestamp}] [系统] ${message}\n`;
   const savedLogs = localStorage.getItem('frpcLogs') || '';
   localStorage.setItem('frpcLogs', savedLogs + logMessage);
 };

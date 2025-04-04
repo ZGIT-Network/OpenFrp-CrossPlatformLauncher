@@ -3,36 +3,6 @@
 version = 4
 
 [[package]]
-name = "OpenFrp-CrossPlatformLauncher"
-version = "0.3.3"
-dependencies = [
- "chrono",
- "dirs 5.0.1",
- "flate2",
- "is_elevated",
- "nix 0.26.4",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "single-instance",
- "tar",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-deep-link",
- "tauri-plugin-dialog",
- "tauri-plugin-http",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-updater",
- "tokio",
- "winreg 0.50.0",
- "zip 0.6.6",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.24.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3074,6 +3044,36 @@ dependencies = [
  "is-wsl",
  "libc",
  "pathdiff",
+]
+
+[[package]]
+name = "openfrp_cpl"
+version = "0.4.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "flate2",
+ "is_elevated",
+ "nix 0.26.4",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "single-instance",
+ "tar",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-deep-link",
+ "tauri-plugin-dialog",
+ "tauri-plugin-http",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-updater",
+ "tokio",
+ "winreg 0.50.0",
+ "zip 0.6.6",
 ]
 
 [[package]]

@@ -32,35 +32,11 @@ const renderIcon = (icon: Component, size = '16px') => {
   };
 };
 
-const update = () => {
-  options[3].disabled = props.proxy.online;
-  options[4].disabled = props.proxy.online;
-};
-
-watch(props.proxy, (x) => {
-  options[3].disabled = x.online;
-  options[4].disabled = x.online;
-});
-
 const options = [
   {
     label: '刷新状态',
     key: 'refreshState',
     icon: renderIcon(RefreshOutline),
-  },
-  {
-    key: 'menu-divider',
-    type: 'divider',
-  },
-  {
-    label: '获取配置文件 / 启动命令',
-    key: 'getConf',
-    icon: renderIcon(DocumentOutline),
-  },
-  {
-    label: '通过客户端一键启动 (实验性功能)',
-    key: 'startOnWeb',
-    icon: renderIcon(PlayOutline),
   },
   {
     key: 'menu-divider',
@@ -82,16 +58,21 @@ const options = [
     type: 'divider',
   },
   {
-    label: '强制下线',
-    key: 'forceOff',
-    icon: renderIcon(CloudOfflineOutline),
-  },
-  {
     label: '删除',
     key: 'deleteProxy',
     icon: renderIcon(TrashOutline),
   },
 ];
+
+const update = () => {
+  options[3].disabled = props.proxy.online;
+  options[4].disabled = props.proxy.online;
+};
+
+watch(() => props.proxy.online, (newVal) => {
+  options[3].disabled = newVal;
+  options[4].disabled = newVal;
+}, { immediate: true });
 </script>
 <template>
   <n-dropdown trigger="click" :options="options" @update:show="() => update()" @select="fallback">

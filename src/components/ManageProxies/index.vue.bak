@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-import { Component, h, inject, Ref, ref } from 'vue';
+import { Component, h, inject, Ref, ref, provide } from 'vue';
 import { useRouter } from 'vue-router';
 
 import { AxiosError } from 'axios';
@@ -41,6 +41,8 @@ const { userInfo } = inject<{ userInfo: Ref<Struct.UserInfo> }>('userInfo') || {
 const dialog = useDialog();
 const router = useRouter();
 const message = useMessage();
+// 提供message给子组件
+provide('message', message);
 const loadingBar = useLoadingBar();
 const renderIcon = (icon: Component, size = '16px') => {
   return () => {

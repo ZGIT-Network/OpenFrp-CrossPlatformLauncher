@@ -11,15 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-latest, windows-latest]
+        arch: [x64, arm64]  # 添加 x64 架构
+        exclude:
+          - platform: macos-latest  # macOS 使用通用二进制文件
+            arch: arm64
         include:
-          # 为 Linux 添加 ARM64 支持
-          - platform: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
-            arch: arm64
-          # 为 Windows 添加 ARM64 支持
-          - platform: windows-latest
-            target: aarch64-pc-windows-msvc
-            arch: arm64
+          # 为 macOS 添加 universal 架构
+          - platform: macos-latest
+            arch: universal
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -68,9 +67,9 @@ jobs:
         run: |
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
 
-      # 标准构建（非 macOS 和非特殊架构）
-      - name: Build the app (standard)
-        if: matrix.platform != 'macos-latest' && matrix.arch != 'arm64'
+      # Windows 和 Linux 标准 x64 构建
+      - name: Build the app (Standard x64)
+        if: matrix.arch == 'x64'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -101,7 +100,11 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc' || 'aarch64-unknown-linux-gnu' }}
+          environmentVariables: |
+            ${{ matrix.platform == 'ubuntu-latest' && 'PKG_CONFIG_ALLOW_CROSS=1
+            PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' || '' }}
 
       # macOS 通用二进制构建
       - name: Build the app (macOS universal)
@@ -109,18 +112,25 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENABLE_CODE_SIGNING: ${{ secrets.APPLE_CERTIFICATE_PASSWORD != '' && startsWith(github.ref, 'refs/tags/') }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
         with:
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
-          releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
-          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenFrp CPL v__VERSION__'
+          releaseBody: '请参阅 [CHANGELOG.md](https://github.com/ZGIT-Network/OpenFrp-Launcher/blob/main/CHANGELOG.md) 查看更新内容。'
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          releaseDir: 'src-tauri/target/release/bundle'
           includeRelease: true
           includeUpdaterJson: true
           args: --target universal-apple-darwin
-          
+          environmentVariables: MACOSX_DEPLOYMENT_TARGET=10.14
+
       - name: Generate Signatures File
         if: startsWith(github.ref, 'refs/tags/')
         run: |
@@ -481,3 +491,23 @@ jobs:
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 新增：为 Linux ARM64 构建添加环境变量
+      - name: Build the app (Linux ARM64)
+        if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'OpenFrp CPL v__VERSION__'
+          releaseBody: '请参阅 [CHANGELOG.md](https://github.com/ZGIT-Network/OpenFrp-Launcher/blob/main/CHANGELOG.md) 查看更新内容。'
+          releaseId: ${{ needs.create-release.outputs.release_id }}
+          releaseDir: 'src-tauri/target/aarch64-unknown-linux-gnu/release/bundle'
+          includeRelease: true
+          includeUpdaterJson: true
+          args: --target aarch64-unknown-linux-gnu
+          environmentVariables: |
+            PKG_CONFIG_ALLOW_CROSS=1
+            PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
