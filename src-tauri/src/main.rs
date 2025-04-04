@@ -587,7 +587,7 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(process_info) = map.remove(&id) {
+        if let Some(mut process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
