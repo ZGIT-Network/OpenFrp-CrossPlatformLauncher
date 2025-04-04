@@ -363,32 +363,6 @@ jobs:
           keychain-password: ${{ secrets.KEYCHAIN_PASSWORD || github.run_id }}
         continue-on-error: true
 
-      - name: Prepare macOS entitlements file
-        if: matrix.platform == 'macos-latest'
-        run: |
-          cat > macos.entitlements << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>com.apple.security.cs.allow-jit</key>
-              <true/>
-              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
-              <true/>
-              <key>com.apple.security.cs.disable-library-validation</key>
-              <true/>
-              <key>com.apple.security.network.client</key>
-              <true/>
-              <key>com.apple.security.network.server</key>
-              <true/>
-              <key>com.apple.security.files.user-selected.read-write</key>
-              <true/>
-              <key>com.apple.security.files.downloads.read-write</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-
       - name: Sign .app with Hardened Runtime (macOS only)
         if: matrix.platform == 'macos-latest'
         run: |
@@ -398,7 +372,7 @@ jobs:
             codesign --deep --force --verify --verbose \
               --options runtime \
               --entitlements ./macos.entitlements \
-              --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
+              --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" \
               /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
           else
             echo "Skipping code signing - no certificates provided"
@@ -431,7 +405,7 @@ jobs:
           
           # 签名 DMG
           codesign --force --verify --verbose \
-            --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
+            --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" \
             "${DMG_PATH}"
           
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
