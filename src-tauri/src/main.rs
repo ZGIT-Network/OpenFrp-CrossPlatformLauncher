@@ -705,7 +705,7 @@ async fn check_frpc_status(
     id: String,
 ) -> Result<bool, String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {  // 添加mut关键字
+        if let Some(mut process_info) = map.remove(&id) {
             match process_info.child.try_wait() {
                 Ok(Some(_)) => {
                     // 进程已结束
@@ -821,7 +821,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, process_info) in map.drain() {
+                        for (_, mut process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")

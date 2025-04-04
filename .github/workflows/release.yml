@@ -11,12 +11,14 @@ jobs:
       fail-fast: false
       matrix:
         platform: [macos-latest, ubuntu-latest, windows-latest]
-        arch: [x64, arm64]  # 添加 x64 架构
+        arch: [x64, arm64]
         exclude:
-          - platform: macos-latest  # macOS 使用通用二进制文件
+          - platform: macos-latest  # 排除所有macOS特定架构
+            arch: x64
+          - platform: macos-latest
             arch: arm64
         include:
-          # 为 macOS 添加 universal 架构
+          # 只保留macOS universal架构
           - platform: macos-latest
             arch: universal
     runs-on: ${{ matrix.platform }}
