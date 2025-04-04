@@ -128,6 +128,16 @@ const appendSystemLog = (message: string) => {
 const appendTunnelLog = (tunnelId: string, message: string) => {
   const timestamp = new Date().toLocaleTimeString()
   const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'))
+  // 新增：检查是否是启动成功消息，如果是，发送一个特殊的成功事件
+  if (message.includes('start proxy success') || 
+      message.includes('start tunnel success') ||
+      message.includes('隧道启动成功')) {
+    // 发送一个特殊的成功事件，ProxyList组件可以监听这个事件
+    window.dispatchEvent(new CustomEvent(`tunnel-${tunnelId}-success`, {
+      detail: { message: message }
+    }))
+  }
+  
   appendToLog(`[${timestamp}] [<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}\n`)
   
   // 如果是新隧道，添加到选项中
@@ -150,6 +160,42 @@ const loadLogs = () => {
   rawLogs.value = localStorage.getItem('frpcLogs') || ''
 }
 
+// 修改设置隧道监听器的逻辑
+const setupTunnelListener = async (tunnelId: string) => {
+  const listenerKey = `frpc-log-${tunnelId}`
+  
+  // 先清理可能存在的旧监听器
+  if (activeListeners.value.has(listenerKey)) {
+    console.log(`重新设置隧道 ${tunnelId} 的日志监听器`)
+    // 找到并清理旧的监听器
+    const index = cleanupFunctions.value.findIndex(
+      fn => fn.toString().includes(listenerKey)
+    );
+    if (index !== -1) {
+      try {
+        await cleanupFunctions.value[index]();
+        cleanupFunctions.value.splice(index, 1);
+      } catch (e) {
+        console.error(`清理隧道 ${tunnelId} 旧监听器失败:`, e);
+      }
+    }
+    activeListeners.value.delete(listenerKey);
+  }
+  
+  // 设置新的监听器
+  console.log(`设置隧道 ${tunnelId} 的日志监听器`);
+  try {
+    const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
+      console.log(`收到隧道 ${tunnelId} 的日志:`, event.payload.message);
+      appendTunnelLog(tunnelId, event.payload.message);
+    });
+    activeListeners.value.set(listenerKey, true);
+    cleanupFunctions.value.push(instanceLogUnlisten);
+  } catch (e) {
+    console.error(`设置隧道 ${tunnelId} 监听器失败:`, e);
+  }
+}
+
 onMounted(async () => {
   loadLogs()
   
@@ -160,16 +206,17 @@ onMounted(async () => {
     })
     cleanupFunctions.value.push(globalLogUnlisten)
 
-    // 监听隧道事件
-    const tunnelEventUnlisten = await listen('tunnel-event', (event: any) => {
+    // 监听隧道事件，修改为每次都重新设置监听器
+    const tunnelEventUnlisten = await listen('tunnel-event', async (event: any) => {
       const { type, tunnelId, tunnelName } = event.payload
-      // 当收到隧道启动事件时，立即设置日志监听器
-      if (type === 'start' && !activeListeners.value.has(`frpc-log-${tunnelId}`)) {
-        setupTunnelListener(tunnelId)
+      
+      // 对于启动相关事件，始终重新设置监听器
+      if (type === 'start' || type === 'prepare') {
+        await setupTunnelListener(tunnelId)
       }
       
       // 如果是新隧道，添加到选项中
-      if (!tunnelOptions.value.some(option => option.value === tunnelId)) {
+      if (!tunnelOptions.value.some((option: any) => option.value === tunnelId)) {
         tunnelOptions.value.push({
           label: `隧道 ${tunnelId} (${tunnelName})`,
           value: tunnelId
@@ -177,6 +224,9 @@ onMounted(async () => {
       }
       
       switch (type) {
+        case 'prepare':
+          appendSystemLog(`<span style="color: #2080f0">准备启动隧道 #${tunnelId} ${tunnelName}</span>`)
+          break
         case 'start':
           appendSystemLog(`<span style="color: #2080f0">开始启动隧道 #${tunnelId} ${tunnelName}</span>`)
           break
@@ -192,18 +242,6 @@ onMounted(async () => {
       }
     })
     cleanupFunctions.value.push(tunnelEventUnlisten)
-
-    // 提取设置隧道监听器的逻辑为独立函数
-    const setupTunnelListener = async (tunnelId: string) => {
-      const listenerKey = `frpc-log-${tunnelId}`
-      if (!activeListeners.value.has(listenerKey)) {
-        const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
-          appendTunnelLog(tunnelId, event.payload.message)
-        })
-        activeListeners.value.set(listenerKey, true)
-        cleanupFunctions.value.push(instanceLogUnlisten)
-      }
-    }
 
     // 为已保存的隧道设置监听器
     const savedStates = localStorage.getItem('tunnelStates')

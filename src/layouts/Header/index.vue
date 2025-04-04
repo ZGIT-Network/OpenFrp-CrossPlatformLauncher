@@ -1,20 +1,22 @@
 <script lang="ts" setup>
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useDialog, /*NText,*/ useNotification, NButton, useMessage, NIcon } from 'naive-ui';
-import { onMounted, h, onUnmounted, ref, provide } from 'vue';
+import { onMounted, h, onUnmounted, ref, provide, inject, computed,Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { RouterLink, useRouter, useRoute } from 'vue-router';
 import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
-import { Remove, Expand, Contract, Close, Refresh } from '@vicons/ionicons5'
+import { Remove, Expand, Contract, Close, Refresh, Moon, Sunny } from '@vicons/ionicons5'
 import { AxiosError } from 'axios';
 
 
 import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
 
 import Cookies from '@/utils/cookies';
+
+import { useThemeStore } from '@/stores/theme'
 
 const notification = useNotification();
 const router = useRouter();
@@ -506,6 +508,20 @@ onUnmounted(() => {
 
 // 移除这里的 provide，因为我们已经在 getUserInfo 成功回调中提供了
 // provide('userInfo', { userInfo, getUserInfo });
+
+// 正确引用已存在的主题功能
+const { colorScheme, toggleColorScheme } = inject('darkMode') as {
+  colorScheme: Ref<string>,
+  toggleColorScheme: () => void
+};
+
+// 基于colorScheme计算isDark
+const isDark = computed(() => colorScheme.value === 'dark');
+
+// 使用已有的toggleColorScheme函数
+const toggleDarkMode = () => {
+  toggleColorScheme();
+};
 </script>
 
 <template>
@@ -540,6 +556,19 @@ onUnmounted(() => {
     <div class="header-right" data-tauri-drag-region>
 
       <div class="window-controls">
+        <n-tooltip placement="bottom">
+          <template #trigger>
+            <n-button quaternary circle size="small" @click="toggleDarkMode">
+              <template #icon>
+                <n-icon>
+                  <Moon v-if="isDark" />
+                  <Sunny v-else />
+                </n-icon>
+              </template>
+            </n-button>
+          </template>
+          {{ isDark ? '切换到浅色主题' : '切换到深色主题' }}
+        </n-tooltip>
         <n-tooltip>
           刷新(遇到 bug 时可尝试)
           

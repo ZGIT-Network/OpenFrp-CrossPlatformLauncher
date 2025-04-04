@@ -968,6 +968,48 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
     })
 }
 
+#[command]
+fn get_app_data_dir() -> Result<String, String> {
+    let app_dir = get_app_dir();
+    Ok(app_dir.to_string_lossy().to_string())
+}
+
+#[command]
+fn open_app_data_dir() -> Result<(), String> {
+    let app_dir = get_app_dir();
+    
+    // 确保目录存在
+    if !app_dir.exists() {
+        fs::create_dir_all(&app_dir).map_err(|e| format!("创建目录失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(app_dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(app_dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(app_dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    
+    Ok(())
+}
+
 // 修改 main 函数
 fn main() {
     let app = tauri::Builder::default()
@@ -1073,7 +1115,9 @@ fn main() {
             install_update,
             get_build_info,
             get_system_info,
-            api_proxy::proxy_api, 
+            api_proxy::proxy_api,
+            get_app_data_dir,
+            open_app_data_dir,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, h } from 'vue'
+import { UpdateInfo } from '@/types/update'
 import {
     useMessage,
     useDialog,
@@ -22,8 +23,9 @@ import {
     NDrawerContent,
     NThing,
     NIcon,
-    NH3
-
+    NH3,
+    NStep,
+    NSteps
 } from 'naive-ui'
 import { inject, watch, Ref } from 'vue'
 import { onBeforeRouteLeave } from 'vue-router'
@@ -226,14 +228,14 @@ const checkUpdate = async () => {
     checking.value = true
     try {
         console.log("当前版本:", currentVersion.value);
-        
+
         // 先从我们的 API 获取更新信息
         const update = await invoke('check_update') as UpdateInfo | null
         console.log("检查更新结果:", update);
-        
+
         if (update) {
             console.log("发现更新:", update.latest, "当前版本:", currentVersion.value);
-            
+
             dialog.info({
                 title: update.title,
                 content: () =>
@@ -242,62 +244,47 @@ const checkUpdate = async () => {
                         h('br'), `当前版本 v${currentVersion.value}`, h('br'), h('br'),
                         '更新日志:',
                         h('br'),
-                        ...update.msg.split('\n').map((line, index) => h('div', { key: index }, line))
+                        ...update.msg.split('\n').map((line: string, index: number) => h('div', { key: index }, line))
                     ]),
                 positiveText: '立即更新',
                 negativeText: '取消',
                 onPositiveClick: async () => {
                     try {
                         // 创建一个进度对话框
-                        const loadingMsg = message.loading({
-                            content: '正在准备更新...',
-                            duration: 0
-                        })
-                        
-                        // 添加原始状态监听，用于调试
-                        const unlistenRawStatus = await listen('update-raw-status', (event) => {
-                            console.log('原始更新状态:', event.payload)
-                        })
-                        
+                        const loadingMsg = message.loading('正在下载更新...', { duration: 0 })
+
                         // 监听更新进度
                         const unlistenProgress = await listen('update-progress', (event) => {
-                            console.log('更新进度:', event.payload)
-                            loadingMsg.content = `正在下载更新...${event.payload}`
+                            message.destroyAll()
+                            message.loading(`正在下载更新...${event.payload}`, { duration: 0 })
                         })
-                        
+
                         // 监听更新状态
                         const unlistenStatus = await listen('update-status', (event) => {
-                            console.log('更新状态:', event.payload)
-                            loadingMsg.content = event.payload as string
+                            message.destroyAll()
+                            message.loading(event.payload as string, { duration: 0 })
                         })
-                        
+
                         // 监听更新错误
                         const unlistenError = await listen('update-error', (event) => {
-                            console.error('更新错误:', event.payload)
-                            loadingMsg.destroy()
+                            message.destroyAll()
                             message.error(`更新失败: ${event.payload}`)
-                            
-                            // 清理所有监听器
-                            unlistenRawStatus()
                             unlistenProgress()
                             unlistenStatus()
                             unlistenError()
                         })
-                        
-                        console.log('开始调用安装更新...')
+
                         // 开始下载和安装更新
                         await invoke('install_update')
-                        console.log('安装更新调用完成')
-                        
+
                         // 清理监听器
-                        unlistenRawStatus()
                         unlistenProgress()
                         unlistenStatus()
                         unlistenError()
-                        
+
                         // 关闭加载消息
-                        loadingMsg.destroy()
-                        
+                        message.destroyAll()
+
                         // 显示成功对话框
                         dialog.success({
                             title: '更新下载完成',
@@ -308,7 +295,6 @@ const checkUpdate = async () => {
                             }
                         })
                     } catch (e) {
-                        console.error('更新过程中发生错误:', e)
                         message.error(`更新失败: ${e}`)
                     }
                 }
@@ -530,6 +516,115 @@ const AuthLogin = async () => {
         message.error(error?.message || '登录失败：无效的 Authorization');
     }
 }
+
+// 添加手动放置frpc的相关功能
+const appDataDir = ref('');
+const manualModeVisible = ref(false);
+const expectedFrpcFilename = ref('');
+const frpcFullPath = ref('');
+
+// 获取期望的frpc文件名和路径
+const getExpectedFrpcInfo = async () => {
+    try {
+        // 尝试从后端获取现有frpc信息
+        const frpcVersion = await invoke('get_frpc_cli_version') as {
+            version: string,
+            path: string,
+            filename: string
+        };
+
+        // 如果已有文件，使用现有文件名和路径
+        if (frpcVersion && frpcVersion.filename) {
+            expectedFrpcFilename.value = frpcVersion.filename;
+            frpcFullPath.value = frpcVersion.path;
+            return;
+        }
+
+        // 如果没有现有文件，使用简单逻辑确定期望的文件名
+        // 这与后端逻辑保持一致
+        const isWindows = navigator.platform.toLowerCase().includes('win');
+
+        if (isWindows) {
+            expectedFrpcFilename.value = 'frpc_windows_amd64.exe';
+        } else {
+            // 检测是否为macOS
+            const isMac = navigator.platform.toLowerCase().includes('mac');
+            if (isMac) {
+                // 检测ARM架构（M1/M2芯片）
+                const isArm = /arm|aarch/i.test(navigator.platform) ||
+                    (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+                expectedFrpcFilename.value = isArm ? 'frpc_darwin_arm64' : 'frpc_darwin_amd64';
+            } else {
+                // 检测Linux ARM架构
+                const isLinuxArm = /arm|aarch/i.test(navigator.platform);
+                expectedFrpcFilename.value = isLinuxArm ? 'frpc_linux_arm64' : 'frpc_linux_amd64';
+            }
+        }
+
+        // 记录用于调试
+        console.log("系统检测:", {
+            platform: navigator.platform,
+            userAgent: navigator.userAgent,
+            expectedFile: expectedFrpcFilename.value
+        });
+    } catch (e) {
+        console.error('获取frpc信息失败:', e);
+        message.error(`获取frpc信息失败: ${e}`);
+
+        // 使用最基本的默认值
+        expectedFrpcFilename.value = window.navigator.platform.includes('Win')
+            ? 'frpc_windows_amd64.exe'
+            : 'frpc_linux_amd64';
+    }
+};
+
+// 获取应用数据目录
+const getAppDataDir = async () => {
+    try {
+        appDataDir.value = await invoke('get_app_data_dir') as string;
+        await getExpectedFrpcInfo();
+    } catch (e) {
+        console.error('获取应用数据目录失败:', e);
+        message.error(`获取应用数据目录失败: ${e}`);
+    }
+};
+
+// 打开应用数据目录
+const openAppDataDir = async () => {
+    try {
+        await invoke('open_app_data_dir');
+        message.success('已打开数据目录');
+    } catch (e) {
+        console.error('打开数据目录失败:', e);
+        message.error(`打开数据目录失败: ${e}`);
+    }
+};
+
+// 检查frpc是否存在
+const checkFrpcExists = async () => {
+    try {
+        const result = await invoke('get_frpc_cli_version') as any;
+        if (result && result.version) {
+            message.success(`检测到frpc版本: ${result.version}`);
+            return true;
+        }
+        return false;
+    } catch (e) {
+        console.error('检查frpc失败:', e);
+        return false;
+    }
+};
+
+// 显示手动放置说明
+const showManualMode = async () => {
+    await getAppDataDir();
+    manualModeVisible.value = true;
+};
+
+onMounted(async () => {
+    // ... existing code ...
+    await getAppDataDir();
+});
 </script>
 
 <template>
@@ -541,65 +636,64 @@ const AuthLogin = async () => {
             <n-card title="已通过 NatayarkID 登录" v-if="userToken" hoverable style="height: 100%">
                 <template #header-extra>
                     <n-button type="tertiary" @click="logout">退出登录</n-button>
-                  </template>
+                </template>
                 <n-thing style="width: 100%">
                     <template #avatar>
                         <n-tooltip :show-arrow="false" trigger="hover" placement="bottom">
                             <template #trigger>
-                        <n-avatar
-                        :size="48"
-                        :src="'https://api.zyghit.cn/avatar/?email='+userInfo?.email+'&s=48'"
-                        fallback-src="https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg"
-                      /> 
+                                <n-avatar :size="48"
+                                    :src="'https://api.zyghit.cn/avatar/?email=' + userInfo?.email + '&s=256'"
+                                    fallback-src="https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg" />
+                            </template>
+                            更换头像？请前往 Gravatar !
+                        </n-tooltip>
                     </template>
-                      更换头像？请前往 Gravatar !
-                      </n-tooltip>
-                        </template>
-                        <template #header>
-                            #{{ userInfo?.id }} {{ userInfo?.username }} <n-tag type="info">{{ userInfo?.friendlyGroup }}</n-tag>
-                          </template>
-                          <template #description>
-                            {{ userInfo?.email }}
-                          </template>
-                          
-                        <n-flex style="height: 100%" justify="space-between" vertical>
-               
-                            <n-descriptions :column="2">
-                             
-                             
-                
-                              <n-descriptions-item label="隧道数">{{ userInfo?.used }} / {{ userInfo?.proxies }}
-                              </n-descriptions-item>
-                             
-                              <n-descriptions-item label="带宽速率 (上 / 下)">
+                    <template #header>
+                        #{{ userInfo?.id }} {{ userInfo?.username }} <n-tag type="info">{{ userInfo?.friendlyGroup
+                            }}</n-tag>
+                    </template>
+                    <template #description>
+                        {{ userInfo?.email }}
+                    </template>
+
+                    <n-flex style="height: 100%" justify="space-between" vertical>
+
+                        <n-descriptions :column="2">
+
+
+
+                            <n-descriptions-item label="隧道数">{{ userInfo?.used }} / {{ userInfo?.proxies }}
+                            </n-descriptions-item>
+
+                            <n-descriptions-item label="带宽速率 (上 / 下)">
                                 <span>{{ byteFormat(userInfo?.outLimit || 0).replace('Mb', '') }} Mbps</span>
                                 /
                                 <span>{{ byteFormat(userInfo?.inLimit || 0).replace('Mb', '') }} Mbps</span>
-                              </n-descriptions-item>
-                
-                              <n-descriptions-item label="注册时间">
+                            </n-descriptions-item>
+
+                            <n-descriptions-item label="注册时间">
                                 {{ userInfo?.regTime }}
-                               
-                              </n-descriptions-item>
-                              <n-descriptions-item label="剩余流量">{{
+
+                            </n-descriptions-item>
+                            <n-descriptions-item label="剩余流量">{{
                                 numbro((userInfo?.traffic || 0) * 1024 * 1024).format({
-                                  output: 'byte',
-                                  base: 'binary',
-                                  mantissa: 2,
+                                    output: 'byte',
+                                    base: 'binary',
+                                    mantissa: 2,
                                 })
-                              }}
-                              </n-descriptions-item>
-                            </n-descriptions>
-                              <n-space vertical :size="[0, 8]">
-                                  <n-text :depth="3">签到可以获得免费流量，打开网页面板完成立即完成每日签到。
-                                  </n-text>
-                              </n-space>
-                              </n-flex>
-                    </n-thing>
-                   
-               
-                
-                
+                            }}
+                            </n-descriptions-item>
+                        </n-descriptions>
+                        <n-space vertical :size="[0, 8]">
+                            <n-text :depth="3">签到可以获得免费流量，打开网页面板立即完成每日签到。
+                            </n-text>
+                        </n-space>
+                    </n-flex>
+                </n-thing>
+
+
+
+
             </n-card>
 
             <n-card title="设置">
@@ -609,11 +703,11 @@ const AuthLogin = async () => {
                     <n-form>
                         <n-space>
 
-                            <n-form-item  v-if="!userToken" label="用户登录">
+                            <n-form-item v-if="!userToken" label="用户登录">
                                 <n-space>
                                     <!-- <n-input v-model:value="tempToken" type="password" placeholder="请输入OpenFrp访问密钥" />
                                 <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
-                                   
+
                                     <n-tabs type="bar" animated>
                                         <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
                                             <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
@@ -641,12 +735,7 @@ const AuthLogin = async () => {
                                 </n-space>
                             </n-form-item>
 
-                            <n-form-item label="主题">
-                                <n-switch v-model:value="isDark">
-                                    <template #checked>深色</template>
-                                    <template #unchecked>浅色</template>
-                                </n-switch>
-                            </n-form-item>
+                                <n-text>主题切换已移至窗口右上角</n-text>
                         </n-space>
                     </n-form>
 
@@ -658,23 +747,36 @@ const AuthLogin = async () => {
                                     <n-button @click="checkUpdate" :loading="checking">
                                         {{ checking ? '检查中...' : '检查更新' }}
                                     </n-button>
+                                    <n-button @click="openAppDataDir">
+                                        打开软件数据目录
+                                    </n-button>
                                 </n-space>
+                                <!-- 添加新按钮：打开数据目录 -->
+
                             </n-space>
                         </n-collapse-item>
                         <n-collapse-item title="Frpc 管理" name="1">
                             <template #header-extra>
-                                首次使用请在这里下载 Frpc
+                                首次使用请在这里下载或配置 Frpc
                             </template>
                             <n-space>
                                 <n-button @click="downloadFrpc" :loading="downloading" :disabled="downloading">
-                                    {{ downloading ? '正在进行操作...' : '检查更新或者下载 Frpc' }}
+                                    {{ downloading ? '正在进行操作...' : '自动下载/更新 Frpc' }}
                                 </n-button>
-                                <n-button @click="getFrpcVersion" :disabled="downloading">获取本地Frpc版本</n-button>
+                                <n-button @click="getFrpcVersion" :disabled="downloading">获取本地 Frpc 版本</n-button>
+
+                                <!-- 添加新按钮：手动放置按钮 -->
+                                <n-button @click="showManualMode" :disabled="downloading">
+                                    手动配置 Frpc 可执行文件
+                                </n-button>
+
+
+
                                 <n-popconfirm @positive-click="killAllProcesses" :disabled="downloading">
                                     <template #trigger>
-                                        <n-button type="warning" :disabled="downloading">终止所有 frpc 进程</n-button>
+                                        <n-button type="warning" :disabled="downloading">终止所有 Frpc 进程</n-button>
                                     </template>
-                                    确认终止所有 frpc 进程？这将会断开所有连接
+                                    确认终止所有 Frpc 进程？这将会断开所有连接
                                 </n-popconfirm>
                             </n-space>
                             <br />
@@ -750,6 +852,58 @@ const AuthLogin = async () => {
                     你打开了一个什么都没有的提示框？
                 </n-thing>
 
+            </n-drawer-content>
+        </n-drawer>
+
+        <!-- 使用NDrawer代替NModal -->
+        <n-drawer v-model:show="manualModeVisible" :width="600" placement="right">
+            <n-drawer-content title="手动配置 Frpc 可执行文件" closable>
+                <n-space vertical>
+                    <n-alert type="info">
+                        如果自动下载失败，您可以手动下载 Frpc 可执行文件并放置到程序数据目录
+                    </n-alert>
+
+                    <n-alert type="warning" title="注意">
+                        请在 OpenFrp 管理面板 - 下载中心 下载<b>对应操作系统和对应平台的</b> Frpc 可执行文件。 <br />
+                        <br />
+                        下载后的文件一般为压缩格式，请解压后复制到数据目录，目录结构如下：
+                        <br /> <br />
+                        <n-code>
+                        com.of-cpl.app/  <br />
+                            - /frpc <br />
+                            - /config <br />
+                            - config.json <br />
+                            + frpc_windows_amd64.exe (解压后复制到数据目录的文件) <br />
+                        </n-code>
+                        <br />
+                        * 请确保文件名与输入的文件名一致。在部分操作系统下，可能需要手动配置可执行权限。
+                    </n-alert>
+
+                    <n-form-item label="应用数据目录">
+                        <n-input v-model:value="appDataDir" readonly />
+                        <n-button @click="openAppDataDir">
+                            打开数据目录
+                        </n-button>
+                    </n-form-item>
+                    
+
+                    <n-form-item label="Frpc 可执行文件名称">
+                        <n-input v-model:value="expectedFrpcFilename" readonly />
+
+                    </n-form-item>
+
+                    
+
+
+                </n-space>
+                <template #footer><n-space justify="end">
+                        <n-button @click="manualModeVisible = false">
+                            关闭
+                        </n-button>
+                        <n-button type="primary" @click="getFrpcVersion(); manualModeVisible = false">
+                            完成并检查
+                        </n-button>
+                    </n-space></template>
             </n-drawer-content>
         </n-drawer>
     </n-scrollbar>

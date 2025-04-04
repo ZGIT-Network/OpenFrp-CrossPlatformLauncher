@@ -95,7 +95,8 @@
     "updater": {
       "active": true,
       "endpoints": [
-        "https://r.zyghit.cn/ofcpl/update/update.json"
+        "https://r.zyghit.cn/ofcpl/update/update.json",
+        "https://api.zyghit.cn/ofcpl/updater"
       ],
       "dialog": {
         "active": true,

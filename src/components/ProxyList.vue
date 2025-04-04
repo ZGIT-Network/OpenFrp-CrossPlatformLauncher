@@ -115,8 +115,11 @@ const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
     /start.*success/i,          // 匹配 "start xxx success"
     /启动.*成功/,               // 匹配 "xxx启动xxx成功xxx"
+    /隧道.*成功/,               // 匹配 "隧道xxx成功xxx"
+    /success/i,                 // 匹配任何包含success的消息
+    /connected/i,               // 匹配连接成功的消息
+    /running/i                  // 匹配运行中的消息
   ]
-  // console.log(isSuccessLog)
 
   return successPatterns.some(pattern => pattern.test(log))
 }
@@ -184,8 +187,27 @@ const toggleTunnel = async (tunnel: any) => {
       
       // 立即检查状态
       await checkTunnelStatus(tunnel)
-      saveTunnelStates() 
+      saveTunnelStates()
     } else {
+      // 确保为每次启动重新设置日志监听器
+      console.log(`隧道 ${tunnel.id} 准备执行启动命令...`)
+      
+      // 先触发准备事件
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'prepare',
+          tunnelId: tunnel.id.toString(),
+          tunnelName: tunnel.name
+        }
+      })
+      
+      // 等待足够的时间确保监听器设置好
+      await new Promise(resolve => setTimeout(resolve, 1500))
+      
+      console.log(`监听器设置完成，开始启动隧道 ${tunnel.id}...`)
+      
+      // 然后启动隧道
       await invoke('emit_event', {
         event: 'tunnel-event',
         payload: {
@@ -194,37 +216,73 @@ const toggleTunnel = async (tunnel: any) => {
           tunnelName: tunnel.name
         }
       })
+      
       // 等待日志响应
       message.loading('正在启动隧道', {duration: 1000})
       let logMessage = ''
-      console.log(logMessage)
       
       const logResult = await new Promise<{success: boolean, message: string}>((resolve) => {
-        const timeout = setTimeout(() => resolve({success: false, message: '启动超时，请检查日志。'}), 5000)
+        console.log(`等待隧道 ${tunnel.id} 的日志响应...`)
+        
+        // 增加超时时间到15秒
+        const timeout = setTimeout(() => {
+          console.log(`隧道 ${tunnel.id} 启动超时，检查隧道状态...`)
+          // 超时后检查隧道实际状态
+          invoke('check_frpc_status', { id: tunnel.id.toString() })
+            .then(isRunning => {
+              if (isRunning) {
+                resolve({success: true, message: '隧道已经启动成功，但未收到成功日志。'})
+              } else {
+                resolve({success: false, message: '启动超时，请检查日志。'})
+              }
+            })
+            .catch(() => resolve({success: false, message: '启动超时，检查状态失败。'}))
+        }, 15000)
+        
+        // 监听成功事件
+        const successEventListener = (event: any) => {
+          console.log(`接收到隧道 ${tunnel.id} 的成功事件:`, event)
+          clearTimeout(timeout)
+          window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
+          resolve({success: true, message: event.detail.message})
+        }
+        window.addEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
+        
+        // 监听日志事件
+        console.log(`开始监听隧道 ${tunnel.id} 的日志...`)
         
         const logListener = listen(`frpc-log-${tunnel.id}`, (event: any) => {
           const log = event.payload.message
           logMessage = log
           
-          if (isSuccessLog(log)) {
+          // 改进成功检测逻辑
+          if (isSuccessLog(log) || 
+              log.includes('start proxy success') || 
+              log.includes('start tunnel success') ||
+              log.includes('隧道启动成功')) {
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
+            window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
             resolve({success: true, message: log})
-          } else if (log.includes('启动失败')) {
+          } else if (log.includes('启动失败') || log.includes('failed') || log.includes('error')) {
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
+            window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
             // 提取错误信息
             const errorMatch = log.match(/启动失败:\s*(.+)/)
             const errorMessage = errorMatch ? errorMatch[1] : log
             resolve({success: false, message: errorMessage})
           }
         })
-        // 修复这里：添加 invoke 调用
+        
+        // 修复这里：添加 invoke 调用的调试日志
+        console.log(`执行启动命令：隧道 ${tunnel.id}...`)
         invoke('start_frpc_instance', {
           id: tunnel.id.toString(),
-          token: token,  // 确保这里的 token 是有效的
-          tunnelId: tunnel.id.toString()  // 确保这是正确的隧道 ID
+          token: token,
+          tunnelId: tunnel.id.toString()
         }).catch((error) => {
+          console.error(`启动隧道 ${tunnel.id} 失败:`, error)
           clearTimeout(timeout)
           logListener.then(unlisten => unlisten())
           resolve({success: false, message: String(error)})
