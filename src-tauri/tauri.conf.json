@@ -49,7 +49,7 @@
         }
       },
       "files": {},
-      "hardenedRuntime": true,
+      "hardenedRuntime": false,
       "minimumSystemVersion": "10.15",
       "exceptionDomain": "",
       "providerShortName": "openfrp"
