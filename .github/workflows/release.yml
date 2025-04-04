@@ -361,12 +361,13 @@ jobs:
 
       # macOS 代码签名和公证
       - name: Import Code Signing Certificates (macOS only)
-        if: matrix.platform == 'macos-latest' && secrets.CERTIFICATES_P12 != ''
+        if: matrix.platform == 'macos-latest'
         uses: apple-actions/import-codesign-certs@v3
         with: 
           p12-file-base64: ${{ secrets.CERTIFICATES_P12 }}
           p12-password: ${{ secrets.CERTIFICATES_P12_PASSWORD }}
           keychain-password: ${{ secrets.KEYCHAIN_PASSWORD || github.run_id }}
+        continue-on-error: true
 
       - name: Prepare macOS entitlements file
         if: matrix.platform == 'macos-latest'
@@ -395,14 +396,22 @@ jobs:
           EOF
 
       - name: Sign .app with Hardened Runtime (macOS only)
-        if: matrix.platform == 'macos-latest' && secrets.CERTIFICATES_P12 != ''
+        if: matrix.platform == 'macos-latest'
         run: |
-          echo "Signing .app with Hardened Runtime"
-          codesign --deep --force --verify --verbose \
-            --options runtime \
-            --entitlements ./macos.entitlements \
-            --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
-            /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+          # 首先检查证书是否存在
+          if [ -n "$CERTIFICATES_P12" ]; then
+            echo "Signing .app with Hardened Runtime"
+            codesign --deep --force --verify --verbose \
+              --options runtime \
+              --entitlements ./macos.entitlements \
+              --sign "Developer ID Application: jinxin li (NCQ5SP3RL2)" \
+              /Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app
+          else
+            echo "Skipping code signing - no certificates provided"
+          fi
+        env:
+          CERTIFICATES_P12: ${{ secrets.CERTIFICATES_P12 }}
+        continue-on-error: true
 
       - name: Create and Sign DMG (macOS only)
         if: matrix.platform == 'macos-latest'
