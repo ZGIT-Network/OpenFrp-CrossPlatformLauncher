@@ -20,6 +20,22 @@ OpenFrp CPL 跨平台启动器
 
 **禁止任何形式的商业使用**
 
+# 贡献
+
+欢迎各位大佬为本项目贡献代码，由于我个人代码能力有限，所以你会看到：
+
+- ~~屎山代码~~
+- ~~逆天函数~~
+- ~~一个文件一千多行~~
+- ~~忽略报错继续运行 (能跑就行)~~
+- ~~警告一堆懒得管~~
+- ~~被干掉的 ESLint(~~
+- 重复函数
+- 引入但未使用的变量或代码
+- 我的一些奇怪小癖好（？
+
+  还请各位大佬多多包涵！
+
 # Tauri + Vue + TypeScript
 
 This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
