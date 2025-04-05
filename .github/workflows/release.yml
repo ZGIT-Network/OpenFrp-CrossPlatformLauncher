@@ -99,7 +99,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          MACOSX_DEPLOYMENT_TARGET: 10.14
+          MACOSX_DEPLOYMENT_TARGET: 10.15
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
@@ -154,28 +154,11 @@ jobs:
           xcrun stapler staple "${{ steps.create_dmg.outputs.dmg_path }}"
           xcrun stapler validate "${{ steps.create_dmg.outputs.dmg_path }}"
 
-      - name: Package Updater Files
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          # 创建临时目录存放更新器文件
-          mkdir -p updater_files
-          
-          # 复制更新器相关文件
-          cp src-tauri/target/${{ matrix.platform == 'macos-latest' && 'universal-apple-darwin' || matrix.platform == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'release' }}/updater*.json updater_files/ || true
-          cp src-tauri/target/${{ matrix.platform == 'macos-latest' && 'universal-apple-darwin' || matrix.platform == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || 'release' }}/update_bundle/* updater_files/ || true
-          
-          # 打包成zip文件
-          zip -r updater_files.zip updater_files/
-          
-          echo "updater_files_path=updater_files.zip" >> $GITHUB_OUTPUT
-
-      - name: Upload Release Assets
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Upload signed DMG to Release (macOS only)
+        if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
-          files: |
-            ${{ steps.create_dmg.outputs.dmg_path }}
-            ${{ steps.package_updater_files.outputs.updater_files_path }}
+          files: ${{ steps.create_dmg.outputs.dmg_path }}
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
