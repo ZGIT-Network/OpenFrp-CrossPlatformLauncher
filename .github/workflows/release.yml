@@ -326,13 +326,17 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           # 上传所有二进制文件到release
-          find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do
+          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \) | while read -r file; do
             echo "上传 $file 到 GitHub Release"
             # 提取文件名，避免路径问题
             filename=$(basename "$file")
             cp "$file" "./$filename"
             gh release upload ${{ github.ref_name }} "./$filename" --clobber
           done
+          
+          # 直接显示找到的文件
+          echo "找到的二进制文件列表:"
+          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
