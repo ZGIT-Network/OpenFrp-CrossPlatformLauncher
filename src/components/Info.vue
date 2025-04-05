@@ -79,8 +79,9 @@ onMounted(async () => {
                 <br />
                 感谢您使用 OpenFrp Cross Platform Launcher。<br />
                 本项目是 OpenFrp 的跨平台启动器，基于新技术 Tauri 2 开发。<br /><br />
+                开源地址：https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher<br />
                 得益于 Tauri2 的强大能力，本项目可以跨平台使用，支持 Windows、MacOS、Linux 等操作系统。<br />
-                由于相关问题过多，我们暂时不准备开源本项目，但欢迎开发者们联系我们参与到本项目的开发中。<br />
+                本项目以 Apache-2.0 WITH Commons-Clause 协议开源，有关附加条款请参考代码库。<br />
                 <br />
                 作者：云默安 <br />
                 特别鸣谢：Kent Ye<br/>
