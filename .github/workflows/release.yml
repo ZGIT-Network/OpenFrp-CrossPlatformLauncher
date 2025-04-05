@@ -95,25 +95,25 @@ jobs:
       - name: Import Apple Certificate
         if: matrix.platform == 'macos-latest'
         run: |
-          # 创建临时钥匙链
+          echo "Creating temporary keychain for signing..."
           security create-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "${{ secrets.KEYCHAIN_PASSWORD }}" build.keychain
     
-          # 导入证书和私钥
+          echo "Importing certificate..."
           echo "${{ secrets.CERTIFICATES_P12 }}" | base64 --decode > certificate.p12
           security import certificate.p12 \
           -k build.keychain \
           -P "${{ secrets.CERTIFICATES_P12_PASSWORD }}" \
           -T /usr/bin/codesign
     
-          # 设置钥匙链搜索路径
+          echo "Setting keychain search path..."
           security set-key-partition-list \
           -S apple-tool:,apple:,codesign: \
           -s -k "${{ secrets.KEYCHAIN_PASSWORD }}" \
           build.keychain
     
-          # 验证证书
+          echo "Verifying certificate..."
           security find-identity -v build.keychain
 
       - name: Build the app (macOS universal)
@@ -138,7 +138,7 @@ jobs:
         if: matrix.platform == 'macos-latest'
         id: create_dmg
         run: |
-          echo "Creating signed DMG"
+          echo "Creating signed DMG..."
           brew install create-dmg || true
           APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
           DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
@@ -159,24 +159,27 @@ jobs:
     
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
 
-
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
         run: |
-          echo "Submitting DMG for notarization"
+          echo "Submitting DMG for notarization..."
           NOTARIZATION_INFO=$(mktemp)
           xcrun notarytool submit "${{ steps.create_dmg.outputs.dmg_path }}" \
             --apple-id "${{ secrets.APPLE_ID }}" \
             --password "${{ secrets.APPLE_SPECIFIC_PASSWORD }}" \
             --team-id "${{ secrets.TEAM_ID }}" \
-            --wait > "${NOTARIZATION_INFO}"
+            --wait --timeout 600 > "${NOTARIZATION_INFO}"
           
+          echo "Notarization output:"
+          cat "${NOTARIZATION_INFO}"
+
           if ! grep -q "status: Accepted" "${NOTARIZATION_INFO}"; then
             echo "公证失败，详细信息："
             cat "${NOTARIZATION_INFO}"
             exit 1
           fi
           
+          echo "Stapling notarization..."
           xcrun stapler staple "${{ steps.create_dmg.outputs.dmg_path }}"
           xcrun stapler validate "${{ steps.create_dmg.outputs.dmg_path }}"
 
@@ -185,6 +188,18 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: ${{ steps.create_dmg.outputs.dmg_path }}
+          tag_name: ${{ github.ref_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload all update.json files
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            src-tauri/target/**/release/bundle/*/update.json
+            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/update.json
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/update.json
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
