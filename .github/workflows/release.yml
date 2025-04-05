@@ -82,6 +82,40 @@ jobs:
           includeRelease: true
           includeUpdaterJson: true
 
+      # 处理Linux构建产物
+      - name: Process Linux build
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          echo "处理 Linux 构建产物..."
+          
+          # 安装appimagetool
+          echo "安装AppImageTool..."
+          wget -O appimagetool "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+          
+          # 查找AppImage文件并设置权限
+          find src-tauri/target/ -name "*.AppImage" -type f | while read -r file; do
+            echo "处理AppImage: $file"
+            echo "设置可执行权限"
+            chmod +x "$file"
+            
+            # 获取文件信息
+            echo "文件信息:"
+            file "$file"
+            
+            # 检查AppImage文件的完整性
+            echo "验证AppImage完整性:"
+            ./appimagetool --appimage-extract-and-run "$file" || echo "验证失败，但继续执行"
+            
+            # 显示详细的文件属性
+            echo "文件属性:"
+            ls -la "$file"
+          done
+          
+          # 显示AppImage文件的详细信息
+          echo "AppImage文件列表及详情："
+          find src-tauri/target/ -name "*.AppImage" -type f -exec ls -la {} \;
+
       - name: Upload x64 artifacts
         if: matrix.arch == 'x64'
         uses: actions/upload-artifact@v4
@@ -331,6 +365,15 @@ jobs:
             # 提取文件名，避免路径问题
             filename=$(basename "$file")
             cp "$file" "./$filename"
+            
+            # 为AppImage文件添加可执行权限
+            if [[ "$filename" == *.AppImage ]]; then
+              echo "设置 $filename 的可执行权限"
+              chmod +x "./$filename"
+              # 验证AppImage文件
+              file "./$filename"
+            fi
+            
             gh release upload ${{ github.ref_name }} "./$filename" --clobber
           done
           
@@ -360,6 +403,16 @@ jobs:
 
       - name: Display artifact structure
         run: find artifacts -type f | sort
+
+      - name: Fix AppImage permissions
+        run: |
+          # 查找并修复所有AppImage文件的权限
+          find artifacts -name "*.AppImage" -type f | while read -r file; do
+            echo "修复AppImage权限: $file"
+            chmod +x "$file"
+            file "$file"
+            ls -la "$file"
+          done
 
       - name: Process metadata files
         run: |
