@@ -56,7 +56,6 @@ jobs:
             echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
             echo "CROSS_COMPILE=aarch64-linux-gnu-" >> $GITHUB_ENV
           fi
-
       - name: Install frontend dependencies
         run: npm install
 
@@ -65,13 +64,11 @@ jobs:
         if: matrix.platform == 'macos-latest'
         run: |
           rustup target add x86_64-apple-darwin aarch64-apple-darwin
-
       # 为 Windows ARM64 设置环境
       - name: Setup Windows ARM64 environment
         if: matrix.platform == 'windows-latest' && matrix.arch == 'arm64'
         run: |
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
-
       # Windows 和 Linux 标准 x64 构建
       - name: Build the app (Standard x64)
         if: matrix.arch == 'x64'
@@ -160,7 +157,6 @@ jobs:
             "${DMG_PATH}"
           
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
-
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
         run: |
@@ -187,7 +183,6 @@ jobs:
           
           # 验证公证戳章
           xcrun stapler validate "${{ steps.create_dmg.outputs.dmg_path }}"
-
       # 上传已签名和公证的 DMG 到 Release (macOS)
       - name: Upload signed DMG to Release (macOS only)
         if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
