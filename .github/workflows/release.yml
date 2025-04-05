@@ -57,7 +57,12 @@ jobs:
         if: matrix.platform == 'ubuntu-latest' || matrix.platform == 'ubuntu-20.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          # Ubuntu 20.04使用libwebkit2gtk-4.0-dev，而较新版本使用4.1
+          if [[ "${{ matrix.platform }}" == "ubuntu-20.04" ]]; then
+            sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf
+          else
+            sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          fi
 
       - name: Install Dependencies (ubuntu arm64 only)
         if: matrix.platform == 'ubuntu-20.04' && matrix.arch == 'arm64'
