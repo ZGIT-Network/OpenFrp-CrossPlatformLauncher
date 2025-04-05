@@ -142,6 +142,33 @@ jobs:
           includeUpdaterJson: true
           args: --target universal-apple-darwin
 
+      - name: Re-sign with Entitlements (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: |
+          # 应用路径
+          APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
+          ENTITLEMENTS_PATH="$(pwd)/macos.entitlements"
+          
+          echo "检查entitlements文件："
+          cat "${ENTITLEMENTS_PATH}"
+          
+          echo "重新签名应用及其所有组件..."
+          
+          # 签名所有内部框架和库
+          find "${APP_PATH}/Contents" -type f -name "*.dylib" -o -name "*.so" | while read -r file; do
+            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$file"
+          done
+          
+          find "${APP_PATH}/Contents/Frameworks" -type d -name "*.framework" | while read -r framework; do
+            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$framework"
+          done
+          
+          # 最后签名主应用
+          codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
+          
+          # 验证签名
+          codesign -dvv "${APP_PATH}"
+
       - name: Create and Sign DMG (macOS only)
         if: matrix.platform == 'macos-latest'
         id: create_dmg
