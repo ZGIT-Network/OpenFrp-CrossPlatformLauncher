@@ -142,22 +142,23 @@ jobs:
           brew install create-dmg || true
           APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
           DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
-          
+    
           create-dmg \
-            --volname "OpenFrp-CrossPlatformLauncher" \
-            --window-pos 200 120 \
-            --window-size 700 400 \
-            --icon "OpenFrp-CrossPlatformLauncher.app" 200 190 \
-            --app-drop-link 600 185 \
-            "${DMG_PATH}" \
-            "${APP_PATH}"
-          
+          --volname "OpenFrp-CrossPlatformLauncher" \
+          --window-pos 200 120 \
+          --window-size 700 400 \
+          --icon "OpenFrp-CrossPlatformLauncher.app" 200 190 \
+          --app-drop-link 600 185 \
+          "${DMG_PATH}" \
+          "${APP_PATH}"
+    
           codesign --force --verify --verbose \
             --keychain build.keychain \
             --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" \
             "${DMG_PATH}"
-          
+    
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
+
 
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
@@ -187,6 +188,8 @@ jobs:
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      
       - name: Upload all update.json files
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
