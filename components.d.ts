@@ -28,7 +28,6 @@ declare module 'vue' {
     NCode: typeof import('naive-ui')['NCode']
     NCollapse: typeof import('naive-ui')['NCollapse']
     NCollapseItem: typeof import('naive-ui')['NCollapseItem']
-    NConfigProvider: typeof import('naive-ui')['NConfigProvider']
     NDescriptions: typeof import('naive-ui')['NDescriptions']
     NDescriptionsItem: typeof import('naive-ui')['NDescriptionsItem']
     NDropdown: typeof import('naive-ui')['NDropdown']

@@ -348,7 +348,7 @@ jobs:
           mkdir -p updates
           
           # 创建一个新的合并脚本
-          cat > process-metadata.js << 'EOF'
+          cat > process-metadata.cjs << 'EOF'
           const fs = require('fs');
           const path = require('path');
           
@@ -492,7 +492,7 @@ jobs:
           EOF
           
           # 运行处理脚本
-          node process-metadata.js
+          node process-metadata.cjs
 
       - name: Upload merged update file
         uses: softprops/action-gh-release@v1
