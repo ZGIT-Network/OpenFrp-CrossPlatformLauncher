@@ -72,9 +72,36 @@ jobs:
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
+            libc6-dev-arm64-cross \
+            pkg-config
+          
+          # 安装ARM64架构的依赖库
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev:arm64 \
+            libwebkit2gtk-4.0-dev:arm64 \
+            libappindicator3-dev:arm64 \
+            librsvg2-dev:arm64 \
+            patchelf:arm64 \
+            libasound2-dev:arm64 \
+            libdbus-1-dev:arm64
+
+          # 创建pkg-config交叉编译包装器
+          cat > arm64-linux-gnu-pkg-config << 'EOF'
+          #!/bin/bash
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
+          export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig
+          export PKG_CONFIG_SYSROOT_DIR=/
+          pkg-config "$@"
+          EOF
+          
+          chmod +x arm64-linux-gnu-pkg-config
+          sudo mv arm64-linux-gnu-pkg-config /usr/local/bin/
           
           # 设置环境变量
+          echo "PKG_CONFIG=arm64-linux-gnu-pkg-config" >> $GITHUB_ENV
+          echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
           echo "CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++" >> $GITHUB_ENV
@@ -209,7 +236,7 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
-          args: --target aarch64-unknown-linux-gnu
+          args: --target aarch64-unknown-linux-gnu -- --features webkit2gtk-4-0
 
       - name: Upload Linux ARM64 artifacts
         if: matrix.platform == 'ubuntu-20.04' && matrix.arch == 'arm64'
@@ -362,6 +389,43 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Tauri for ARM64 cross compilation
+        if: matrix.platform == 'ubuntu-20.04' && matrix.arch == 'arm64'
+        run: |
+          # 确保使用4.0版本的WebKit而不是4.1
+          mkdir -p .cargo
+          cat > .cargo/config.toml << EOF
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          
+          [env]
+          WEBKIT_DISABLE_COMPOSITING_MODE = "1"
+          
+          [build]
+          rustflags = ["-C", "target-feature=+crt-static"]
+          EOF
+          
+          # 创建WebKit 4.0兼容的覆盖
+          mkdir -p /tmp/pkgoverride
+          cat > /tmp/pkgoverride/webkit2gtk-4.0.pc << EOF
+          Name: webkit2gtk-4.0
+          Description: WebKit for GTK+ 4.0 compatibility layer
+          Version: 4.0.0
+          Requires: webkit2gtk-4.0
+          Cflags: -I/usr/include/aarch64-linux-gnu/webkitgtk-4.0
+          Libs: -lwebkit2gtk-4.0
+          EOF
+          
+          # 设置覆盖路径
+          echo "PKG_CONFIG_PATH=/tmp/pkgoverride:/usr/lib/aarch64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+          
+          # 更新环境变量
+          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+          
+          # 显示配置
+          echo "显示ARM64构建环境:"
+          env | grep -E 'PKG_CONFIG|CARGO|RUST|OPENSSL'
 
   process-updates:
     needs: release
