@@ -97,12 +97,16 @@ jobs:
           args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc'}}
         
       
-      - name: Build the app (LINUX ARM64)
+    - name: Build the app (LINUX ARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
         run: |
-          # 临时修改为 Jammy 的软件源
-          sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list
-          sudo sed -i 's/noble/jammy/g' /etc/apt/sources.list.d/*.list || true
+          # 备份原始 sources.list
+          sudo cp /etc/apt/sources.list /etc/apt/sources.list.bak
+          
+          # 替换为 Azure 镜像源
+          echo "替换为 Azure 镜像源..."
+          sudo sed -i 's|http://.*archive.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list
+          sudo sed -i 's|http://.*security.ubuntu.com|http://azure.archive.ubuntu.com|g' /etc/apt/sources.list
           
           # 启用多架构支持
           sudo dpkg --add-architecture arm64
@@ -111,12 +115,13 @@ jobs:
           # 安装交叉编译工具链
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
-            g++-arch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            build-essential \
             crossbuild-essential-arm64
           
           # 安装 ARM64 架构的系统库
           sudo apt-get install -y \
-            libwebkit2gtk-4.0-dev:arm64 \
+            libwebkit2gtk-4.1-dev:arm64 \
             libgtk-3-dev:arm64 \
             libgdk-3-dev:arm64 \
             libz-dev:arm64 \
@@ -125,17 +130,15 @@ jobs:
             libatk1.0-dev:arm64 \
             libcairo2-dev:arm64 \
             libgdk-pixbuf-2.0-dev:arm64 \
-            libsoup2.4-dev:arm64 \
-            libjavascriptcoregtk-4.0-dev:arm64 \
+            libsoup-3.0-dev:arm64 \
+            libjavascriptcoregtk-4.1-dev:arm64 \
             libglib2.0-dev:arm64 \
+            libgirepository1.0-dev:arm64 \
             libssl-dev:arm64 \
             libappindicator3-dev:arm64 \
-            librsvg2-dev:arm64
+            librsvg2-dev:arm64 \
+            patchelf
 
-          # 恢复为 Noble 的软件源
-          sudo sed -i 's/jammy/noble/g' /etc/apt/sources.list
-          sudo sed -i 's/jammy/noble/g' /etc/apt/sources.list.d/*.list || true
-          
           # 设置环境变量
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           export PKG_CONFIG_ALLOW_CROSS=1
@@ -143,12 +146,12 @@ jobs:
           export RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc"
 
           # 执行构建
-          npm run tauri build -- --target aarch64-unknown-linux-gnu
+          echo "开始构建应用程序..."
+          npm run tauri build -- --target aarch64-unknown-linux-gnu --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-        
 
       - name: Build the app (macOS universal)
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
