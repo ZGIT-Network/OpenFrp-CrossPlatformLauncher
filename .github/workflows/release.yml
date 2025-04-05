@@ -216,11 +216,3 @@ jobs:
           tag_name: ${{ github.ref_name }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Upload updater configuration file as artifact
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v3
-        with:
-          name: updater-config
-          path: ./target/release/updater.json  # 假设配置文件路径是 updater.json
-
