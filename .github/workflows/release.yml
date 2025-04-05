@@ -414,166 +414,116 @@ jobs:
             ls -la "$file"
           done
 
-      - name: Process metadata files
+      - name: Upload artifacts to release
         run: |
-          mkdir -p updates
+          echo "上传构建产物到GitHub Release..."
           
-          # 创建一个新的处理脚本
-          cat > process-artifacts.cjs << 'EOF'
-          const fs = require('fs');
-          const path = require('path');
+          # 创建存放文件的临时目录
+          mkdir -p release_files
           
-          // 获取所有二进制文件
-          const binaryFiles = [];
-          const artifactsDir = 'artifacts';
-          
-          // 递归查找所有二进制文件
-          function findBinaryFiles(dir) {
-            if (!fs.existsSync(dir)) return;
+          # 复制所有二进制文件和签名文件
+          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.sig" \) | while read -r file; do
+            filename=$(basename "$file")
+            echo "处理文件: $filename"
+            cp "$file" "release_files/$filename"
             
-            const files = fs.readdirSync(dir);
-            for (const file of files) {
-              const filePath = path.join(dir, file);
-              const stat = fs.statSync(filePath);
-              if (stat.isDirectory()) {
-                findBinaryFiles(filePath);
-              } else if (
-                file.endsWith('.exe') || 
-                file.endsWith('.msi') || 
-                file.endsWith('.AppImage') || 
-                file.endsWith('.deb') || 
-                file.endsWith('.dmg')
-              ) {
-                console.log(`找到二进制文件: ${filePath}`);
-                binaryFiles.push(filePath);
+            # 为AppImage文件添加可执行权限
+            if [[ "$filename" == *.AppImage ]]; then
+              chmod +x "release_files/$filename"
+            fi
+          done
+          
+          # 上传所有文件到GitHub Release
+          cd release_files
+          for file in *; do
+            echo "上传 $file 到 GitHub Release"
+            gh release upload ${{ github.ref_name }} "$file" --clobber
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create update.json
+        run: |
+          # 获取版本号(去掉v前缀)
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          
+          # 基础URL
+          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
+          
+          # 创建update.json
+          cat > update.json << EOF
+          {
+            "version": "$VERSION",
+            "notes": "请查看CHANGELOG.md了解更新内容。",
+            "pub_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "",
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi"
+              },
+              "windows-aarch64": {
+                "signature": "",
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi"
+              },
+              "darwin-universal": {
+                "signature": "",
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg"
+              },
+              "linux-x86_64": {
+                "signature": "",
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage"
               }
             }
           }
-          
-          // 在artifacts目录中查找二进制文件
-          if (fs.existsSync(artifactsDir)) {
-            findBinaryFiles(artifactsDir);
-          } else {
-            console.error('找不到artifacts目录');
-            process.exit(1);
-          }
-          
-          // 如果没有找到二进制文件，退出
-          if (binaryFiles.length === 0) {
-            console.error('未找到任何二进制文件');
-            process.exit(1);
-          }
-          
-          // 从package.json获取版本信息
-          let appInfo = { 
-            version: process.env.GITHUB_REF_NAME ? process.env.GITHUB_REF_NAME.replace(/^v/, '') : '0.0.0',
-            name: 'OpenFrp-CrossPlatformLauncher'
-          };
-          try {
-            if (fs.existsSync('package.json')) {
-              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-              if (pkg.version) appInfo.version = pkg.version;
-              if (pkg.name) appInfo.name = pkg.name;
-              console.log(`从package.json获取版本: ${appInfo.version}`);
-            }
-          } catch (err) {
-            console.error('读取package.json失败:', err);
-          }
-          
-          // 准备更新数据
-          const updateData = {
-            version: appInfo.version,
-            notes: '请查看CHANGELOG.md了解更新内容。',
-            pub_date: new Date().toISOString(),
-            platforms: {}
-          };
-          
-          // 识别平台
-          function detectPlatform(filePath) {
-            const isWindows = filePath.includes('windows') || filePath.endsWith('.exe') || filePath.endsWith('.msi');
-            const isMacOS = filePath.includes('macos') || filePath.includes('darwin') || filePath.endsWith('.dmg');
-            const isLinux = filePath.includes('linux') || filePath.includes('ubuntu') || filePath.endsWith('.AppImage') || filePath.endsWith('.deb');
-            
-            const isArm64 = filePath.includes('arm64') || filePath.includes('aarch64');
-            const isUniversal = filePath.includes('universal');
-            
-            if (isWindows) {
-              return isArm64 ? 'windows-aarch64' : 'windows-x86_64';
-            } else if (isMacOS) {
-              if (isUniversal) return 'darwin-universal';
-              return isArm64 ? 'darwin-aarch64' : 'darwin-x86_64';
-            } else if (isLinux) {
-              return 'linux-x86_64';
-            }
-            
-            return null;
-          }
-          
-          // 处理二进制文件
-          for (const file of binaryFiles) {
-            try {
-              console.log(`处理文件: ${file}`);
-              
-              // 检测平台
-              const platform = detectPlatform(file);
-              if (!platform) {
-                console.warn(`无法识别平台: ${file}`);
-                continue;
-              }
-              
-              console.log(`文件 ${file} 对应平台: ${platform}`);
-              
-              // 获取文件名
-              const fileName = path.basename(file);
-              
-              // 创建基础URL
-              const baseUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}`;
-              
-              // 为平台创建条目
-              updateData.platforms[platform] = {
-                url: `${baseUrl}/${fileName}`,
-                signature: '' // Tauri 2会自动验证签名
-              };
-              
-              console.log(`为平台 ${platform} 创建条目:`, updateData.platforms[platform]);
-            } catch (err) {
-              console.error(`处理 ${file} 时出错:`, err);
-            }
-          }
-          
-          // 写入更新文件
-          fs.writeFileSync('update.json', JSON.stringify(updateData, null, 2));
-          fs.writeFileSync('merged-update.json', JSON.stringify(updateData, null, 2));
-          
-          console.log('生成的更新文件:');
-          console.log(JSON.stringify(updateData, null, 2));
           EOF
           
-          # 运行处理脚本
-          node process-artifacts.cjs
-
-      - name: Upload merged update file
-        uses: softprops/action-gh-release@v1
-        with:
-          files: |
-            merged-update.json
-            update.json
-          tag_name: ${{ github.ref_name }}
+          # 读取签名文件并更新update.json
+          echo "查找签名文件并更新update.json..."
+          
+          # Windows x64
+          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig" ]; then
+            WIN64_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig")
+            sed -i "s|\"windows-x86_64\": {\n.*\"signature\": \"\"|\"windows-x86_64\": {\n        \"signature\": \"$WIN64_SIG\"|" update.json
+          fi
+          
+          # Windows ARM64
+          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig" ]; then
+            WINARM_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig")
+            sed -i "s|\"windows-aarch64\": {\n.*\"signature\": \"\"|\"windows-aarch64\": {\n        \"signature\": \"$WINARM_SIG\"|" update.json
+          fi
+          
+          # macOS
+          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig" ]; then
+            MAC_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig")
+            sed -i "s|\"darwin-universal\": {\n.*\"signature\": \"\"|\"darwin-universal\": {\n        \"signature\": \"$MAC_SIG\"|" update.json
+          fi
+          
+          # Linux
+          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig" ]; then
+            LINUX_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig")
+            sed -i "s|\"linux-x86_64\": {\n.*\"signature\": \"\"|\"linux-x86_64\": {\n        \"signature\": \"$LINUX_SIG\"|" update.json
+          fi
+          
+          echo "生成的update.json文件内容:"
+          cat update.json
+          
+          # 上传update.json到GitHub Release
+          gh release upload ${{ github.ref_name }} update.json --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Update latest release
-        if: startsWith(github.ref, 'refs/tags/')
         run: |
           # 创建latest.json指向最新版本
           echo "{\"version\":\"${{ github.ref_name }}\",\"url\":\"https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/update.json\"}" > latest.json
           cat latest.json
-      
-      - name: Upload latest.json
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: latest.json
-          tag_name: latest
+          
+          # 上传latest.json
+          gh release upload latest latest.json --clobber || {
+            # 如果latest标签不存在，则创建它
+            gh release create latest --title "Latest Release" --notes "This release points to the latest available version."
+            gh release upload latest latest.json --clobber
+          }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
