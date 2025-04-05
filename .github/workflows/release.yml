@@ -79,8 +79,7 @@ jobs:
           includeRelease: true
           includeUpdaterJson: true
 
-      # 修改后的 Linux ARM64 构建步骤（使用 Docker）
-      - name: Build the app (ARM64)
+      - name: Build the app (WINDOWS ARM64)
         if: matrix.arch == 'arm64' && matrix.platform != 'ubuntu-latest'
         uses: tauri-apps/tauri-action@v0
         env:
@@ -95,21 +94,53 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
-          args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc' || 'aarch64-unknown-linux-gnu' }}
+          args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc'}}
 
-      # 新增的 Linux ARM64 Docker 构建步骤
       - name: Build the app (LINUX ARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
-        uses: docker://ghcr.io/tauri-apps/tauri-action:latest
-        with:
-          args: bash -c "npm install && npm run tauri build -- --target aarch64-unknown-linux-gnu"
+        run: |
+          # 安装基础工具链
+          sudo apt-get update
+          sudo apt-get install -y \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            make \
+            perl \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+          # 编译 ARM64 版 OpenSSL
+          echo "编译 OpenSSL for ARM64..."
+          OPENSSL_VERSION=1.1.1w
+          curl -LO https://www.openssl.org/source/openssl-$OPENSSL_VERSION.tar.gz
+          tar xzf openssl-$OPENSSL_VERSION.tar.gz
+          cd openssl-$OPENSSL_VERSION
+          ./Configure linux-aarch64 \
+            --prefix=/usr/aarch64-linux-gnu \
+            --cross-compile-prefix=aarch64-linux-gnu- \
+            no-shared
+          make -j$(nproc)
+          sudo make install
+          cd ..
+
+          # 设置环境变量
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig
+          export OPENSSL_DIR=/usr/aarch64-linux-gnu
+          export OPENSSL_LIB_DIR=/usr/aarch64-linux-gnu/lib
+          export OPENSSL_INCLUDE_DIR=/usr/aarch64-linux-gnu/include
+
+          # 执行构建
+          echo "开始构建应用程序..."
+          npm run tauri build -- --target aarch64-unknown-linux-gnu
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          PKG_CONFIG_ALLOW_CROSS: 1
-          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Build the app (macOS universal)
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
