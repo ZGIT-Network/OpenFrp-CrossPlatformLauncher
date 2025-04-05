@@ -369,7 +369,7 @@ onMounted(() => {
       <n-space vertical>
         <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时与开发则反馈。</n-alert>
 
-        <div v-if="headAlert?.status" style="margin-bottom: -8px;">
+        <div v-if="headAlert?.status" style="margin-bottom: -8px;" v-external>
           <n-alert :title="headAlert.title" :type="headAlert.type" closable style="margin-bottom: 8px;">
             <div v-html="headAlert.content"></div>
           </n-alert>
@@ -459,7 +459,7 @@ onMounted(() => {
 
         <n-card title="系统公告">
 
-          <div class="markdown" style="margin-top: -16px" v-html="marked.parse(boardCast)"></div>
+          <div class="markdown" style="margin-top: -16px" v-html="marked.parse(boardCast)" v-external ></div>
         </n-card>
        
       </n-space>

@@ -137,12 +137,8 @@ function loadLogsAndRebuildIndices() {
         }
         tunnelLogIndices.value[parsed.tunnelId].add(hash);
       } else if (parsed.category === '系统') {
-        // 系统日志添加到所有隧道
-        for (const key of Object.keys(tunnelLogIndices.value)) {
-          if (key !== 'all') {
-            tunnelLogIndices.value[key].add(hash);
-          }
-        }
+        // 系统日志只添加到'all'，不再添加到各个隧道
+        // 这确保了选择特定隧道时不会显示系统日志
       }
     }
   }
@@ -238,12 +234,8 @@ function addLog(content: string): void {
     }
     tunnelLogIndices.value[parsed.tunnelId].add(hash);
   } else if (parsed.category === '系统') {
-    // 系统日志添加到所有隧道
-    for (const key of Object.keys(tunnelLogIndices.value)) {
-      if (key !== 'all') {
-        tunnelLogIndices.value[key].add(hash);
-      }
-    }
+    // 只向'all'添加系统日志，不再自动添加到所有隧道
+    // 保持系统日志只在"全部日志"选项中显示
   }
   
   // 保存到localStorage
@@ -296,6 +288,10 @@ const clearLogs = () => {
   tunnelLogIndices.value = { 'all': new Set() };
   localStorage.removeItem('frpcLogs');
   logs.value = '';
+  
+  // 重置筛选器选项
+  // tunnelOptions.value = [{ label: '全部日志', value: 'all' }];
+  // selectedTunnel.value = 'all';
   
   // 清除监听器设置记录
   for (const key of Object.keys(localStorage)) {
