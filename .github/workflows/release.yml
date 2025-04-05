@@ -1,9 +1,9 @@
 name: Release
 on:
   push:
-    branches: [ main ]  # 开发构建：推送到主分支时触发
-    tags: [ 'v*' ]     # 发布构建：推送标签时触发
-  workflow_dispatch:  
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
 
 jobs:
   release:
@@ -13,12 +13,11 @@ jobs:
         platform: [macos-latest, ubuntu-latest, windows-latest]
         arch: [x64, arm64]
         exclude:
-          - platform: macos-latest  # 排除所有macOS特定架构
+          - platform: macos-latest
             arch: x64
           - platform: macos-latest
             arch: arm64
         include:
-          # 只保留macOS universal架构
           - platform: macos-latest
             arch: universal
     runs-on: ${{ matrix.platform }}
@@ -46,54 +45,24 @@ jobs:
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          
-          # 安装基础依赖
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-
-          # 如果是 ARM64 构建，安装交叉编译工具和开发库
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
-              # 安装交叉编译工具链
-              sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu make
-
-              # 手动编译 OpenSSL
-              echo "手动编译 OpenSSL for aarch64..."
-              curl -LO https://www.openssl.org/source/openssl-1.1.1w.tar.gz
-              tar xzf openssl-1.1.1w.tar.gz
-              cd openssl-1.1.1w
-              ./Configure linux-aarch64 \
-                --prefix=/usr/aarch64-linux-gnu \
-                --cross-compile-prefix=aarch64-linux-gnu- \
-                no-shared
-              make -j$(nproc)
-              sudo make install
-              cd ..
-
-              # 设置环境变量
-              echo "OPENSSL_DIR=/usr/aarch64-linux-gnu" >> $GITHUB_ENV
-              echo "OPENSSL_LIB_DIR=/usr/aarch64-linux-gnu/lib" >> $GITHUB_ENV
-              echo "OPENSSL_INCLUDE_DIR=/usr/aarch64-linux-gnu/include" >> $GITHUB_ENV
-              echo "PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig" >> $GITHUB_ENV
-              echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
-            else
-              # x86_64 架构
-              sudo apt-get install -y libssl-dev
-            fi
-
+          # 仅安装x64依赖
+          if [ "${{ matrix.arch }}" = "x64" ]; then
+            sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          fi
 
       - name: Install frontend dependencies
         run: npm install
 
-      # macOS 特定设置
       - name: Install macOS targets
         if: matrix.platform == 'macos-latest'
         run: |
           rustup target add x86_64-apple-darwin aarch64-apple-darwin
-      # 为 Windows ARM64 设置环境
+
       - name: Setup Windows ARM64 environment
         if: matrix.platform == 'windows-latest' && matrix.arch == 'arm64'
         run: |
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
-      # Windows 和 Linux 标准 x64 构建
+
       - name: Build the app (Standard x64)
         if: matrix.arch == 'x64'
         uses: tauri-apps/tauri-action@v0
@@ -110,20 +79,14 @@ jobs:
           includeRelease: true
           includeUpdaterJson: true
 
-      # ARM64 特定构建
+      # 修改后的 Linux ARM64 构建步骤（使用 Docker）
       - name: Build the app (ARM64)
-        if: matrix.arch == 'arm64'
+        if: matrix.arch == 'arm64' && matrix.platform != 'ubuntu-latest'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          PKG_CONFIG_ALLOW_CROSS: ${{ matrix.platform == 'ubuntu-latest' && '1' || '' }}
-          PKG_CONFIG_PATH: ${{ matrix.platform == 'ubuntu-latest' && '/usr/lib/aarch64-linux-gnu/pkgconfig' || '' }}
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.platform == 'ubuntu-latest' && 'aarch64-linux-gnu-gcc' || '' }}
-          OPENSSL_DIR: ${{ matrix.platform == 'ubuntu-latest' && '/usr' || '' }}
-          OPENSSL_INCLUDE_DIR: ${{ matrix.platform == 'ubuntu-latest' && '/usr/include' || '' }}
-          OPENSSL_LIB_DIR: ${{ matrix.platform == 'ubuntu-latest' && '/usr/lib/aarch64-linux-gnu' || '' }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
@@ -134,7 +97,17 @@ jobs:
           includeUpdaterJson: true
           args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc' || 'aarch64-unknown-linux-gnu' }}
 
-      # macOS 通用二进制构建
+      # 新增的 Linux ARM64 Docker 构建步骤
+      - name: Build the app (ARM64)
+        if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
+        uses: docker://ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main
+        with:
+          args: bash -c "npm install && npm run tauri build -- --target aarch64-unknown-linux-gnu"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+
       - name: Build the app (macOS universal)
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
         uses: tauri-apps/tauri-action@v0
@@ -158,14 +131,10 @@ jobs:
         id: create_dmg
         run: |
           echo "Creating signed DMG"
-          # 安装 create-dmg
           brew install create-dmg || true
-          
-          # 设置输出路径
           APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
           DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
           
-          # 创建 DMG
           create-dmg \
             --volname "OpenFrp-CrossPlatformLauncher" \
             --window-pos 200 120 \
@@ -175,39 +144,32 @@ jobs:
             "${DMG_PATH}" \
             "${APP_PATH}"
           
-          # 签名 DMG
           codesign --force --verify --verbose \
             --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" \
             "${DMG_PATH}"
           
           echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
+
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
         run: |
           echo "Submitting DMG for notarization"
-          # 创建临时文件来存储公证信息
           NOTARIZATION_INFO=$(mktemp)
-          
-          # 提交公证请求
           xcrun notarytool submit "${{ steps.create_dmg.outputs.dmg_path }}" \
             --apple-id "${{ secrets.APPLE_ID }}" \
             --password "${{ secrets.APPLE_SPECIFIC_PASSWORD }}" \
             --team-id "${{ secrets.TEAM_ID }}" \
             --wait > "${NOTARIZATION_INFO}"
           
-          # 检查公证结果
           if ! grep -q "status: Accepted" "${NOTARIZATION_INFO}"; then
             echo "公证失败，详细信息："
             cat "${NOTARIZATION_INFO}"
             exit 1
           fi
           
-          echo "公证成功，正在添加公证戳章..."
           xcrun stapler staple "${{ steps.create_dmg.outputs.dmg_path }}"
-          
-          # 验证公证戳章
           xcrun stapler validate "${{ steps.create_dmg.outputs.dmg_path }}"
-      # 上传已签名和公证的 DMG 到 Release (macOS)
+
       - name: Upload signed DMG to Release (macOS only)
         if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
