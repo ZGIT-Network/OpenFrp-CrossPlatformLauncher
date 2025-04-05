@@ -98,15 +98,11 @@ jobs:
           args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc' || 'aarch64-unknown-linux-gnu' }}
 
       # 新增的 Linux ARM64 Docker 构建步骤
-      - name: Build the app (ARM64)
+      - name: Build the app (LINUX ARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
-        run: |
-          # 使用跨平台构建工具 cross
-          cargo install cross
-          cross build --target aarch64-unknown-linux-gnu --release
-          
-          # 使用本地 Node 环境构建前端
-          npm run tauri build -- --target aarch64-unknown-linux-gnu
+        uses: docker://ghcr.io/tauri-apps/tauri-action:latest
+        with:
+          args: bash -c "npm install && npm run tauri build -- --target aarch64-unknown-linux-gnu"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
