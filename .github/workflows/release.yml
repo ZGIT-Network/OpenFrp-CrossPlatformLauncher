@@ -100,13 +100,20 @@ jobs:
       # 新增的 Linux ARM64 Docker 构建步骤
       - name: Build the app (ARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
-        uses: docker://ghcr.io/cross-rs/aarch64-unknown-linux-gnu:main
-        with:
-          args: bash -c "npm install && npm run tauri build -- --target aarch64-unknown-linux-gnu"
+        run: |
+          # 使用跨平台构建工具 cross
+          cargo install cross
+          cross build --target aarch64-unknown-linux-gnu --release
+          
+          # 使用本地 Node 环境构建前端
+          npm run tauri build -- --target aarch64-unknown-linux-gnu
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          PKG_CONFIG_ALLOW_CROSS: 1
+          PKG_CONFIG_PATH: /usr/lib/aarch64-linux-gnu/pkgconfig
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Build the app (macOS universal)
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
