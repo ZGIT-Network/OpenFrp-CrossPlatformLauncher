@@ -6,6 +6,19 @@ OpenFrp CPL 跨平台启动器
 
 已配置 Github Action ，代码在 push 后会自动构建可执行文件。
 
+# 开源协议
+
+本项目以 **Apache-2.0 WITH Commons-Clause** 协议开源，携带附加条款。
+
+### 允许
+
+个人非商业使用
+
+修改、分发（但必须保留许可证）
+
+学术研究、非盈利项目
+
+**禁止任何形式的商业使用**
 
 # Tauri + Vue + TypeScript
 
