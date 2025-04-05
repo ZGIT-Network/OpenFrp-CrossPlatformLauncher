@@ -96,8 +96,7 @@ jobs:
           includeUpdaterJson: true
           args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc'}}
         
-      
-    - name: Build the app (LINUX ARM64)
+      - name: Build the app (LINUX ARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
         run: |
           # 备份原始 sources.list
