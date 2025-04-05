@@ -322,6 +322,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Upload binary files to release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          # 上传所有二进制文件到release
+          find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do
+            echo "上传 $file 到 GitHub Release"
+            # 提取文件名，避免路径问题
+            filename=$(basename "$file")
+            cp "$file" "./$filename"
+            gh release upload ${{ github.ref_name }} "./$filename" --clobber
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   process-updates:
     needs: release
     if: startsWith(github.ref, 'refs/tags/')
@@ -347,50 +361,62 @@ jobs:
         run: |
           mkdir -p updates
           
-          # 创建一个新的合并脚本
-          cat > process-metadata.cjs << 'EOF'
+          # 创建一个新的处理脚本
+          cat > process-artifacts.cjs << 'EOF'
           const fs = require('fs');
           const path = require('path');
           
-          // 获取所有metadata.json文件
-          const metadataFiles = [];
+          // 获取所有二进制文件
+          const binaryFiles = [];
           const artifactsDir = 'artifacts';
           
-          // 递归查找所有metadata.json文件
-          function findMetadataFiles(dir) {
+          // 递归查找所有二进制文件
+          function findBinaryFiles(dir) {
+            if (!fs.existsSync(dir)) return;
+            
             const files = fs.readdirSync(dir);
             for (const file of files) {
               const filePath = path.join(dir, file);
               const stat = fs.statSync(filePath);
               if (stat.isDirectory()) {
-                findMetadataFiles(filePath);
-              } else if (file === 'metadata.json') {
-                console.log(`找到metadata文件: ${filePath}`);
-                metadataFiles.push(filePath);
+                findBinaryFiles(filePath);
+              } else if (
+                file.endsWith('.exe') || 
+                file.endsWith('.msi') || 
+                file.endsWith('.AppImage') || 
+                file.endsWith('.deb') || 
+                file.endsWith('.dmg')
+              ) {
+                console.log(`找到二进制文件: ${filePath}`);
+                binaryFiles.push(filePath);
               }
             }
           }
           
-          // 在artifacts目录中查找metadata.json文件
+          // 在artifacts目录中查找二进制文件
           if (fs.existsSync(artifactsDir)) {
-            findMetadataFiles(artifactsDir);
+            findBinaryFiles(artifactsDir);
           } else {
             console.error('找不到artifacts目录');
             process.exit(1);
           }
           
-          // 如果没有找到元数据文件，退出
-          if (metadataFiles.length === 0) {
-            console.error('未找到任何metadata.json文件');
+          // 如果没有找到二进制文件，退出
+          if (binaryFiles.length === 0) {
+            console.error('未找到任何二进制文件');
             process.exit(1);
           }
           
-          // 解析package.json获取应用信息
-          let appInfo = { version: '' };
+          // 从package.json获取版本信息
+          let appInfo = { 
+            version: process.env.GITHUB_REF_NAME ? process.env.GITHUB_REF_NAME.replace(/^v/, '') : '0.0.0',
+            name: 'OpenFrp-CrossPlatformLauncher'
+          };
           try {
             if (fs.existsSync('package.json')) {
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-              appInfo.version = pkg.version || '';
+              if (pkg.version) appInfo.version = pkg.version;
+              if (pkg.name) appInfo.name = pkg.name;
               console.log(`从package.json获取版本: ${appInfo.version}`);
             }
           } catch (err) {
@@ -399,85 +425,60 @@ jobs:
           
           // 准备更新数据
           const updateData = {
-            version: appInfo.version || process.env.GITHUB_REF_NAME.replace(/^v/, ''),
+            version: appInfo.version,
             notes: '请查看CHANGELOG.md了解更新内容。',
             pub_date: new Date().toISOString(),
             platforms: {}
           };
           
-          // 映射Tauri 2平台标识符到更新文件中使用的标识符
-          const platformMapping = {
-            'windows-x86_64': 'windows-x86_64',
-            'windows-aarch64': 'windows-aarch64',
-            'darwin-x86_64': 'darwin-x86_64',
-            'darwin-aarch64': 'darwin-aarch64',
-            'darwin-universal': 'darwin-universal',
-            'linux-x86_64': 'linux-x86_64'
-          };
+          // 识别平台
+          function detectPlatform(filePath) {
+            const isWindows = filePath.includes('windows') || filePath.endsWith('.exe') || filePath.endsWith('.msi');
+            const isMacOS = filePath.includes('macos') || filePath.includes('darwin') || filePath.endsWith('.dmg');
+            const isLinux = filePath.includes('linux') || filePath.includes('ubuntu') || filePath.endsWith('.AppImage') || filePath.endsWith('.deb');
+            
+            const isArm64 = filePath.includes('arm64') || filePath.includes('aarch64');
+            const isUniversal = filePath.includes('universal');
+            
+            if (isWindows) {
+              return isArm64 ? 'windows-aarch64' : 'windows-x86_64';
+            } else if (isMacOS) {
+              if (isUniversal) return 'darwin-universal';
+              return isArm64 ? 'darwin-aarch64' : 'darwin-x86_64';
+            } else if (isLinux) {
+              return 'linux-x86_64';
+            }
+            
+            return null;
+          }
           
-          // 处理每个metadata.json文件
-          for (const file of metadataFiles) {
+          // 处理二进制文件
+          for (const file of binaryFiles) {
             try {
               console.log(`处理文件: ${file}`);
-              const content = fs.readFileSync(file, 'utf8');
-              const metadata = JSON.parse(content);
               
-              // 获取平台信息
-              let platform = '';
-              if (file.includes('windows') && file.includes('aarch64')) {
-                platform = 'windows-aarch64';
-              } else if (file.includes('windows')) {
-                platform = 'windows-x86_64';
-              } else if (file.includes('darwin') || file.includes('macos')) {
-                if (file.includes('universal')) {
-                  platform = 'darwin-universal';
-                } else if (file.includes('aarch64')) {
-                  platform = 'darwin-aarch64';
-                } else {
-                  platform = 'darwin-x86_64';
-                }
-              } else if (file.includes('linux') || file.includes('ubuntu')) {
-                platform = 'linux-x86_64';
+              // 检测平台
+              const platform = detectPlatform(file);
+              if (!platform) {
+                console.warn(`无法识别平台: ${file}`);
+                continue;
               }
               
               console.log(`文件 ${file} 对应平台: ${platform}`);
               
-              // 找到对应的二进制文件
-              const binDir = path.dirname(file);
-              const binPattern = platform.startsWith('windows') ? '.msi' : 
-                                 platform.startsWith('darwin') ? '.dmg' : '.AppImage';
+              // 获取文件名
+              const fileName = path.basename(file);
               
               // 创建基础URL
               const baseUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}`;
               
-              // 为每个平台创建条目
-              if (platform && platformMapping[platform]) {
-                const mappedPlatform = platformMapping[platform];
-                
-                // 如果是Windows，URL为MSI文件
-                if (platform.startsWith('windows')) {
-                  updateData.platforms[mappedPlatform] = {
-                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('windows-', '')}.msi`,
-                    signature: '' // Tauri 2会自动验证签名
-                  };
-                } 
-                // 如果是macOS，URL为DMG文件
-                else if (platform.startsWith('darwin')) {
-                  updateData.platforms[mappedPlatform] = {
-                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('darwin-', '')}.dmg`,
-                    signature: '' // Tauri 2会自动验证签名
-                  };
-                }
-                // 如果是Linux，URL为AppImage文件
-                else if (platform.startsWith('linux')) {
-                  updateData.platforms[mappedPlatform] = {
-                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('linux-', '')}.AppImage`,
-                    signature: '' // Tauri 2会自动验证签名
-                  };
-                }
-                
-                console.log(`为平台 ${mappedPlatform} 创建条目:`, updateData.platforms[mappedPlatform]);
-              }
+              // 为平台创建条目
+              updateData.platforms[platform] = {
+                url: `${baseUrl}/${fileName}`,
+                signature: '' // Tauri 2会自动验证签名
+              };
+              
+              console.log(`为平台 ${platform} 创建条目:`, updateData.platforms[platform]);
             } catch (err) {
               console.error(`处理 ${file} 时出错:`, err);
             }
@@ -492,7 +493,7 @@ jobs:
           EOF
           
           # 运行处理脚本
-          node process-metadata.cjs
+          node process-artifacts.cjs
 
       - name: Upload merged update file
         uses: softprops/action-gh-release@v1
