@@ -95,21 +95,40 @@ jobs:
           includeRelease: true
           includeUpdaterJson: true
           args: --target ${{ matrix.platform == 'windows-latest' && 'aarch64-pc-windows-msvc'}}
-
-      - name: Build the app (LINUX ARM64)
+        
+      
+      - name: Build the app (LinuxARM64)
         if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'arm64'
         run: |
-          # 安装基础工具链
+          # 启用多架构支持
+          sudo dpkg --add-architecture arm64
           sudo apt-get update
+          
+          # 安装交叉编译工具链
           sudo apt-get install -y \
             gcc-aarch64-linux-gnu \
             g++-aarch64-linux-gnu \
-            make \
-            perl \
-            libgtk-3-dev \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
+            build-essential \
+            crossbuild-essential-arm64
+          
+          # 安装 ARM64 架构的系统库
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libgtk-3-dev:arm64 \
+            libgdk-3-dev:arm64 \
+            libz-dev:arm64 \
+            libpango1.0-dev:arm64 \
+            libharfbuzz-dev:arm64 \
+            libatk1.0-dev:arm64 \
+            libcairo2-dev:arm64 \
+            libgdk-pixbuf-2.0-dev:arm64 \
+            libsoup2.4-dev:arm64 \
+            libjavascriptcoregtk-4.1-dev:arm64 \
+            libglib2.0-dev:arm64 \
+            libgirepository1.0-dev:arm64 \
+            libssl-dev:arm64 \
+            libappindicator3-dev:arm64 \
+            librsvg2-dev:arm64 \
             patchelf
 
           # 编译 ARM64 版 OpenSSL
@@ -129,18 +148,25 @@ jobs:
           # 设置环境变量
           export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
           export PKG_CONFIG_ALLOW_CROSS=1
-          export PKG_CONFIG_PATH=/usr/aarch64-linux-gnu/lib/pkgconfig
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig
           export OPENSSL_DIR=/usr/aarch64-linux-gnu
           export OPENSSL_LIB_DIR=/usr/aarch64-linux-gnu/lib
           export OPENSSL_INCLUDE_DIR=/usr/aarch64-linux-gnu/include
+          export RUSTFLAGS="-C linker=aarch64-linux-gnu-gcc"
+
+          # 设置 pkg-config 查找路径
+          echo "设置 pkg-config 路径..."
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+          export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
 
           # 执行构建
           echo "开始构建应用程序..."
-          npm run tauri build -- --target aarch64-unknown-linux-gnu
+          npm run tauri build -- --target aarch64-unknown-linux-gnu --verbose
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        
 
       - name: Build the app (macOS universal)
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
