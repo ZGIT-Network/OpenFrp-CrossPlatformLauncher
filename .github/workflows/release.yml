@@ -88,7 +88,11 @@ jobs:
         with:
           name: ${{ matrix.platform }}-${{ matrix.arch }}-artifacts
           path: |
-            src-tauri/target/**/release/bundle/*/update.json
+            src-tauri/gen/*/metadata.json
+            src-tauri/target/**/release/*.msi
+            src-tauri/target/**/release/*.exe
+            src-tauri/target/**/release/bundle/deb/*.deb
+            src-tauri/target/**/release/bundle/appimage/*.AppImage
           if-no-files-found: warn
 
       - name: Build the app (WINDOWS ARM64)
@@ -110,7 +114,9 @@ jobs:
         with:
           name: windows-arm64-artifacts
           path: |
-            src-tauri/target/aarch64-pc-windows-msvc/release/bundle/msi/update.json
+            src-tauri/gen/aarch64-pc-windows-msvc/metadata.json
+            src-tauri/target/aarch64-pc-windows-msvc/release/*.msi
+            src-tauri/target/aarch64-pc-windows-msvc/release/*.exe
           if-no-files-found: warn
 
       - name: Import Apple Certificate
@@ -168,7 +174,9 @@ jobs:
         with:
           name: macos-universal-artifacts
           path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/update.json
+            src-tauri/gen/universal-apple-darwin/metadata.json
+            src-tauri/target/universal-apple-darwin/release/bundle/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/*.app.tar.gz
           if-no-files-found: warn
 
       - name: Re-sign with Entitlements (macOS only)
@@ -335,134 +343,156 @@ jobs:
       - name: Display artifact structure
         run: find artifacts -type f | sort
 
-      - name: Process update files
+      - name: Process metadata files
         run: |
           mkdir -p updates
-          # 复制所有update.json文件到updates目录，并根据平台进行重命名
-          find artifacts -name "update.json" -exec sh -c '
-            platform=$(echo "{}" | grep -o "windows\|macos\|ubuntu\|linux")
-            arch=$(echo "{}" | grep -o "x64\|arm64\|universal")
-            if [ -n "$platform" ] && [ -n "$arch" ]; then
-              cp {} "updates/${platform}-${arch}-update.json"
-              echo "复制 {} 到 updates/${platform}-${arch}-update.json"
-            else
-              # 尝试从路径推断平台
-              if echo "{}" | grep -q "aarch64-pc-windows-msvc"; then
-                cp {} "updates/windows-arm64-update.json"
-                echo "复制 {} 到 updates/windows-arm64-update.json"
-              elif echo "{}" | grep -q "universal-apple-darwin"; then
-                cp {} "updates/macos-universal-update.json"
-                echo "复制 {} 到 updates/macos-universal-update.json"
-              elif echo "{}" | grep -q "msi"; then
-                cp {} "updates/windows-x64-update.json" 
-                echo "复制 {} 到 updates/windows-x64-update.json"
-              elif echo "{}" | grep -q "appimage\|deb"; then
-                cp {} "updates/linux-x64-update.json"
-                echo "复制 {} 到 updates/linux-x64-update.json"
-              else
-                # 如果无法识别，使用默认名称
-                filename=$(basename $(dirname {}))
-                cp {} "updates/unknown-${filename}-update.json"
-                echo "复制 {} 到 updates/unknown-${filename}-update.json"
-              fi
-            fi
-          ' \;
           
-          # 列出所有已收集的更新文件
-          echo "已收集的更新文件:"
-          ls -la updates/
-          
-          # 创建合并脚本
-          cat > merge-updates.js << 'EOF'
+          # 创建一个新的合并脚本
+          cat > process-metadata.js << 'EOF'
           const fs = require('fs');
           const path = require('path');
           
-          // 获取所有更新文件
-          const updateFiles = fs.readdirSync('updates')
-            .filter(file => file.endsWith('.json'))
-            .map(file => path.join('updates', file));
+          // 获取所有metadata.json文件
+          const metadataFiles = [];
+          const artifactsDir = 'artifacts';
           
-          console.log('找到以下更新文件:', updateFiles);
+          // 递归查找所有metadata.json文件
+          function findMetadataFiles(dir) {
+            const files = fs.readdirSync(dir);
+            for (const file of files) {
+              const filePath = path.join(dir, file);
+              const stat = fs.statSync(filePath);
+              if (stat.isDirectory()) {
+                findMetadataFiles(filePath);
+              } else if (file === 'metadata.json') {
+                console.log(`找到metadata文件: ${filePath}`);
+                metadataFiles.push(filePath);
+              }
+            }
+          }
           
-          // 合并更新数据
-          const mergedUpdates = { 
-            version: '',
-            notes: '',
-            pub_date: new Date().toISOString(),
-            platforms: {} 
-          };
+          // 在artifacts目录中查找metadata.json文件
+          if (fs.existsSync(artifactsDir)) {
+            findMetadataFiles(artifactsDir);
+          } else {
+            console.error('找不到artifacts目录');
+            process.exit(1);
+          }
           
-          // 读取package.json获取版本信息(如果存在)
+          // 如果没有找到元数据文件，退出
+          if (metadataFiles.length === 0) {
+            console.error('未找到任何metadata.json文件');
+            process.exit(1);
+          }
+          
+          // 解析package.json获取应用信息
+          let appInfo = { version: '' };
           try {
             if (fs.existsSync('package.json')) {
               const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-              if (pkg.version) {
-                mergedUpdates.version = pkg.version;
-                console.log(`从package.json获取版本: ${pkg.version}`);
-              }
+              appInfo.version = pkg.version || '';
+              console.log(`从package.json获取版本: ${appInfo.version}`);
             }
           } catch (err) {
             console.error('读取package.json失败:', err);
           }
           
-          updateFiles.forEach(file => {
+          // 准备更新数据
+          const updateData = {
+            version: appInfo.version || process.env.GITHUB_REF_NAME.replace(/^v/, ''),
+            notes: '请查看CHANGELOG.md了解更新内容。',
+            pub_date: new Date().toISOString(),
+            platforms: {}
+          };
+          
+          // 映射Tauri 2平台标识符到更新文件中使用的标识符
+          const platformMapping = {
+            'windows-x86_64': 'windows-x86_64',
+            'windows-aarch64': 'windows-aarch64',
+            'darwin-x86_64': 'darwin-x86_64',
+            'darwin-aarch64': 'darwin-aarch64',
+            'darwin-universal': 'darwin-universal',
+            'linux-x86_64': 'linux-x86_64'
+          };
+          
+          // 处理每个metadata.json文件
+          for (const file of metadataFiles) {
             try {
               console.log(`处理文件: ${file}`);
               const content = fs.readFileSync(file, 'utf8');
-              const updateData = JSON.parse(content);
+              const metadata = JSON.parse(content);
               
               // 获取平台信息
               let platform = '';
-              if (file.includes('windows')) platform = 'windows-x86_64';
-              else if (file.includes('windows-arm64')) platform = 'windows-aarch64';
-              else if (file.includes('macos')) platform = 'darwin-universal';
-              else if (file.includes('linux') || file.includes('ubuntu')) platform = 'linux-x86_64';
+              if (file.includes('windows') && file.includes('aarch64')) {
+                platform = 'windows-aarch64';
+              } else if (file.includes('windows')) {
+                platform = 'windows-x86_64';
+              } else if (file.includes('darwin') || file.includes('macos')) {
+                if (file.includes('universal')) {
+                  platform = 'darwin-universal';
+                } else if (file.includes('aarch64')) {
+                  platform = 'darwin-aarch64';
+                } else {
+                  platform = 'darwin-x86_64';
+                }
+              } else if (file.includes('linux') || file.includes('ubuntu')) {
+                platform = 'linux-x86_64';
+              }
               
               console.log(`文件 ${file} 对应平台: ${platform}`);
               
-              // 合并平台数据
-              if (updateData.platforms && Object.keys(updateData.platforms).length > 0) {
-                // 如果文件中有平台数据，直接合并
-                Object.keys(updateData.platforms).forEach(p => {
-                  mergedUpdates.platforms[p] = updateData.platforms[p];
-                  console.log(`从文件合并平台数据: ${p}`);
-                });
-              } else if (platform && updateData.url) {
-                // 如果我们能推断平台，并且有url，创建平台条目
-                mergedUpdates.platforms[platform] = {
-                  signature: updateData.signature || '',
-                  url: updateData.url
-                };
-                console.log(`为平台 ${platform} 创建条目，URL: ${updateData.url}`);
-              }
+              // 找到对应的二进制文件
+              const binDir = path.dirname(file);
+              const binPattern = platform.startsWith('windows') ? '.msi' : 
+                                 platform.startsWith('darwin') ? '.dmg' : '.AppImage';
               
-              // 确保版本信息一致
-              if (updateData.version && !mergedUpdates.version) {
-                mergedUpdates.version = updateData.version;
-                console.log(`设置版本: ${updateData.version}`);
-              }
+              // 创建基础URL
+              const baseUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/releases/download/${process.env.GITHUB_REF_NAME}`;
               
-              // 合并发布说明
-              if (updateData.notes && !mergedUpdates.notes) {
-                mergedUpdates.notes = updateData.notes;
+              // 为每个平台创建条目
+              if (platform && platformMapping[platform]) {
+                const mappedPlatform = platformMapping[platform];
+                
+                // 如果是Windows，URL为MSI文件
+                if (platform.startsWith('windows')) {
+                  updateData.platforms[mappedPlatform] = {
+                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('windows-', '')}.msi`,
+                    signature: '' // Tauri 2会自动验证签名
+                  };
+                } 
+                // 如果是macOS，URL为DMG文件
+                else if (platform.startsWith('darwin')) {
+                  updateData.platforms[mappedPlatform] = {
+                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('darwin-', '')}.dmg`,
+                    signature: '' // Tauri 2会自动验证签名
+                  };
+                }
+                // 如果是Linux，URL为AppImage文件
+                else if (platform.startsWith('linux')) {
+                  updateData.platforms[mappedPlatform] = {
+                    url: `${baseUrl}/${metadata.name}_${metadata.version}_${platform.replace('linux-', '')}.AppImage`,
+                    signature: '' // Tauri 2会自动验证签名
+                  };
+                }
+                
+                console.log(`为平台 ${mappedPlatform} 创建条目:`, updateData.platforms[mappedPlatform]);
               }
             } catch (err) {
               console.error(`处理 ${file} 时出错:`, err);
             }
-          });
+          }
           
-          // 写入合并结果
-          fs.writeFileSync('merged-update.json', JSON.stringify(mergedUpdates, null, 2));
-          console.log('合并完成，生成了: merged-update.json');
-          console.log('合并结果:');
-          console.log(JSON.stringify(mergedUpdates, null, 2));
+          // 写入更新文件
+          fs.writeFileSync('update.json', JSON.stringify(updateData, null, 2));
+          fs.writeFileSync('merged-update.json', JSON.stringify(updateData, null, 2));
+          
+          console.log('生成的更新文件:');
+          console.log(JSON.stringify(updateData, null, 2));
           EOF
           
-          # 运行合并脚本
-          node merge-updates.js
-          
-          # 复制生成的更新文件为标准更新名称
-          cp merged-update.json update.json
+          # 运行处理脚本
+          node process-metadata.js
 
       - name: Upload merged update file
         uses: softprops/action-gh-release@v1
