@@ -326,16 +326,30 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           # 上传所有二进制文件到release
-            find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do              echo "上传 $file 到 GitHub Release"
-            # 提取文件名，避免路径问题
-            filename=$(basename "$file")
-            cp "$file" "./$filename"
-            gh release upload ${{ github.ref_name }} "./$filename" --clobber
-          done
-          
-          # 直接显示找到的文件
-          echo "找到的二进制文件列表:"
-          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            # Windows环境使用PowerShell
+            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object {
+              $filename = Split-Path $_ -Leaf
+              Write-Host "上传 $filename 到 GitHub Release"
+              gh release upload ${{ github.ref_name }} $_ --clobber
+            }
+            
+            # 显示找到的文件列表
+            Write-Host "找到的二进制文件列表:"
+            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object { $_.FullName }
+          else
+            # Linux/macOS环境使用bash
+            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \) | while read -r file; do
+              echo "上传 $file 到 GitHub Release"
+              # 提取文件名，避免路径问题
+              filename=$(basename "$file")
+              gh release upload ${{ github.ref_name }} "$file" --clobber
+            done
+            
+            # 直接显示找到的文件
+            echo "找到的二进制文件列表:"
+            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
