@@ -335,7 +335,7 @@ jobs:
               echo "ZIP文件存在，准备上传"
               gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.zip_path }}" --clobber || echo "上传ZIP失败"
             fi
-          env:
+        env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Upload binary files to release
