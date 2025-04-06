@@ -319,29 +319,16 @@ jobs:
             echo "DMG文件路径: ${{ steps.create_dmg.outputs.dmg_path }}"
             ls -la "${{ steps.create_dmg.outputs.dmg_path }}"
             
-            # 尝试上传原始DMG
-            gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}" --clobber || {
-              echo "上传原始DMG失败，尝试复制到当前目录后再上传"
-              cp "${{ steps.create_dmg.outputs.dmg_path }}" "./OpenFrp-CrossPlatformLauncher.dmg"
-              gh release upload ${{ github.ref_name }} "./OpenFrp-CrossPlatformLauncher.dmg" --clobber
-            }
+            # 创建带signed标识的DMG文件名
+            SIGNED_DMG_NAME="OpenFrp-CrossPlatformLauncher_signed.dmg"
+            cp "${{ steps.create_dmg.outputs.dmg_path }}" "./${SIGNED_DMG_NAME}"
             
-            # 如果没有带signed标识的DMG，则上传原始DMG
-            elif [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
-              echo "原始DMG文件存在，准备上传"
-              # 添加调试信息
-              echo "DMG文件路径: ${{ steps.create_dmg.outputs.dmg_path }}"
-              ls -la "${{ steps.create_dmg.outputs.dmg_path }}"
-              
-              # 尝试上传原始DMG
-              gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}" --clobber || {
-                echo "上传原始DMG失败，尝试复制到当前目录后再上传"
-                cp "${{ steps.create_dmg.outputs.dmg_path }}" "./OpenFrp-CrossPlatformLauncher.dmg"
-                gh release upload ${{ github.ref_name }} "./OpenFrp-CrossPlatformLauncher.dmg" --clobber
-              }
-            else
-              echo "DMG文件不存在，跳过上传"
-            fi
+            # 上传带signed标识的DMG
+            echo "上传带signed标识的DMG文件..."
+            gh release upload ${{ github.ref_name }} "./${SIGNED_DMG_NAME}" --clobber
+          else
+            echo "DMG文件不存在，跳过上传"
+          fi
             
             # 如果ZIP文件存在，也上传
             if [ -n "${{ steps.create_dmg.outputs.zip_path }}" ] && [ -f "${{ steps.create_dmg.outputs.zip_path }}" ]; then
