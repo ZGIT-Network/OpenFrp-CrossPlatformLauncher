@@ -207,52 +207,90 @@ jobs:
           codesign -dvv "${APP_PATH}"
 
       - name: Create and Sign DMG (macOS only)
-        if: matrix.platform == 'macos-latest'
-        id: create_dmg
-        run: |
-          echo "创建DMG包..."
-          # 设置路径变量
-          APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
-          DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
-          TEMP_DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/temp.dmg"
-          
-          # 确保应用已签名
-          echo "检查应用签名状态..."
-          codesign -dvv "${APP_PATH}" || echo "应用可能未正确签名，但会继续尝试"
-          
-          # 检查目标路径是否存在
-          [ -d "${APP_PATH}" ] || { echo "应用不存在于路径: ${APP_PATH}"; exit 1; }
-          
-          # 创建临时DMG
-          echo "创建临时未签名DMG..."
-          hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDRW "${TEMP_DMG_PATH}"
-          
-          # 将临时DMG转换为最终DMG
-          echo "转换DMG格式..."
-          hdiutil convert "${TEMP_DMG_PATH}" -format UDZO -o "${DMG_PATH}"
-          
-          # 删除临时DMG
-          rm -f "${TEMP_DMG_PATH}"
-          
-          # 显示证书信息进行调试
-          echo "可用证书信息："
-          security find-identity -v build.keychain
-          
-          # 尝试签名DMG
-          echo "签名DMG..."
-          codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
-            echo "第一次签名尝试失败，重试使用详细模式..."
+          if: matrix.platform == 'macos-latest'
+          id: create_dmg
+          run: |
+            echo "创建DMG包..."
+            # 设置路径变量
+            APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
+            DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
+            TEMP_DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/temp.dmg"
             
-            # 第二次尝试，更详细的输出
-            codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
-              echo "签名再次失败，但会继续处理..."
+            # 确保应用已签名
+            echo "检查应用签名状态..."
+            codesign -dvv "${APP_PATH}" || echo "应用可能未正确签名，但会继续尝试"
+            
+            # 检查目标路径是否存在
+            [ -d "${APP_PATH}" ] || { echo "应用不存在于路径: ${APP_PATH}"; exit 1; }
+            
+            # 确保没有已存在的DMG文件占用资源
+            echo "清理可能存在的旧DMG文件..."
+            rm -f "${DMG_PATH}" "${TEMP_DMG_PATH}"
+            
+            # 等待一会儿确保资源释放
+            sleep 2
+            
+            # 创建临时DMG
+            echo "创建临时未签名DMG..."
+            hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDRW "${TEMP_DMG_PATH}" || {
+              echo "创建临时DMG失败，尝试直接创建最终DMG..."
+              hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"
+              
+              if [ -f "${DMG_PATH}" ]; then
+                echo "DMG创建成功: ${DMG_PATH}"
+              else
+                echo "DMG创建失败，将尝试使用ditto创建zip包作为备选..."
+                ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
+                ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
+                echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
+                echo "dmg_path=" >> $GITHUB_OUTPUT
+                exit 0
+              fi
             }
-          }
-          
-          echo "检查DMG签名状态..."
-          codesign -dvv "${DMG_PATH}" || echo "DMG签名验证失败，但将继续处理"
-          
-          echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
+            
+            # 如果临时DMG创建成功，则转换为最终DMG
+            if [ -f "${TEMP_DMG_PATH}" ]; then
+              echo "转换DMG格式..."
+              hdiutil convert "${TEMP_DMG_PATH}" -format UDZO -o "${DMG_PATH}" || {
+                echo "DMG转换失败，将使用临时DMG..."
+                cp "${TEMP_DMG_PATH}" "${DMG_PATH}" || {
+                  echo "复制临时DMG失败，将尝试使用ditto创建zip包作为备选..."
+                  ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
+                  ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
+                  echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
+                  echo "dmg_path=" >> $GITHUB_OUTPUT
+                  exit 0
+                }
+              }
+              
+              # 删除临时DMG
+              rm -f "${TEMP_DMG_PATH}"
+            fi
+            
+            # 显示证书信息进行调试
+            echo "可用证书信息："
+            security find-identity -v build.keychain
+            
+            # 尝试签名DMG
+            if [ -f "${DMG_PATH}" ]; then
+              echo "签名DMG..."
+              codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
+                echo "第一次签名尝试失败，重试使用详细模式..."
+                
+                # 第二次尝试，更详细的输出
+                codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
+                  echo "签名再次失败，但会继续处理..."
+                }
+              }
+              
+              echo "检查DMG签名状态..."
+              codesign -dvv "${DMG_PATH}" || echo "DMG签名验证失败，但将继续处理"
+              
+              echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
+            else
+              echo "DMG文件不存在，无法签名"
+              echo "dmg_path=" >> $GITHUB_OUTPUT
+            fi
 
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
