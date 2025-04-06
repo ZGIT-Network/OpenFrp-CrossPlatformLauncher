@@ -174,9 +174,7 @@ jobs:
         with:
           name: macos-universal-artifacts
           path: |
-            src-tauri/gen/universal-apple-darwin/metadata.json
-            src-tauri/target/universal-apple-darwin/release/bundle/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg
           if-no-files-found: warn
 
       - name: Re-sign with Entitlements (macOS only)
@@ -188,23 +186,11 @@ jobs:
           
           echo "检查entitlements文件："
           cat "${ENTITLEMENTS_PATH}"
-          
-          echo "重新签名应用及其所有组件..."
-          
-          # 签名所有内部框架和库
-          find "${APP_PATH}/Contents" -type f -name "*.dylib" -o -name "*.so" | while read -r file; do
-            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$file"
-          done
-          
-          find "${APP_PATH}/Contents/Frameworks" -type d -name "*.framework" | while read -r framework; do
-            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$framework"
-          done
-          
-          # 最后签名主应用
-          codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
+
+          codesign --force --deep --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
           
           # 验证签名
-          codesign -dvv "${APP_PATH}"
+          codesign -dvvv "${APP_PATH}"
 
       - name: Create and Sign DMG (macOS only)
         if: matrix.platform == 'macos-latest'
@@ -316,13 +302,13 @@ jobs:
           if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
             echo "DMG文件存在，准备上传"
             # 创建一个备用DMG副本，即使没有签名也可以使用
-            cp "${{ steps.create_dmg.outputs.dmg_path }}" "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" || true
+         #  cp "${{ steps.create_dmg.outputs.dmg_path }}" "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" || true
             
             # 尝试上传原始DMG
             gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}" --clobber || echo "上传原始DMG失败"
             
-            # 上传备用DMG
-            gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" --clobber || echo "上传备用DMG失败"
+            # 上传备用DMG 步骤多余 苹果签名在原文件上操作
+           # gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" --clobber || echo "上传备用DMG失败"
           else
             echo "DMG文件不存在，跳过上传"
           fi
@@ -333,30 +319,17 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           # 上传所有二进制文件到release
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            # Windows环境使用PowerShell
-            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object {
-              $filename = Split-Path $_ -Leaf
-              Write-Host "上传 $filename 到 GitHub Release"
-              gh release upload ${{ github.ref_name }} $_ --clobber
-            }
-            
-            # 显示找到的文件列表
-            Write-Host "找到的二进制文件列表:"
-            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object { $_.FullName }
-          else
-            # Linux/macOS环境使用bash
-            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \) | while read -r file; do
-              echo "上传 $file 到 GitHub Release"
-              # 提取文件名，避免路径问题
-              filename=$(basename "$file")
-              gh release upload ${{ github.ref_name }} "$file" --clobber
-            done
-            
-            # 直接显示找到的文件
-            echo "找到的二进制文件列表:"
-            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
-          fi
+         #   find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do              echo "上传 $file 到 GitHub Release"
+          #  提取文件名，避免路径问题
+         #   filename=$(basename "$file")
+          #  cp "$file" "./$filename"
+         #   gh release upload ${{ github.ref_name }} "./$filename" --clobber
+       #   done
+          
+          # 直接显示找到的文件
+       #   echo "找到的二进制文件列表:"
+       #   find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
+           echo "暂时不做这步，后面的post process其实有😂。"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
