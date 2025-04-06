@@ -301,14 +301,8 @@ jobs:
         run: |
           if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
             echo "DMG文件存在，准备上传"
-            # 创建一个备用DMG副本，即使没有签名也可以使用
-         #  cp "${{ steps.create_dmg.outputs.dmg_path }}" "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" || true
-            
             # 尝试上传原始DMG
             gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}" --clobber || echo "上传原始DMG失败"
-            
-            # 上传备用DMG 步骤多余 苹果签名在原文件上操作
-           # gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" --clobber || echo "上传备用DMG失败"
           else
             echo "DMG文件不存在，跳过上传"
           fi
@@ -318,18 +312,8 @@ jobs:
       - name: Upload binary files to release
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          # 上传所有二进制文件到release
-         #   find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do              echo "上传 $file 到 GitHub Release"
-          #  提取文件名，避免路径问题
-         #   filename=$(basename "$file")
-          #  cp "$file" "./$filename"
-         #   gh release upload ${{ github.ref_name }} "./$filename" --clobber
-       #   done
-          
-          # 直接显示找到的文件
-       #   echo "找到的二进制文件列表:"
-       #   find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
-           echo "暂时不做这步，后面的post process其实有😂。"
+          # 暂时不做这步，后面的post process其实有
+          echo "暂时不做这步，后面的post process其实有😂。"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
