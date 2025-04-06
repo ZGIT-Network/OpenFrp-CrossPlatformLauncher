@@ -174,9 +174,7 @@ jobs:
         with:
           name: macos-universal-artifacts
           path: |
-            src-tauri/gen/universal-apple-darwin/metadata.json
-            src-tauri/target/universal-apple-darwin/release/bundle/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg
           if-no-files-found: warn
 
       - name: Re-sign with Entitlements (macOS only)
@@ -188,109 +186,47 @@ jobs:
           
           echo "检查entitlements文件："
           cat "${ENTITLEMENTS_PATH}"
-          
-          echo "重新签名应用及其所有组件..."
-          
-          # 签名所有内部框架和库
-          find "${APP_PATH}/Contents" -type f -name "*.dylib" -o -name "*.so" | while read -r file; do
-            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$file"
-          done
-          
-          find "${APP_PATH}/Contents/Frameworks" -type d -name "*.framework" | while read -r framework; do
-            codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "$framework"
-          done
-          
-          # 最后签名主应用
-          codesign --force --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
+
+          codesign --force --deep --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
           
           # 验证签名
-          codesign -dvv "${APP_PATH}"
+          codesign -dvvv "${APP_PATH}"
 
       - name: Create and Sign DMG (macOS only)
-          if: matrix.platform == 'macos-latest'
-          id: create_dmg
-          run: |
-            echo "创建DMG包..."
-            # 设置路径变量
-            APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
-            DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
-            TEMP_DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/temp.dmg"
-            
-            # 确保应用已签名
-            echo "检查应用签名状态..."
-            codesign -dvv "${APP_PATH}" || echo "应用可能未正确签名，但会继续尝试"
-            
-            # 检查目标路径是否存在
-            [ -d "${APP_PATH}" ] || { echo "应用不存在于路径: ${APP_PATH}"; exit 1; }
-            
-            # 确保没有已存在的DMG文件占用资源
-            echo "清理可能存在的旧DMG文件..."
-            rm -f "${DMG_PATH}" "${TEMP_DMG_PATH}"
-            
-            # 等待一会儿确保资源释放
-            sleep 2
-            
-            # 创建临时DMG
-            echo "创建临时未签名DMG..."
-            hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDRW "${TEMP_DMG_PATH}" || {
-              echo "创建临时DMG失败，尝试直接创建最终DMG..."
-              hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"
-              
-              if [ -f "${DMG_PATH}" ]; then
-                echo "DMG创建成功: ${DMG_PATH}"
-              else
-                echo "DMG创建失败，将尝试使用ditto创建zip包作为备选..."
-                ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
-                ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
-                echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
-                echo "dmg_path=" >> $GITHUB_OUTPUT
-                exit 0
-              fi
+        if: matrix.platform == 'macos-latest'
+        id: create_dmg
+        run: |
+          echo "创建DMG包..."
+          # 设置路径变量
+          APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
+          DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher_Signed.dmg"
+          TEMP_DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/temp.dmg"
+          
+          # 确保应用已签名
+          echo "检查应用签名状态..."
+          codesign -dvvv "${APP_PATH}" || echo "应用可能未正确签名，但会继续尝试"
+          
+          # 检查目标路径是否存在
+          [ -d "${APP_PATH}" ] || { echo "应用不存在于路径: ${APP_PATH}"; exit 1; }
+          
+          hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}
+
+          # 显示证书信息进行调试
+          echo "可用证书信息："
+          security find-identity -v build.keychain
+          
+          # 尝试签名DMG
+          echo "签名DMG..."
+
+          codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --timestamp --verbose=4 "${DMG_PATH}" || {
+              echo "签名再次失败，但会继续处理..."
             }
-            
-            # 如果临时DMG创建成功，则转换为最终DMG
-            if [ -f "${TEMP_DMG_PATH}" ]; then
-              echo "转换DMG格式..."
-              hdiutil convert "${TEMP_DMG_PATH}" -format UDZO -o "${DMG_PATH}" || {
-                echo "DMG转换失败，将使用临时DMG..."
-                cp "${TEMP_DMG_PATH}" "${DMG_PATH}" || {
-                  echo "复制临时DMG失败，将尝试使用ditto创建zip包作为备选..."
-                  ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
-                  ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
-                  echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
-                  echo "dmg_path=" >> $GITHUB_OUTPUT
-                  exit 0
-                }
-              }
-              
-              # 删除临时DMG
-              rm -f "${TEMP_DMG_PATH}"
-            fi
-            
-            # 显示证书信息进行调试
-            echo "可用证书信息："
-            security find-identity -v build.keychain
-            
-            # 尝试签名DMG
-            if [ -f "${DMG_PATH}" ]; then
-              echo "签名DMG..."
-              codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
-                echo "第一次签名尝试失败，重试使用详细模式..."
-                
-                # 第二次尝试，更详细的输出
-                codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
-                  echo "签名再次失败，但会继续处理..."
-                }
-              }
-              
-              echo "检查DMG签名状态..."
-              codesign -dvv "${DMG_PATH}" || echo "DMG签名验证失败，但将继续处理"
-              
-              echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
-            else
-              echo "DMG文件不存在，无法签名"
-              echo "dmg_path=" >> $GITHUB_OUTPUT
-            fi
+          
+          
+          echo "检查DMG签名状态..."
+          codesign -dvvv "${DMG_PATH}" || echo "DMG签名验证失败，但将继续处理"
+          
+          echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
 
       - name: Notarize DMG (macOS only)
         if: matrix.platform == 'macos-latest'
@@ -347,13 +283,13 @@ jobs:
           if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
             echo "DMG文件存在，准备上传"
             # 创建一个备用DMG副本，即使没有签名也可以使用
-            cp "${{ steps.create_dmg.outputs.dmg_path }}" "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" || true
+         #  cp "${{ steps.create_dmg.outputs.dmg_path }}" "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" || true
             
             # 尝试上传原始DMG
             gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}" --clobber || echo "上传原始DMG失败"
             
-            # 上传备用DMG
-            gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" --clobber || echo "上传备用DMG失败"
+            # 上传备用DMG 步骤多余 苹果签名在原文件上操作
+           # gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.dmg_path }}.unsigned.dmg" --clobber || echo "上传备用DMG失败"
           else
             echo "DMG文件不存在，跳过上传"
           fi
@@ -364,30 +300,17 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           # 上传所有二进制文件到release
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            # Windows环境使用PowerShell
-            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object {
-              $filename = Split-Path $_ -Leaf
-              Write-Host "上传 $filename 到 GitHub Release"
-              gh release upload ${{ github.ref_name }} $_ --clobber
-            }
-            
-            # 显示找到的文件列表
-            Write-Host "找到的二进制文件列表:"
-            Get-ChildItem -Path . -Recurse -Include *.exe,*.msi,*.AppImage,*.deb,*.dmg | ForEach-Object { $_.FullName }
-          else
-            # Linux/macOS环境使用bash
-            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \) | while read -r file; do
-              echo "上传 $file 到 GitHub Release"
-              # 提取文件名，避免路径问题
-              filename=$(basename "$file")
-              gh release upload ${{ github.ref_name }} "$file" --clobber
-            done
-            
-            # 直接显示找到的文件
-            echo "找到的二进制文件列表:"
-            find . -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
-          fi
+         #   find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" | while read -r file; do              echo "上传 $file 到 GitHub Release"
+          #  提取文件名，避免路径问题
+         #   filename=$(basename "$file")
+          #  cp "$file" "./$filename"
+         #   gh release upload ${{ github.ref_name }} "./$filename" --clobber
+       #   done
+          
+          # 直接显示找到的文件
+       #   echo "找到的二进制文件列表:"
+       #   find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" \)
+           echo "暂时不做这步，后面的post process其实有😂。"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
