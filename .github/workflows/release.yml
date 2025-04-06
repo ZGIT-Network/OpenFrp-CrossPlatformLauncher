@@ -174,7 +174,11 @@ jobs:
         with:
           name: macos-universal-artifacts
           path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg
+            src-tauri/gen/universal-apple-darwin/metadata.json
+            src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+            src-tauri/target/*.dmg
+            src-tauri/target/*.zip
           if-no-files-found: warn
 
       - name: Re-sign with Entitlements (macOS only)
@@ -356,8 +360,8 @@ jobs:
           # 创建存放文件的临时目录
           mkdir -p release_files
           
-          # 复制所有二进制文件和签名文件
-          find artifacts -type f -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.sig" | while read -r file; do
+          # 复制所有二进制文件和签名文件 (修复find命令语法)
+          find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.sig" \) | while read -r file; do
             filename=$(basename "$file")
             echo "处理文件: $filename"
             cp "$file" "release_files/$filename"
@@ -368,11 +372,17 @@ jobs:
             fi
           done
           
+          # 显示找到的文件
+          echo "找到的文件列表:"
+          ls -la release_files/
+          
           # 上传所有文件到GitHub Release
           cd release_files
           for file in *; do
-            echo "上传 $file 到 GitHub Release"
-            gh release upload ${{ github.ref_name }} "$file" --clobber
+            if [ -f "$file" ]; then
+              echo "上传 $file 到 GitHub Release"
+              gh release upload ${{ github.ref_name }} "$file" --clobber
+            fi
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
