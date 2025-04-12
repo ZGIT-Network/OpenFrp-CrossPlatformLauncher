@@ -22,7 +22,7 @@ pub async fn check_update() -> Result<Option<UpdateInfo>, Box<dyn Error>> {
     // 使用 Tauri 配置的更新源
     let client = reqwest::Client::new();
     let response = client
-        .get("https://r.zyghit.cn/ofcpl/update/update.json")
+        .get("https://api.zyghit.cn/updater/ofcpl")
         .send()
         .await?;
     

@@ -7,6 +7,7 @@ import axios from 'axios'
 import { useLinkTunnelsStore } from '@/stores/linkTunnels'
 import { listen } from '@tauri-apps/api/event'
 import { useRoute } from 'vue-router'
+import Cookies from '@/utils/cookies'
 
 import frpApiGetUserProxies from '@/requests/frpApi/frpApiGetUserProxies';
 import frpApiRemoveProxy from '@/requests/frpApi/frpApiRemoveProxy';
@@ -20,6 +21,13 @@ import Infomation from '@/components/ManageProxies/Infomation.vue';
 import GetConf from '@/components/ManageProxies/GetConf.vue';
 import Menu from '@/components/ManageProxies/Menu.vue';
 import copy from 'copy-to-clipboard';
+
+// 扩展Window接口，添加全局属性
+declare global {
+  interface Window {
+    __tunnelsRestoreAttempted?: boolean;
+  }
+}
 
 const message = useMessage()
 const notification = useNotification()
@@ -162,159 +170,159 @@ const copyToClipboard = async (text: string) => {
   }
 }
 
-const toggleTunnel = async (tunnel: any) => {
-  const token = userInfo?.value?.token
+const startTunnel = async (tunnel: any) => {
+  console.log(`开始启动隧道 ${tunnel.id}`)
 
+  // 如果已经在运行，不重复启动
+  if (tunnel.status === 'running') {
+    message.info('隧道已经在运行中')
+    return
+  }
+
+  // 设置加载状态
+  loadingTunnels.value.add(tunnel.id.toString())
+  
+  // 设置状态为启动中
+  tunnel.status = 'starting'
+
+  // 发送事件到系统日志，但使用prepare类型
+  await invoke('emit_event', {
+    event: 'tunnel-event',
+    payload: {
+      type: 'prepare',
+      tunnelId: tunnel.id.toString(),
+      tunnelName: tunnel.name
+    }
+  })
+
+  // 获取token
+  const token = userInfo?.value?.token ?? (localStorage.getItem('authorization') || Cookies.get('authorization') || '')
   if (!token) {
-    message.error('未获取到用户 token，请确保已登录')
+    message.error('未找到用户token，请重新登录')
+    loadingTunnels.value.delete(tunnel.id.toString()) // 移除加载状态
     return
   }
 
   try {
-    loadingTunnels.value.add(tunnel.id.toString())
-
-    const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
-
-    if (isRunning) {
-      await invoke('emit_event', {
-        event: 'tunnel-event',
-        payload: {
-          type: 'stop',
-          tunnelId: tunnel.id.toString(),
-          tunnelName: tunnel.name
+    // 等待日志响应
+    const result = await new Promise<{success: boolean, message: string}>((resolve) => {
+      // 设置超时检查
+      let timeout: any = null;
+      
+      // 用于检测隧道是否成功启动
+      const checkSuccess = async () => {
+        try {
+          const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
+          console.log(`隧道${tunnel.id}状态检查:`, isRunning)
+          if (isRunning) {
+            resolve({success: true, message: '隧道已成功运行'})
+            if (timeout) clearTimeout(timeout)
+          }
+        } catch (e) {
+          console.error(`检查隧道状态出错:`, e)
         }
-      })
-
-      await invoke('stop_frpc_instance', { id: tunnel.id.toString() })
-      tunnel.status = 'stopped'
-      tunnel.apiOnline = false
-      linkTunnelsStore.removeLinkTunnel(tunnel.id.toString())
-      message.info(`隧道 #${tunnel.id} ${tunnel.name} 已停止运行`)
+      }
       
-      await checkTunnelStatus(tunnel)
-      saveTunnelStates()
-    } else {
-      console.log(`隧道 ${tunnel.id} 准备执行启动命令...`)
-      
-      await invoke('emit_event', {
-        event: 'tunnel-event',
-        payload: {
-          type: 'prepare',
-          tunnelId: tunnel.id.toString(),
-          tunnelName: tunnel.name
+      // 每5秒检查一次隧道状态，持续30秒
+      let checkAttempts = 0
+      const maxAttempts = 6
+      const checkInterval = setInterval(async () => {
+        if (checkAttempts >= maxAttempts) {
+          clearInterval(checkInterval)
+          return
         }
-      })
+        checkAttempts++
+        await checkSuccess()
+      }, 5000)
       
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      // 定义成功回调
+      const successEventListener = (event: any) => {
+        const msg = event.detail?.message || '隧道启动成功'
+        console.log(`收到隧道${tunnel.id}成功事件:`, msg)
+        resolve({success: true, message: msg})
+        if (timeout) clearTimeout(timeout)
+        clearInterval(checkInterval)
+      }
       
-      console.log(`监听器设置完成，开始启动隧道 ${tunnel.id}...`)
+      // 监听成功事件
+      window.addEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
       
-      await invoke('emit_event', {
-        event: 'tunnel-event',
+      // 设置30秒超时
+      timeout = setTimeout(async () => {
+        console.log(`隧道${tunnel.id}启动检查超时`)
+        // 超时时再做一次状态检查
+        try {
+          const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
+          if (isRunning) {
+            resolve({success: true, message: '隧道已在运行'})
+          } else {
+            resolve({success: false, message: '启动超时，请稍后查看状态'})
+          }
+        } catch (e) {
+          resolve({success: false, message: `启动超时: ${e}`})
+        }
+        clearInterval(checkInterval)
+        window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
+      }, 30000)
+      
+      // 发送启动事件
+      invoke('emit_event', {
+        event: 'tunnel-event', 
         payload: {
           type: 'start',
           tunnelId: tunnel.id.toString(),
           tunnelName: tunnel.name
         }
+      }).catch(e => console.error(`发送启动事件失败:`, e))
+      
+      // 启动隧道
+      console.log(`调用start_frpc_instance启动隧道${tunnel.id}`)
+      invoke('start_frpc_instance', {
+        id: tunnel.id.toString(),
+        token: token,
+        tunnelId: tunnel.id.toString(),
+        logColors: true,
+        enableLog: true,
+        logUser: userInfo?.value?.username || ''
+      }).catch((error) => {
+        console.error(`启动隧道 ${tunnel.id} 失败:`, error)
+        if (timeout) clearTimeout(timeout)
+        clearInterval(checkInterval)
+        window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
+        resolve({success: false, message: String(error)})
       })
-      
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      
-      message.loading('正在启动隧道', {duration: 1000})
-      let logMessage = ''
-      
-      const logResult = await new Promise<{success: boolean, message: string}>((resolve) => {
-        console.log(`等待隧道 ${tunnel.id} 的日志响应...`)
-        
-        const successEventListener = (event: any) => {
-          console.log(`接收到隧道 ${tunnel.id} 的成功事件:`, event)
-          clearTimeout(timeout)
-          window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-          resolve({success: true, message: event.detail.message})
-        }
-        window.addEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-        
-        console.log(`开始监听隧道 ${tunnel.id} 的日志...`)
-        
-        const logPromise = listen(`frpc-log-${tunnel.id}`, (event: any) => {
-          const log = event.payload.message
-          logMessage = log
-          
-          if (isSuccessLog(log) || 
-              log.includes('start proxy success') || 
-              log.includes('start tunnel success') ||
-              log.includes('隧道启动成功')) {
-            clearTimeout(timeout)
-            logPromise.then(unlisten => unlisten())
-            window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-            resolve({success: true, message: log})
-          } else if (log.includes('启动失败') || log.includes('failed') || log.includes('error')) {
-            clearTimeout(timeout)
-            logPromise.then(unlisten => unlisten())
-            window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-            const errorMatch = log.match(/启动失败:\s*(.+)/)
-            const errorMessage = errorMatch ? errorMatch[1] : log
-            resolve({success: false, message: errorMessage})
-          }
-        })
-        
-        const timeout = setTimeout(() => {
-          console.log(`隧道 ${tunnel.id} 启动超时，检查隧道状态...`)
-          invoke('check_frpc_status', { id: tunnel.id.toString() })
-            .then(isRunning => {
-              if (isRunning) {
-                resolve({success: true, message: '隧道已经启动成功，但未收到成功日志。'})
-              } else {
-                resolve({success: false, message: '启动超时，请检查日志。'})
-              }
-            })
-            .catch(() => resolve({success: false, message: '启动超时，检查状态失败。'}))
-        }, 15000)
-        
-        setTimeout(() => {
-          console.log(`执行启动命令：隧道 ${tunnel.id}...`)
-          invoke('start_frpc_instance', {
-            id: tunnel.id.toString(),
-            token: token,
-            tunnelId: tunnel.id.toString()
-          }).catch((error) => {
-            console.error(`启动隧道 ${tunnel.id} 失败:`, error)
-            clearTimeout(timeout)
-            logPromise.then(unlisten => unlisten())
-            resolve({success: false, message: String(error)})
-          })
-        }, 500)
-      })
+    })
 
-      if (logResult.success) {
-        tunnel.status = 'running'
-        saveTunnelStates()
-        notification.success({
-          title: `隧道 ${tunnel.id}  ${tunnel.name} 启动成功`,
-          description: `连接地址: ${tunnel.remote}`,
-          content: () => h('div', [            
-            h('span', `隧道 [ ${tunnel.name}  ] 启动成功, 请使用 [ ${tunnel.remote} ] 来连接服务\n`),
-            h(NButton, {
-              type: 'success',
-              text: true,
-              onClick: () => copyToClipboard(tunnel.remote)
-            }, '复制连接地址')
-          ]),
-          duration: 5000
-        })
-        await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动成功`, body: `使用 ${tunnel.remote} 连接到服务` })
-      } else {
-        tunnel.status = 'stopped'
-        tunnel.apiOnline = false
-        saveTunnelStates()
-        message.error(`隧道启动失败: ${logResult.message}`)
-        await sendNotification({ title: `隧道 #${tunnel.id}  ${tunnel.name} 启动失败`, body: logResult.message })
-      }
+    console.log(`隧道${tunnel.id}启动结果:`, result)
+    
+    // 发送事件到系统日志，但不使用success类型，避免生成额外日志
+    if (result.success) {
+      // 不再发送success类型事件，避免生成重复日志
+      // 成功日志已经通过隧道日志直接显示
+      // await invoke('emit_event', { ... type: 'success' ... })
+      
+      message.success(`隧道 ${tunnel.name} 启动成功`)
+      tunnel.status = 'running'
+      saveTunnelStates()
+    } else {
+      await invoke('emit_event', {
+        event: 'tunnel-event',
+        payload: {
+          type: 'error',
+          tunnelId: tunnel.id.toString(),
+          tunnelName: tunnel.name
+        }
+      })
+      
+      message.error(`隧道 ${tunnel.name} 启动失败: ${result.message}`)
+      tunnel.status = 'stopped'
     }
-  } catch (e) {
+  } catch (error) {
+    console.error(`启动隧道异常:`, error)
+    message.error(`启动隧道出错: ${error}`)
     tunnel.status = 'stopped'
-    tunnel.apiOnline = false
-    saveTunnelStates()
+    
+    // 发送事件到系统日志
     await invoke('emit_event', {
       event: 'tunnel-event',
       payload: {
@@ -323,10 +331,8 @@ const toggleTunnel = async (tunnel: any) => {
         tunnelName: tunnel.name
       }
     })
-
-    message.error(`操作失败: ${e}`)
-    await checkTunnelStatus(tunnel)
   } finally {
+    // 清除加载状态
     loadingTunnels.value.delete(tunnel.id.toString())
   }
 }
@@ -338,8 +344,20 @@ const saveTunnelStates = () => {
       states[tunnel.id] = tunnel.status
     }
   })
-  console.log('Saving current running tunnel states:', states)
+  
+  // 记录保存状态到本地存储
   localStorage.setItem('tunnelStates', JSON.stringify(states))
+  
+  // 记录到系统日志
+  const runningCount = Object.keys(states).length
+  // if (runningCount > 0) {
+  //   invoke('emit_event', {
+  //     event: 'log',
+  //     payload: {
+  //       message: `已保存${runningCount}个运行中隧道的状态: ${Object.keys(states).join(', ')}`
+  //     }
+  //   })
+  // }
 }
 
 const loadTunnelStates = () => {
@@ -365,31 +383,69 @@ const getTypeColor = (type: string) => {
 }
 
 const restoreTunnels = async () => {
-  const savedStates = localStorage.getItem('tunnelStates')
-  console.log('Attempting to restore tunnels, saved states:', savedStates)
+  console.log('开始恢复隧道');
   
-  if (savedStates) {
-    const states = JSON.parse(savedStates)
-    const tunnelsToRestore = tunnels.value.filter(tunnel => states[tunnel.id] === 'running')
-    
-    console.log('Found tunnels to restore:', tunnelsToRestore.map(t => t.id))
-    
-    await new Promise(resolve => setTimeout(resolve, 2000))
-    
-    for (const tunnel of tunnelsToRestore) {
-      try {
-        console.log('Starting tunnel:', tunnel.id)
-        await new Promise(resolve => setTimeout(resolve, 2000))
-        await toggleTunnel(tunnel)
-        await new Promise(resolve => setTimeout(resolve, 3000))
-        console.log('Tunnel started:', tunnel.id)
-      } catch (e) {
-        console.error(`自动启动隧道 ${tunnel.id} 失败:`, e)
-        continue
-      }
+  // 发布恢复隧道日志
+  await invoke('emit_event', {
+    event: 'log',
+    payload: {
+      message: '开始恢复隧道...'
     }
+  });
+  
+  // 检查是否是自动启动模式（仅作为日志，不阻止恢复）
+  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true';
+  if (!isAutoStartMode) {
+    console.log('当前不是自动启动模式，但仍然继续恢复隧道');
+  }
+  
+  // 获取保存的隧道状态
+  const savedStates = localStorage.getItem('tunnelStates');
+  if (savedStates) {
+    const states = JSON.parse(savedStates);
+    const tunnelsToRestore = tunnels.value.filter(tunnel => states[tunnel.id] === 'running');
     
-    saveTunnelStates()
+    console.log('找到需要恢复的隧道:', tunnelsToRestore.map(t => t.id));
+    
+    // 添加系统事件日志
+    await invoke('emit_event', {
+      event: 'log',
+      payload: {
+        message: `找到${tunnelsToRestore.length}个需要恢复的隧道: ${tunnelsToRestore.map(t => t.id).join(', ')}`
+      }
+    });
+    
+    if (tunnelsToRestore.length > 0) {
+      const delayBetweenTunnels = 5000; // 5秒间隔
+      
+      for (let i = 0; i < tunnelsToRestore.length; i++) {
+        const tunnel = tunnelsToRestore[i];
+        console.log(`准备启动隧道 ${i+1}/${tunnelsToRestore.length}: ${tunnel.id}`);
+        
+        await invoke('emit_event', {
+          event: 'log',
+          payload: {
+            message: `准备恢复隧道 ${i+1}/${tunnelsToRestore.length}: ${tunnel.id} ${tunnel.name}`
+          }
+        });
+        
+        // 尝试启动隧道
+        await startTunnel(tunnel);
+        
+        // 除了最后一个隧道，每个隧道启动后等待一段时间
+        if (i < tunnelsToRestore.length - 1) {
+          console.log(`等待${delayBetweenTunnels/1000}秒后启动下一个隧道...`);
+          await new Promise(resolve => setTimeout(resolve, delayBetweenTunnels));
+        }
+      }
+      
+      await invoke('emit_event', {
+        event: 'log',
+        payload: {
+          message: `已尝试恢复所有隧道`
+        }
+      });
+    }
   }
 }
 
@@ -731,34 +787,109 @@ const forceOffTunnel = (row: any) => {
   });
 };
 
+const toggleTunnel = async (tunnel: any) => {
+  if (tunnel.status === 'running') {
+    await stopTunnel(tunnel);
+  } else {
+    await startTunnel(tunnel);
+  }
+}
+
+const stopTunnel = async (tunnel: any) => {
+  console.log(`停止隧道 ${tunnel.id}`);
+  
+  // 如果已经停止，不重复操作
+  if (tunnel.status === 'stopped') {
+    message.info('隧道已经停止');
+    return;
+  }
+  
+  try {
+    loadingTunnels.value.add(tunnel.id.toString());
+    
+    // 发送停止事件
+    await invoke('emit_event', {
+      event: 'tunnel-event',
+      payload: {
+        type: 'stop',
+        tunnelId: tunnel.id.toString(),
+        tunnelName: tunnel.name
+      }
+    });
+    
+    // 停止隧道实例
+    await invoke('stop_frpc_instance', { id: tunnel.id.toString() });
+    
+    // 更新状态
+    tunnel.status = 'stopped';
+    tunnel.apiOnline = false;
+    linkTunnelsStore.removeLinkTunnel(tunnel.id.toString());
+    
+    // 保存状态
+    saveTunnelStates();
+    
+    message.info(`隧道 ${tunnel.name} 已停止运行`);
+    
+    // 发送通知
+    await sendNotification({ 
+      title: `隧道 #${tunnel.id} ${tunnel.name} 已停止`, 
+      body: '隧道已成功停止运行' 
+    });
+    
+  } catch (error) {
+    console.error(`停止隧道 ${tunnel.id} 失败:`, error);
+    message.error(`停止隧道失败: ${error}`);
+    
+    // 检查实际状态
+    await checkTunnelStatus(tunnel);
+  } finally {
+    loadingTunnels.value.delete(tunnel.id.toString());
+  }
+}
+
 onMounted(async () => {
   console.log('ProxyList mounted')
   await requestNotificationPermission()
   await fetchProxyList()
 
-  const shouldRestore = localStorage.getItem('autoRestoreTunnels') === 'true'
-  const isAutoStart = route.query.autostart === 'true'
+  // 监听自动启动模式下的隧道恢复
+  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true'
+  const autoRestoreTunnels = localStorage.getItem('autoRestoreTunnels') === 'true'
   
-  console.log('Should restore:', shouldRestore)
-  console.log('Is autostart:', isAutoStart)
-  console.log('Route query:', route.query)
-
-  if (shouldRestore && isAutoStart) {
-    await nextTick()
-    setTimeout(() => {
-      if (tunnels.value.length > 0) {
-        restoreTunnels()
-      } else {
-        console.log('No tunnels available yet, waiting for tunnels')
-        const unwatch = watch(tunnels, (newTunnels) => {
-          if (newTunnels.length > 0) {
-            restoreTunnels()
-            unwatch()
-          }
-        })
-      }
-    }, 2000)
+  console.log('隧道组件挂载，自动恢复状态:', {
+    isAutoStartMode,
+    autoRestoreTunnels,
+    hasToken: !!userInfo?.value?.token,
+    alreadyAttempted: window.__tunnelsRestoreAttempted
+  })
+  
+  // 添加全局恢复隧道事件监听器
+  const restoreTunnelsListener = () => {
+    console.log('收到全局恢复隧道事件');
+    // 只在未尝试过的情况下恢复
+    if (autoRestoreTunnels && !window.__tunnelsRestoreAttempted) {
+      window.__tunnelsRestoreAttempted = true;
+      restoreTunnels();
+    } else {
+      console.log('已经尝试过恢复隧道，忽略此事件');
+    }
+  };
+  
+  window.addEventListener('global-restore-tunnels', restoreTunnelsListener);
+  
+  // 检查是否需要自动恢复隧道（确保只执行一次）
+  if (isAutoStartMode && autoRestoreTunnels && !window.__tunnelsRestoreAttempted) {
+    console.log('自动启动模式，首次恢复隧道');
+    window.__tunnelsRestoreAttempted = true;
+    await restoreTunnels();
+  } else if (window.__tunnelsRestoreAttempted) {
+    console.log('已经尝试过恢复隧道，不再重复执行');
   }
+
+  // 添加监听器清理函数
+  onUnmounted(() => {
+    window.removeEventListener('global-restore-tunnels', restoreTunnelsListener);
+  });
 
   const statusCheckInterval = setInterval(checkAllTunnelsStatus, 5000)
   const listRefreshInterval = setInterval(fetchProxyList, 45000)

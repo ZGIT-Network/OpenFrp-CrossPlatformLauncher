@@ -22,4 +22,6 @@ app.config.warnHandler = (msg, instance, trace) => {
   console.warn('警告组件:', instance)
   console.warn('调用栈:', trace)
 }
-app.mount('#app')
+
+// 挂载应用
+app.mount('#app');

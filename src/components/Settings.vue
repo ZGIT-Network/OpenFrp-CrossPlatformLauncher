@@ -125,6 +125,13 @@ onMounted(() => {
         autoStart.value = savedAutoStart === 'true'
     }
 
+    // 记录当前设置状态到日志
+    logs.value += `[${new Date().toLocaleTimeString()}] [系统] 自启动状态: ${autoStart.value ? '已启用' : '未启用'}\n`
+    logs.value += `[${new Date().toLocaleTimeString()}] [系统] 自动恢复隧道: ${autoRestoreTunnels.value ? '已启用' : '未启用'}\n`
+    if (autoStart.value && !autoRestoreTunnels.value) {
+        logs.value += `[${new Date().toLocaleTimeString()}] [系统] 警告: 自启动已启用但未开启自动恢复隧道，开机将不会自动启动隧道\n`
+    }
+
     getCurrentVersion()
     checkAutoStartSettings()
     checkDeepLinkStatus()
@@ -153,6 +160,7 @@ onMounted(async () => {
     })
 
     unlistenNeedDownload = await listen('need_download', async () => {
+        logs.value += `[${new Date().toLocaleTimeString()}] [系统] 未检测到 frpc，需要下载\n`
         dialog.warning({
             title: '提示',
             content: '未检测到 frpc，是否立即下载？',
@@ -166,10 +174,32 @@ onMounted(async () => {
 
     // 启动时检查 frpc
     try {
-        await invoke('check_and_download')
+        const checkResult = await invoke('check_and_download')
+        
+        // 如果需要下载，添加明确的日志
+        if (checkResult === '需要下载 frpc') {
+            logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测结果：未找到Frpc可执行文件\n`
+        } else {
+            logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测结果：Frpc可执行文件已存在\n`
+            
+            // 尝试获取版本信息
+            try {
+                const result = await invoke('get_frpc_cli_version') as string
+                const frpcInfo = JSON.parse(result)
+                if (frpcInfo.version && frpcInfo.version !== "未知") {
+                    logs.value += `[${new Date().toLocaleTimeString()}] [系统] Frpc版本：${frpcInfo.version}\n`
+                }
+            } catch (e) {
+                console.error('获取Frpc版本失败:', e)
+            }
+        }
     } catch (e) {
+        logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检查Frpc失败: ${e}\n`
         message.error(`检查失败: ${e}`)
     }
+    
+    // 从localStorage读取token，从configs.json获取自启动等设置
+    // ... existing code ...
 })
 
 onUnmounted(() => {
@@ -196,10 +226,20 @@ const downloadFrpc = async () => {
 
 const getFrpcVersion = async () => {
     try {
-        await invoke('get_frpc_cli_version')
-        message.success('版本获取成功')
+        const result = await invoke('get_frpc_cli_version');
+        const frpcInfo = JSON.parse(result as string);
+        
+        if (frpcInfo.version === "未知") {
+            logs.value += `[${new Date().toLocaleTimeString()}] [系统] 未找到Frpc\n`;
+            message.warning('Frpc可执行文件不存在，请配置或下载');
+            return;
+        }
+        
+        logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测到Frpc版本: ${frpcInfo.version}\n`;
+        message.success(`当前版本: ${frpcInfo.version}`);
     } catch (e) {
-        message.error(`获取版本失败: ${e}`)
+        logs.value += `[${new Date().toLocaleTimeString()}] [系统] 获取Frpc版本失败: ${e}\n`;
+        message.error(`获取版本失败: ${e}`);
     }
 }
 
@@ -237,7 +277,7 @@ const checkUpdate = async () => {
                         h('br'), `当前版本 v${currentVersion.value}`, h('br'), h('br'),
                         '更新日志:',
                         h('br'),
-                        ...update.msg.split('\n').map((line: string, index: number) => h('div', { key: index }, line))
+                        h('pre', { style: 'white-space: pre-wrap; word-break: break-word; margin: 8px 0;' }, update.msg)
                     ]),
                 positiveText: '立即更新',
                 negativeText: '取消',
@@ -281,6 +321,14 @@ const toggleAutoStart = async () => {
         // 切换后重新检查状态
         await checkAutoStartSettings()
         message.success(`${autoStart.value ? '启用' : '禁用'}开机自启动成功`)
+        
+        // 如果启用自启动但未启用恢复隧道，提示用户可能需要开启
+        if (autoStart.value && !autoRestoreTunnels.value) {
+            setTimeout(() => {
+                message.info('提示：如需开机自动启动隧道，请同时开启"开机时恢复上次运行的隧道"选项')
+            }, 500)
+        }
+        
         if (autoStart.value && deepLinkEnabled.value) {
             setTimeout(() => {
                 message.warning('注意，通过"快速启动"功能启动的隧道无法开机自启动')
@@ -298,6 +346,13 @@ const toggleAutoRestoreTunnels = (value: boolean) => {
     autoRestoreTunnels.value = value
     localStorage.setItem('autoRestoreTunnels', value.toString())
     message.success(`${value ? '启用' : '禁用'}开机恢复隧道成功`)
+    
+    // 如果禁用了隧道恢复但启用了自启动，提示用户
+    if (!value && autoStart.value) {
+        setTimeout(() => {
+            message.warning('已禁用开机恢复隧道，程序将在开机时启动但不会自动启动隧道')
+        }, 500)
+    }
 }
 
 // 检查深层链接状态
@@ -491,53 +546,59 @@ const getExpectedFrpcInfo = async () => {
             frpcFullPath.value = frpcVersion.path;
             return;
         }
-
-        // 如果没有现有文件，使用简单逻辑确定期望的文件名
-        // 这与后端逻辑保持一致
-        const isWindows = navigator.platform.toLowerCase().includes('win');
-
-        if (isWindows) {
-            expectedFrpcFilename.value = 'frpc_windows_amd64.exe';
-        } else {
-            // 检测是否为macOS
-            const isMac = navigator.platform.toLowerCase().includes('mac');
-            if (isMac) {
-                // 检测ARM架构（M1/M2芯片）
-                const isArm = /arm|aarch/i.test(navigator.platform) ||
-                    (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
-                expectedFrpcFilename.value = isArm ? 'frpc_darwin_arm64' : 'frpc_darwin_amd64';
-            } else {
-                // 检测Linux ARM架构
-                const isLinuxArm = /arm|aarch/i.test(navigator.platform);
-                expectedFrpcFilename.value = isLinuxArm ? 'frpc_linux_arm64' : 'frpc_linux_amd64';
-            }
-        }
-
-        // 记录用于调试
-        console.log("系统检测:", {
-            platform: navigator.platform,
-            userAgent: navigator.userAgent,
-            expectedFile: expectedFrpcFilename.value
-        });
     } catch (e) {
         console.error('获取frpc信息失败:', e);
-        message.error(`获取frpc信息失败: ${e}`);
-
-        // 使用最基本的默认值
-        expectedFrpcFilename.value = window.navigator.platform.includes('Win')
-            ? 'frpc_windows_amd64.exe'
-            : 'frpc_linux_amd64';
+        // 忽略错误，继续执行以下代码以设置默认值
     }
+        
+    // 如果没有现有文件或发生错误，使用简单逻辑确定期望的文件名
+    // 这与后端逻辑保持一致
+    const isWindows = navigator.platform.toLowerCase().includes('win');
+
+    if (isWindows) {
+        expectedFrpcFilename.value = 'frpc_windows_amd64.exe';
+    } else {
+        // 检测是否为macOS
+        const isMac = navigator.platform.toLowerCase().includes('mac');
+        if (isMac) {
+            // 检测ARM架构（M1/M2芯片）
+            const isArm = /arm|aarch/i.test(navigator.platform) ||
+                (/Mac/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+            expectedFrpcFilename.value = isArm ? 'frpc_darwin_arm64' : 'frpc_darwin_amd64';
+        } else {
+            // 检测Linux ARM架构
+            const isLinuxArm = /arm|aarch/i.test(navigator.platform);
+            expectedFrpcFilename.value = isLinuxArm ? 'frpc_linux_arm64' : 'frpc_linux_amd64';
+        }
+    }
+
+    // 记录用于调试
+    console.log("系统检测:", {
+        platform: navigator.platform,
+        userAgent: navigator.userAgent,
+        expectedFile: expectedFrpcFilename.value
+    });
 };
 
 // 获取应用数据目录
 const getAppDataDir = async () => {
     try {
         appDataDir.value = await invoke('get_app_data_dir') as string;
-        await getExpectedFrpcInfo();
+        // 尝试获取frpc信息，但不阻止流程继续
+        try {
+            await getExpectedFrpcInfo();
+        } catch (e) {
+            console.error('获取frpc信息失败，但可以继续:', e);
+            // 设置默认值以防出错
+            expectedFrpcFilename.value = window.navigator.platform.includes('Win')
+                ? 'frpc_windows_amd64.exe'
+                : 'frpc_linux_amd64';
+        }
     } catch (e) {
         console.error('获取应用数据目录失败:', e);
         message.error(`获取应用数据目录失败: ${e}`);
+        // 抛出错误以便调用者处理
+        throw e;
     }
 };
 
@@ -569,8 +630,25 @@ const checkFrpcExists = async () => {
 
 // 显示手动放置说明
 const showManualMode = async () => {
-    await getAppDataDir();
-    manualModeVisible.value = true;
+    try {
+        await getAppDataDir();
+        manualModeVisible.value = true;
+        
+        // 检查frpc是否存在
+        try {
+            const result = await invoke('get_frpc_cli_version') as string;
+            const frpcInfo = JSON.parse(result);
+            
+            if (frpcInfo.version === "未知") {
+                logs.value += `[${new Date().toLocaleTimeString()}] [系统] 正在配置Frpc，当前未找到可执行文件\n`;
+            }
+        } catch (e) {
+            logs.value += `[${new Date().toLocaleTimeString()}] [系统] 未能检查Frpc状态，请按说明手动配置\n`;
+        }
+    } catch (e) {
+        console.error('打开手动配置对话框失败:', e);
+        message.error('打开手动配置对话框失败，请重试');
+    }
 };
 
 onMounted(async () => {

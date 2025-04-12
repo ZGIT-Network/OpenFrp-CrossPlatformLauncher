@@ -94,6 +94,127 @@ const refreshWebview = async () => {
   window.location.reload()
 }
 
+// 在启动应用时初始化自动恢复隧道功能
+async function initAutoRestoreTunnels() {
+  try {
+    // 检查是否是自启动模式 - 只信任URL参数，不再信任localStorage
+    const isAutostart = window.location.search.includes('autostart=true');
+    
+    // 如果有URL参数指示是自启动，则设置标志
+    if (isAutostart) {
+      localStorage.setItem('appStartedByAutostart', 'true');
+    } else {
+      // 如果不是自启动，清除标志防止下次误判
+      localStorage.removeItem('appStartedByAutostart');
+    }
+    
+    // 检查是否启用了自动恢复隧道功能
+    const autoRestoreTunnels = localStorage.getItem('autoRestoreTunnels') === 'true';
+    
+    if (autoRestoreTunnels) {
+      console.log('自动恢复隧道功能已启用，是自启动状态:', isAutostart);
+      
+      // 添加日志记录
+      await invoke('emit_event', {
+        event: 'log',
+        payload: {
+          message: `应用程序启动，自动恢复隧道功能已启用${isAutostart ? '，检测到是自启动模式' : '，但不是自启动模式'}`
+        }
+      });
+      
+      message.info('正在自启动隧道')
+      
+      // 获取保存的隧道状态
+      const savedStates = localStorage.getItem('tunnelStates');
+      if (savedStates) {
+        const states = JSON.parse(savedStates);
+        const tunnelIds = Object.keys(states);
+        
+        if (tunnelIds.length > 0 && isAutostart) {
+          // 添加日志记录
+          await invoke('emit_event', {
+            event: 'log',
+            payload: {
+              message: `找到${tunnelIds.length}个需要恢复的隧道: ${tunnelIds.join(', ')}`
+            }
+          });
+          
+          // 只在自启动模式下恢复隧道
+          await invoke('emit_event', {
+            event: 'log',
+            payload: {
+              message: '自启动模式，开始恢复隧道...'
+            }
+          });
+          
+          // 初始化日志系统（隐式加载）
+          const initLogSystem = async () => {
+            try {
+              console.log("初始化日志系统");
+              // 先确保日志系统标记为已初始化
+              window.__logSystemInitialized = true;
+              
+              // 创建一个临时的iframe来加载日志页面，但不显示
+              const iframe = document.createElement('iframe');
+              iframe.style.display = 'none';
+              iframe.src = '/logs';
+              document.body.appendChild(iframe);
+              
+              // 等待日志系统初始化
+              await new Promise(resolve => setTimeout(resolve, 600));
+              
+              // 发送事件通知
+              await invoke('emit_event', {
+                event: 'log',
+                payload: {
+                  message: '日志系统已在后台初始化'
+                }
+              });
+              
+              // 现在导航到隧道页面并触发恢复
+              router.push('/proxylist');
+              
+              // 等待页面加载
+              setTimeout(async () => {
+                // 发送日志提示
+                await invoke('emit_event', {
+                  event: 'log',
+                  payload: {
+                    message: '正在准备启动隧道...'
+                  }
+                });
+                
+                // 发送一个自定义事件，通知ProxyList组件立即恢复隧道
+                window.dispatchEvent(new CustomEvent('global-restore-tunnels'));
+                
+                // 清理临时iframe
+                setTimeout(() => {
+                  document.body.removeChild(iframe);
+                }, 1000);
+              }, 500);
+            } catch (error) {
+              console.error("初始化日志系统失败:", error);
+            }
+          };
+          
+          // 执行日志系统初始化
+          await initLogSystem();
+        } else if (tunnelIds.length > 0) {
+          // 非自启动模式下，记录日志但不自动恢复
+          await invoke('emit_event', {
+            event: 'log',
+            payload: {
+              message: '当前不是自启动模式，不会自动恢复隧道'
+            }
+          });
+        }
+      }
+    }
+  } catch (error) {
+    console.error('初始化自动恢复隧道功能失败:', error);
+  }
+}
+
 // 监听窗口状态变化
 onMounted(async () => {
   const window = await getCurrentWindow()
@@ -104,6 +225,9 @@ onMounted(async () => {
       isMaximized.value = maximized
     })
   })
+  
+  // 初始化自动恢复隧道功能
+  await initAutoRestoreTunnels();
 })
 const dialog = useDialog()
 import './style.less';
@@ -445,6 +569,9 @@ onMounted(async () => {
       },
       onNegativeClick: async () => {
         try {
+          // 清除自启动标志，确保下次手动启动时不会自动恢复隧道
+          localStorage.removeItem('appStartedByAutostart');
+          
           // 先结束所有隧道
           await invoke('kill_all_processes');
           // 然后退出程序
@@ -550,7 +677,7 @@ const toggleDarkMode = () => {
               transform="translate(-72.79 -105.36)" />
           </svg>
         </div>
-        Cross Platform Launcher Beta 0.4.1
+        Cross Platform Launcher Beta 0.4.2
       </div>
     </div>
     <div class="header-right" data-tauri-drag-region>

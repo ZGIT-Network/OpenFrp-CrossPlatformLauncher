@@ -7,6 +7,12 @@ import hljs from 'highlight.js'
 import ansiToHtml from 'ansi-to-html'
 import { useLinkTunnelsStore } from '../stores/linkTunnels'
 
+// 扩展Window接口，添加全局属性
+declare global {
+  interface Window {
+    __logSystemInitialized?: boolean;
+  }
+}
 
 const convert = new ansiToHtml({
   fg: '#FFF',
@@ -40,6 +46,11 @@ const tunnelOptions = ref<SelectOption[]>([
   { label: '全部日志', value: 'all' }
 ])
 const selectedTunnel = ref('all')
+const MAX_LOGS_PER_TUNNEL = 500; // 每个隧道最大日志条数
+const MAX_LOG_COUNT = 10000; // 全局最大日志条数，增加以保存更多日志
+
+// 添加全局标记，避免重复初始化日志
+const logSystemInitialized = ref(!!window.__logSystemInitialized);
 
 // 计算日志内容的MD5散列值
 function hashCode(str: string): string {
@@ -75,15 +86,26 @@ function parseLogText(content: string): { timestamp: string, category: string, t
     };
   }
   
-  // 识别隧道日志 [隧道 ID]
-  const tunnelMatch = remaining.match(/^\[(?:<span[^>]*>)?隧道\s+(\d+)(?:<\/span>)?\]/);
+  // 识别隧道日志 [隧道 ID]，更全面的正则表达式
+  const tunnelMatch = remaining.match(/^\[(?:<span[^>]*>)?隧道\s+(\d+|link-[a-zA-Z0-9\-_]+)(?:<\/span>)?\]/);
   if (tunnelMatch) {
     const tunnelId = tunnelMatch[1];
     return {
       timestamp,
       category: '隧道',
       tunnelId,
-      message: remaining.replace(/^\[(?:<span[^>]*>)?隧道\s+\d+(?:<\/span>)?\]\s*/, '')
+      message: remaining.replace(/^\[(?:<span[^>]*>)?隧道\s+(?:\d+|link-[a-zA-Z0-9\-_]+)(?:<\/span>)?\]\s*/, '')
+    };
+  }
+  
+  // 未识别的日志格式但可能包含隧道信息
+  const idInMessageMatch = remaining.match(/隧道\s+#?(\d+|link-[a-zA-Z0-9\-_]+)/);
+  if (idInMessageMatch) {
+    return {
+      timestamp,
+      category: '隧道',
+      tunnelId: idInMessageMatch[1],
+      message: remaining
     };
   }
   
@@ -97,11 +119,11 @@ function parseLogText(content: string): { timestamp: string, category: string, t
 
 // 提取日志核心内容，移除变量部分以便去重
 function normalizeLogContent(content: string): string {
+  // 放宽日志归一化处理，保留更多内容差异，避免误判为重复
+  // 不去除时间戳和ID等信息，仅去除一些HTML标签
   return content
-    .replace(/\[\d{1,2}:\d{1,2}:\d{1,2}\]/g, '') // 移除时间戳
-    .replace(/<span[^>]*>/g, '').replace(/<\/span>/g, '') // 移除HTML标签
-    .replace(/\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}\.\d+/g, '') // 移除日期时间
-    .replace(/\[[a-f0-9]{16}\]/g, '') // 移除16位十六进制ID
+    .replace(/<span[^>]*>/g, '')
+    .replace(/<\/span>/g, '')
     .trim();
 }
 
@@ -158,10 +180,18 @@ function updateTunnelOptions() {
   // 添加每个隧道的选项
   for (const tunnelId of Object.keys(tunnelLogIndices.value)) {
     if (tunnelId !== 'all') {
-      options.push({
-        label: `隧道 ${tunnelId}`,
-        value: tunnelId
-      });
+      // 区分普通隧道和快速启动隧道
+      if (tunnelId.startsWith('link-')) {
+        options.push({
+          label: `快速隧道 ${tunnelId}`,
+          value: tunnelId
+        });
+      } else {
+        options.push({
+          label: `隧道 ${tunnelId}`,
+          value: tunnelId
+        });
+      }
     }
   }
   
@@ -171,20 +201,19 @@ function updateTunnelOptions() {
 
 // 更新显示的日志
 function updateDisplayedLogs() {
+  console.log(`更新日志显示，当前选择的隧道: ${selectedTunnel.value}`);
   if (!selectedTunnel.value || !tunnelLogIndices.value[selectedTunnel.value]) {
     logs.value = '';
+    console.log("没有找到选择的隧道的日志");
     return;
   }
   
   // 获取当前选择的隧道日志哈希列表
   const hashes = Array.from(tunnelLogIndices.value[selectedTunnel.value]);
   
-  // 按照添加顺序排序 (这里假设添加顺序就是正确的显示顺序)
-  // 此处可以根据需要实现其他排序逻辑，例如按时间戳
-  
   // 获取对应的日志内容并合并
-  const logContent = hashes.map(hash => logStore.value.get(hash)).filter(Boolean).join('\n');
-  logs.value = logContent;
+  const logEntries = hashes.map(hash => logStore.value.get(hash)).filter(Boolean);
+  logs.value = logEntries.join('\n');
   
   // 自动滚动
   if (autoScroll.value) {
@@ -192,6 +221,8 @@ function updateDisplayedLogs() {
       logInst.value?.scrollTo({ position: 'bottom', silent: true });
     });
   }
+  
+  console.log(`更新了 ${logEntries.length} 条日志，总长度: ${logs.value.length} 字符`);
 }
 
 // 监听选择的隧道变化
@@ -211,11 +242,23 @@ const handleScroll = ({ scrollTop, scrollHeight, containerHeight }: any) => {
 
 // 添加日志
 function addLog(content: string): void {
+  // 直接输出到控制台以便调试
+  console.log("添加日志:", content);
+  
   const normalizedContent = normalizeLogContent(content);
   const hash = hashCode(normalizedContent);
   
+  // 放宽查重条件 - 对于隧道日志，允许更多日志通过
+  // 如果是隧道日志，跳过重复检查
+  const isTunnelLog = content.includes('隧道') && (
+    content.includes('client/service.go') || 
+    content.includes('启动于配置') || 
+    content.includes('连接到节点') || 
+    content.includes('start')
+  );
+  
   // 检查日志是否已存在
-  if (logStore.value.has(hash)) {
+  if (!isTunnelLog && logStore.value.has(hash)) {
     console.log('避免添加重复日志:', content);
     return;
   }
@@ -233,9 +276,6 @@ function addLog(content: string): void {
       updateTunnelOptions();
     }
     tunnelLogIndices.value[parsed.tunnelId].add(hash);
-  } else if (parsed.category === '系统') {
-    // 只向'all'添加系统日志，不再自动添加到所有隧道
-    // 保持系统日志只在"全部日志"选项中显示
   }
   
   // 保存到localStorage
@@ -247,13 +287,41 @@ function addLog(content: string): void {
 
 // 保存日志到localStorage
 function saveLogsToStorage() {
-  // 取出所有日志内容
-  const allLogs = Array.from(logStore.value.values()).join('\n');
-  localStorage.setItem('frpcLogs', allLogs);
+  try {
+    // 为了避免存储过大导致性能问题，只保存最近的日志
+    const maxLogsToStore = 1000;
+    const allLogs = Array.from(logStore.value.values());
+    const logsToStore = allLogs.length > maxLogsToStore 
+      ? allLogs.slice(allLogs.length - maxLogsToStore) 
+      : allLogs;
+    
+    localStorage.setItem('frpcLogs', logsToStore.join('\n'));
+    console.log(`保存了 ${logsToStore.length} 条日志到localStorage`);
+  } catch (e) {
+    console.error('保存日志到localStorage时出错:', e);
+    // 如果存储失败（可能是因为大小限制），尝试清理一半的日志再保存
+    try {
+      const allLogs = Array.from(logStore.value.values());
+      const halfSize = Math.floor(allLogs.length / 2);
+      const reducedLogs = allLogs.slice(halfSize);
+      localStorage.setItem('frpcLogs', reducedLogs.join('\n'));
+      console.warn(`由于存储限制，只保存了 ${reducedLogs.length} 条日志`);
+    } catch (e2) {
+      console.error('即使减少日志量仍无法保存:', e2);
+    }
+  }
 }
 
 // 修改现有的日志函数
 const appendSystemLog = (message: string) => {
+  const timestamp = new Date().toLocaleTimeString();
+  const log = `[${timestamp}] [系统] ${message}`;
+  console.log(`系统日志: ${message}`);
+  addLog(log);
+};
+
+// 添加普通日志的辅助函数
+const appendLog = (message: string) => {
   const timestamp = new Date().toLocaleTimeString();
   addLog(`[${timestamp}] [系统] ${message}`);
 };
@@ -263,23 +331,23 @@ const appendTunnelLog = (tunnelId: string, message: string) => {
   const timestamp = new Date().toLocaleTimeString();
   const coloredMessage = convert.toHtml(message.replace(/\[0m/g, '</span>'));
   
-  // 新增：检查是否是启动成功消息，如果是，发送一个特殊的成功事件
+  console.log(`隧道日志 ${tunnelId}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`);
+  
+  // 检查是否是启动成功消息
   if (message.includes('start proxy success') || 
       message.includes('start tunnel success') ||
-      message.includes('隧道启动成功')) {
-    // 发送一个特殊的成功事件，ProxyList组件可以监听这个事件
+      message.includes('隧道启动成功') ||
+      message.includes('success for proxy')) {
+    // 发送一个特殊的成功事件
     window.dispatchEvent(new CustomEvent(`tunnel-${tunnelId}-success`, {
       detail: { message: message }
     }));
+    
+    // 不再在成功时额外添加系统日志，避免重复
+    // appendSystemLog(`<span style="color: #18A058">隧道 ${tunnelId} 启动成功</span>`);
   }
   
   addLog(`[${timestamp}] [<span style="color: #2080f0">隧道 ${tunnelId}</span>] ${coloredMessage}`);
-};
-
-// 添加普通日志的辅助函数
-const appendLog = (message: string) => {
-  const timestamp = new Date().toLocaleTimeString();
-  addLog(`[${timestamp}] [系统] ${message}`);
 };
 
 // 清除日志
@@ -302,77 +370,134 @@ const clearLogs = () => {
 };
 
 // 防止日志过长，定期清理
-const MAX_LOG_COUNT = 5000; // 最大日志条数
 function pruneLogsIfNeeded() {
   const logCount = logStore.value.size;
   if (logCount > MAX_LOG_COUNT) {
     console.log(`日志数量(${logCount})超过上限(${MAX_LOG_COUNT})，进行清理...`);
     
-    // 获取所有日志并按添加顺序排序
-    const allHashes = Array.from(logStore.value.keys());
-    const hashesToRemove = allHashes.slice(0, logCount - MAX_LOG_COUNT * 0.8); // 保留80%的最新日志
-    
-    // 删除旧日志
-    for (const hash of hashesToRemove) {
-      logStore.value.delete(hash);
-      
-      // 从所有索引中删除
-      for (const indexSet of Object.values(tunnelLogIndices.value)) {
-        indexSet.delete(hash);
+    // 为每个隧道保留最新的日志，删除旧日志
+    for (const tunnelId of Object.keys(tunnelLogIndices.value)) {
+      const indexSet = tunnelLogIndices.value[tunnelId];
+      if (indexSet instanceof Set && indexSet.size > MAX_LOGS_PER_TUNNEL) {
+        const hashes = Array.from(indexSet);
+        const hashesToRemove = hashes.slice(0, indexSet.size - MAX_LOGS_PER_TUNNEL);
+        
+        console.log(`隧道 ${tunnelId} 日志过多(${indexSet.size})，清理 ${hashesToRemove.length} 条`);
+        
+        // 从索引中删除，但不从logStore中删除（避免影响其他隧道的日志）
+        for (const hash of hashesToRemove) {
+          indexSet.delete(hash);
+        }
       }
     }
+    
+    // 现在处理全局logStore，只保留所有隧道仍在使用的哈希
+    const usedHashes = new Set<string>();
+    for (const tunnelId of Object.keys(tunnelLogIndices.value)) {
+      const indexSet = tunnelLogIndices.value[tunnelId];
+      if (indexSet instanceof Set) {
+        for (const hash of indexSet) {
+          usedHashes.add(hash.toString());
+        }
+      }
+    }
+    
+    // 删除不再被任何隧道引用的日志
+    const hashesToRemove: string[] = [];
+    for (const hash of logStore.value.keys()) {
+      if (!usedHashes.has(hash)) {
+        hashesToRemove.push(hash);
+      }
+    }
+    
+    // 如果仍然超过限制，删除一部分最旧的哈希（保留在usedHashes中的）
+    if (usedHashes.size > MAX_LOG_COUNT * 0.9) { // 当使用的哈希超过上限的90%
+      const excessCount = usedHashes.size - Math.floor(MAX_LOG_COUNT * 0.7); // 削减到70%
+      const allHashes = Array.from(logStore.value.keys());
+      const oldestHashes = allHashes.slice(0, excessCount);
+      hashesToRemove.push(...oldestHashes);
+    }
+    
+    // 执行删除
+    for (const hash of hashesToRemove) {
+      logStore.value.delete(hash);
+    }
+    
+    console.log(`清理了 ${hashesToRemove.length} 条日志，剩余 ${logStore.value.size} 条`);
     
     // 保存到localStorage
     saveLogsToStorage();
     
     // 更新显示的日志
     updateDisplayedLogs();
-    
-    console.log(`已清理${hashesToRemove.length}条日志，剩余${logStore.value.size}条`);
   }
 }
 
 onMounted(async () => {
+  console.log("FrpcManager组件挂载");
+  
+  // 检查日志系统是否已初始化，避免重复输出初始化消息
+  if (!logSystemInitialized.value) {
+    // 首次初始化，添加标记
+    window.__logSystemInitialized = true;
+    logSystemInitialized.value = true;
+    
+    // 添加一条测试日志
+    appendSystemLog("<span style='color: #18A058'>日志系统已启动</span>");
+    console.log('首次初始化日志系统，添加启动日志');
+  } else {
+    console.log('日志系统已经初始化过，跳过初始化日志');
+  }
+  
   // 初始加载日志并构建索引
   loadLogsAndRebuildIndices();
+  console.log('初始加载日志完成，共有日志条数:', logStore.value.size);
   
   try {
     // 监听全局日志
     const globalLogUnlisten = await listen('log', (event: any) => {
+      console.log("收到全局日志:", event.payload.message);
       appendLog(event.payload.message);
     });
     cleanupFunctions.value.push(globalLogUnlisten);
+    console.log("已设置全局日志监听器");
 
-    // 监听隧道事件，修改为每次都重新设置监听器
+    // 监听隧道事件
     const tunnelEventUnlisten = await listen('tunnel-event', async (event: any) => {
+      console.log("收到隧道事件:", event.payload);
       const { type, tunnelId, tunnelName } = event.payload;
       
-      // 对于启动相关事件，始终重新设置监听器
-      if (type === 'start' || type === 'prepare') {
+      // 对于启动相关事件，设置监听器，但避免重复设置
+      if ((type === 'start' || type === 'prepare') && 
+          !activeListeners.value.has(`frpc-log-${tunnelId}`)) {
+        console.log(`开始为隧道 ${tunnelId} 设置监听器`);
         await setupTunnelListener(tunnelId);
       }
       
-      // 处理不同类型的事件
+      // 处理不同类型的事件，但不为success类型生成系统日志
       switch (type) {
         case 'prepare':
-          appendSystemLog(`<span style="color: #2080f0">准备启动隧道 #${tunnelId} ${tunnelName}</span>`);
+          appendSystemLog(`<span style="color: #2080f0">准备启动隧道 #${tunnelId} ${tunnelName || ''}</span>`);
           break;
         case 'start':
-          appendSystemLog(`<span style="color: #2080f0">开始启动隧道 #${tunnelId} ${tunnelName}</span>`);
+          appendSystemLog(`<span style="color: #2080f0">开始启动隧道 #${tunnelId} ${tunnelName || ''}</span>`);
           break;
         case 'stop':
-          appendSystemLog(`<span style="color: #2080f0">停止隧道 #${tunnelId} ${tunnelName}</span>`);
+          appendSystemLog(`<span style="color: #2080f0">停止隧道 #${tunnelId} ${tunnelName || ''}</span>`);
           break;
         case 'success':
-          appendSystemLog(`<span style="color: #2080f0">隧道 #${tunnelId} ${tunnelName} 启动成功</span>`);
+          // 不再添加成功系统日志，因为隧道日志中已有成功信息
+          // 避免重复显示
+          console.log(`收到隧道 ${tunnelId} 成功事件，不生成系统日志`);
           break;
         case 'error':
-          appendSystemLog(`<span style="color: #2080f0">隧道 #${tunnelId} ${tunnelName} 发生错误</span>`);
+          appendSystemLog(`<span style="color: #d03050">隧道 #${tunnelId} ${tunnelName || ''} 发生错误</span>`);
           break;
       }
     });
     cleanupFunctions.value.push(tunnelEventUnlisten);
-
+    console.log("已设置隧道事件监听器");
+    
     // 为已保存的隧道设置监听器
     const savedStates = localStorage.getItem('tunnelStates');
     if (savedStates) {
@@ -433,53 +558,89 @@ const setupTunnelListener = async (tunnelId: string) => {
   // 确保tunnelId是字符串且非空
   if (!tunnelId || typeof tunnelId !== 'string') {
     console.error('无效的隧道ID:', tunnelId);
-    return;
+    return false;
   }
   
   const listenerKey = `frpc-log-${tunnelId}`;
+  console.log(`准备设置隧道 ${tunnelId} 的监听器 (${listenerKey})`);
   
-  // 先清理可能存在的旧监听器
+  // 检查监听器是否已经设置
   if (activeListeners.value.has(listenerKey)) {
-    console.log(`重新设置隧道 ${tunnelId} 的日志监听器`);
-    // 找到并清理旧的监听器
-    const index = cleanupFunctions.value.findIndex(
-      fn => fn.toString().includes(listenerKey)
-    );
-    if (index !== -1) {
-      try {
-        await cleanupFunctions.value[index]();
-        cleanupFunctions.value.splice(index, 1);
-      } catch (e) {
-        console.error(`清理隧道 ${tunnelId} 旧监听器失败:`, e);
-      }
-    }
-    activeListeners.value.delete(listenerKey);
+    console.log(`隧道 ${tunnelId} 的监听器已经存在，跳过设置`);
+    return true;
   }
   
-  // 设置新的监听器
-  console.log(`设置隧道 ${tunnelId} 的日志监听器 (${listenerKey})`);
   try {
-    // 首先添加一条系统日志，表明正在监听该隧道
+    // 先清理可能存在的旧监听器
+    if (activeListeners.value.has(listenerKey)) {
+      console.log(`清理隧道 ${tunnelId} 的旧监听器`);
+      // 找到并清理旧的监听器
+      const index = cleanupFunctions.value.findIndex(
+        fn => fn.toString().includes(listenerKey)
+      );
+      if (index !== -1) {
+        try {
+          await cleanupFunctions.value[index]();
+          cleanupFunctions.value.splice(index, 1);
+        } catch (e) {
+          console.error(`清理隧道 ${tunnelId} 旧监听器失败:`, e);
+        }
+      }
+      activeListeners.value.delete(listenerKey);
+    }
+    
+    // 设置新的监听器
+    console.log(`开始监听隧道 ${tunnelId} 的日志`);
+    
+    // 首先添加一条系统日志
     if (tunnelId.startsWith('link-')) {
       // 快速启动隧道特殊处理
       appendSystemLog(`<span style="color: #2080f0">开始监听快速启动隧道 ${tunnelId}</span>`);
+    } else {
+      // 普通隧道
+      appendSystemLog(`<span style="color: #2080f0">开始监听隧道 ${tunnelId}</span>`);
     }
     
-    const instanceLogUnlisten = await listen(listenerKey, (event: any) => {
-      if (!event || !event.payload || !event.payload.message) {
-        console.warn(`收到隧道 ${tunnelId} 的无效日志事件:`, event);
-        return;
-      }
-      console.log(`收到隧道 ${tunnelId} 的日志:`, event.payload.message);
-      appendTunnelLog(tunnelId, event.payload.message);
-    });
+    // 使用try-catch包装listen调用
+    let instanceLogUnlisten;
+    try {
+      instanceLogUnlisten = await listen(listenerKey, (event: any) => {
+        try {
+          console.log(`收到隧道 ${tunnelId} 的日志事件:`, event);
+          
+          if (!event || !event.payload || typeof event.payload.message === 'undefined') {
+            console.warn(`无效的隧道 ${tunnelId} 日志事件:`, event);
+            return;
+          }
+          
+          appendTunnelLog(tunnelId, event.payload.message);
+        } catch (logError) {
+          console.error(`处理隧道 ${tunnelId} 日志时出错:`, logError);
+        }
+      });
+      
+      // 验证监听器是否正确设置
+      console.log(`隧道 ${tunnelId} 监听器设置成功: `, typeof instanceLogUnlisten === 'function');
+      
+    } catch (listenError) {
+      console.error(`无法监听 ${listenerKey} 事件:`, listenError);
+      appendSystemLog(`<span style="color: #d03050">无法设置隧道 ${tunnelId} 日志监听器: ${listenError}</span>`);
+      return false;
+    }
+    
+    // 监听器设置成功
     activeListeners.value.set(listenerKey, true);
     cleanupFunctions.value.push(instanceLogUnlisten);
     
     // 添加一个测试日志，确认监听器已设置
-    appendSystemLog(`<span style="color: #18A058">隧道 ${tunnelId} 日志监听器已设置</span>`);
+    // 如果日志系统是第一次初始化，显示详细消息，否则只在控制台输出
+    if (logSystemInitialized.value) {
+      console.log(`隧道 ${tunnelId} 日志监听器已设置`);
+    } else {
+      appendSystemLog(`<span style="color: #18A058">隧道 ${tunnelId} 日志监听器已设置</span>`);
+    }
     
-    // 如果是快速启动的隧道，确保正确地添加到tunnelLogIndices
+    // 确保隧道在日志索引中有记录
     if (!tunnelLogIndices.value[tunnelId]) {
       tunnelLogIndices.value[tunnelId] = new Set();
       // 更新隧道选项
@@ -488,7 +649,7 @@ const setupTunnelListener = async (tunnelId: string) => {
     
     return true;
   } catch (e) {
-    console.error(`设置隧道 ${tunnelId} 监听器失败:`, e);
+    console.error(`设置隧道 ${tunnelId} 监听器过程中发生错误:`, e);
     appendSystemLog(`<span style="color: #d03050">设置隧道 ${tunnelId} 日志监听器失败: ${e}</span>`);
     return false;
   }
