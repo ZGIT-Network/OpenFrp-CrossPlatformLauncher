@@ -90,7 +90,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.4.1".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.4.2".to_string()));
         }
 
         // 更新版本号
@@ -644,10 +644,48 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
     let app_dir = get_app_dir();
     let mut config = load_config()?;
 
-    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
+    // 检查frpc_filename是否存在
+    if config.frpc_filename.is_none() {
+        // 设置默认文件名
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        
+        let filename = if os == "windows" {
+            format!("frpc_windows_{}.exe", if arch == "x86_64" { "amd64" } else { arch })
+        } else if os == "macos" || os == "darwin" {
+            format!("frpc_darwin_{}", if arch == "x86_64" { "amd64" } else if arch == "aarch64" { "arm64" } else { arch })
+        } else {
+            format!("frpc_linux_{}", if arch == "x86_64" { "amd64" } else if arch == "aarch64" { "arm64" } else { arch })
+        };
+        
+        config.frpc_filename = Some(filename.clone());
+        // 保存更新后的配置
+        if let Err(e) = save_config(&config) {
+            return Err(format!("无法保存配置: {}", e));
+        }
+        
+        // 返回包含路径和文件名信息的JSON对象
+        let result = serde_json::json!({
+            "version": "未知",
+            "path": app_dir.join(&filename).to_string_lossy().to_string(),
+            "filename": filename
+        });
+        
+        return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+    }
+    
+    let filename = config.frpc_filename.as_ref().unwrap();
+    let frpc_path = app_dir.join(filename);
 
     if !frpc_path.exists() {
-        return Err("frpc 可执行文件不存在".to_string());
+        // 返回包含路径和文件名信息的JSON对象
+        let result = serde_json::json!({
+            "version": "未知",
+            "path": frpc_path.to_string_lossy().to_string(),
+            "filename": filename
+        });
+        
+        return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
     }
 
     let mut cmd = Command::new(&frpc_path);
@@ -656,23 +694,60 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let child = cmd
-        .arg("-v")
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+    let child = match cmd.arg("-v").stdout(Stdio::piped()).spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            // 返回包含路径和文件名信息的JSON对象，但标记为错误
+            let result = serde_json::json!({
+                "version": format!("错误: {}", e),
+                "path": frpc_path.to_string_lossy().to_string(),
+                "filename": filename
+            });
+            
+            return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+        }
+    };
 
-    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let output = match child.wait_with_output() {
+        Ok(output) => output,
+        Err(e) => {
+            // 返回包含路径和文件名信息的JSON对象，但标记为错误
+            let result = serde_json::json!({
+                "version": format!("等待输出错误: {}", e),
+                "path": frpc_path.to_string_lossy().to_string(),
+                "filename": filename
+            });
+            
+            return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+        }
+    };
 
     if output.status.success() {
-        let version_str = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
-
-        if let Some(version) = version_str.lines().next() {
-            if let Some(ver) = version.split_whitespace().last() {
-                config.frpc_version = Some(ver.to_string());
-                save_config(&config)?;
+        let version_str = match String::from_utf8(output.stdout) {
+            Ok(s) => s,
+            Err(e) => {
+                // 返回包含路径和文件名信息的JSON对象，但标记为错误
+                let result = serde_json::json!({
+                    "version": format!("解析输出错误: {}", e),
+                    "path": frpc_path.to_string_lossy().to_string(),
+                    "filename": filename
+                });
+                
+                return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
             }
-        }
+        };
+
+        let ver = if let Some(version) = version_str.lines().next() {
+            if let Some(v) = version.split_whitespace().last() {
+                config.frpc_version = Some(v.to_string());
+                save_config(&config)?;
+                v.to_string()
+            } else {
+                "未知版本".to_string()
+            }
+        } else {
+            "未知版本".to_string()
+        };
 
         app.emit(
             "log",
@@ -682,9 +757,24 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
         )
         .map_err(|e| e.to_string())?;
 
-        Ok("版本信息已更新".to_string())
+        // 返回包含版本、路径和文件名信息的JSON对象
+        let result = serde_json::json!({
+            "version": ver,
+            "path": frpc_path.to_string_lossy().to_string(),
+            "filename": filename
+        });
+        
+        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
     } else {
-        Err("获取版本信息失败".to_string())
+        // 返回包含路径和文件名信息的JSON对象，但标记为错误
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let result = serde_json::json!({
+            "version": format!("获取版本错误: {}", stderr),
+            "path": frpc_path.to_string_lossy().to_string(),
+            "filename": filename
+        });
+        
+        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
     }
 }
 
@@ -871,7 +961,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.4.1".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.4.2".to_string()))
 }
 
 #[tauri::command]
@@ -1047,14 +1137,15 @@ fn main() {
            
             let is_autostart = args.iter().any(|arg| arg == "--autostart");
 
-            
-
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
 
             if is_autostart {
                 // 如果是自启动，通过 eval 添加查询参数
                 window.eval("window.location.search += window.location.search ? '&autostart=true' : '?autostart=true'").unwrap();
+                
+                // 添加自启动标记到localStorage
+                window.eval("localStorage.setItem('appStartedByAutostart', 'true')").unwrap();
 
                 println!("检测到自启动");
                 

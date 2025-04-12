@@ -10,7 +10,6 @@ declare module 'vue' {
   export interface GlobalComponents {
     Card: typeof import('./src/components/CreateProxies/Card.vue')['default']
     CreateProxies: typeof import('./src/components/CreateProxies/index.vue')['default']
-    CreateProxy: typeof import('./src/components/CreateProxy.vue')['default']
     Edit: typeof import('./src/components/ManageProxies/Edit.vue')['default']
     FrpcManager: typeof import('./src/components/FrpcManager.vue')['default']
     GetConf: typeof import('./src/components/ManageProxies/GetConf.vue')['default']

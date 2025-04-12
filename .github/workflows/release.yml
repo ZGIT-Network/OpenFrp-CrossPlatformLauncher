@@ -28,8 +28,8 @@ jobs:
             arch: universal
     runs-on: ${{ matrix.platform }}
     env:
-      TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-      TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
@@ -302,10 +302,10 @@ jobs:
           
           # 为已签名和公证的DMG文件重命名，添加signed标识
           if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
-            SIGNED_DMG_PATH="${{ steps.create_dmg.outputs.dmg_path }}"
-            SIGNED_DMG_PATH="${SIGNED_DMG_PATH%.dmg}_signed.dmg"
+            ORIGINAL_DMG_PATH="${{ steps.create_dmg.outputs.dmg_path }}"
+            SIGNED_DMG_PATH="${ORIGINAL_DMG_PATH%.dmg}_signed.dmg"
             echo "重命名DMG文件，添加signed标识..."
-            cp "${{ steps.create_dmg.outputs.dmg_path }}" "${SIGNED_DMG_PATH}"
+            cp "${ORIGINAL_DMG_PATH}" "${SIGNED_DMG_PATH}"
             echo "signed_dmg_path=${SIGNED_DMG_PATH}" >> $GITHUB_OUTPUT
             ls -la "${SIGNED_DMG_PATH}"
           fi
@@ -319,8 +319,9 @@ jobs:
             echo "DMG文件路径: ${{ steps.create_dmg.outputs.dmg_path }}"
             ls -la "${{ steps.create_dmg.outputs.dmg_path }}"
             
-            # 创建带signed标识的DMG文件名
-            SIGNED_DMG_NAME="OpenFrp-CrossPlatformLauncher_signed.dmg"
+            # 保留原始文件名并添加_signed标识
+            ORIGINAL_DMG_NAME=$(basename "${{ steps.create_dmg.outputs.dmg_path }}")
+            SIGNED_DMG_NAME="${ORIGINAL_DMG_NAME%.dmg}_signed.dmg"
             cp "${{ steps.create_dmg.outputs.dmg_path }}" "./${SIGNED_DMG_NAME}"
             
             # 上传带signed标识的DMG
@@ -370,12 +371,8 @@ jobs:
 
       - name: Fix AppImage permissions
         run: |
-          # 查找并修复所有AppImage文件的权限
           find artifacts -name "*.AppImage" -type f | while read -r file; do
-            echo "修复AppImage权限: $file"
             chmod +x "$file"
-            file "$file"
-            ls -la "$file"
           done
 
       - name: Upload artifacts to release
@@ -385,7 +382,7 @@ jobs:
           # 创建存放文件的临时目录
           mkdir -p release_files
           
-          # 复制所有二进制文件和签名文件 (修复find命令语法)
+          # 复制所有二进制文件和签名文件
           find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.sig" \) | while read -r file; do
             filename=$(basename "$file")
             echo "处理文件: $filename"
@@ -396,10 +393,6 @@ jobs:
               chmod +x "release_files/$filename"
             fi
           done
-          
-          # 显示找到的文件
-          echo "找到的文件列表:"
-          ls -la release_files/
           
           # 上传所有文件到GitHub Release
           cd release_files
@@ -480,20 +473,5 @@ jobs:
           
           # 上传update.json到GitHub Release
           gh release upload ${{ github.ref_name }} update.json --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Update latest release
-        run: |
-          # 创建latest.json指向最新版本
-          echo "{\"version\":\"${{ github.ref_name }}\",\"url\":\"https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/update.json\"}" > latest.json
-          cat latest.json
-          
-          # 上传latest.json
-          gh release upload latest latest.json --clobber || {
-            # 如果latest标签不存在，则创建它
-            gh release create latest --title "Latest Release" --notes "This release points to the latest available version."
-            gh release upload latest latest.json --clobber
-          }
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

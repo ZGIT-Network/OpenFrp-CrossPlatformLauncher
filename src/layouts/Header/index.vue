@@ -550,7 +550,7 @@ const toggleDarkMode = () => {
               transform="translate(-72.79 -105.36)" />
           </svg>
         </div>
-        Cross Platform Launcher Beta 0.4.1
+        Cross Platform Launcher Beta 0.4.2
       </div>
     </div>
     <div class="header-right" data-tauri-drag-region>

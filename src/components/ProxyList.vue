@@ -737,11 +737,16 @@ onMounted(async () => {
   await fetchProxyList()
 
   const shouldRestore = localStorage.getItem('autoRestoreTunnels') === 'true'
-  const isAutoStart = route.query.autostart === 'true'
+  const isAutoStart = route.query.autostart === 'true' || localStorage.getItem('appStartedByAutostart') === 'true'
   
   console.log('Should restore:', shouldRestore)
   console.log('Is autostart:', isAutoStart)
   console.log('Route query:', route.query)
+
+  // 清除自启动标记以避免非自启动下次运行时错误触发
+  if (localStorage.getItem('appStartedByAutostart') === 'true') {
+    localStorage.removeItem('appStartedByAutostart')
+  }
 
   if (shouldRestore && isAutoStart) {
     await nextTick()
