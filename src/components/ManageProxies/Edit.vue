@@ -5,6 +5,9 @@ import { FormItemRule, useMessage } from 'naive-ui';
 
 import { HelpOutline, ShuffleOutline } from '@vicons/ionicons5';
 
+import { invoke } from '@tauri-apps/api/core'
+import { NModal, NSelect, NButton } from 'naive-ui';
+
 import './style.less';
 
 const props = defineProps<{
@@ -303,6 +306,40 @@ if (props.isEditMode && props.editConfig) {
 }
 
 const formRef = ref();
+
+const showPortDialog = ref(false);
+const portList = ref<{ port: number; type: string; pid?: number; process?: string }[]>([]);
+const selectedPortCard = ref<number | null>(null);
+const loadingPorts = ref(false);
+
+async function openPortDialog() {
+  showPortDialog.value = true;
+  loadingPorts.value = true;
+  try {
+    const res = await invoke('get_local_ports');
+    let tcp = (res as any).tcp || [];
+    let udp = (res as any).udp || [];
+    if (tcp.length && typeof tcp[0] === 'number') tcp = tcp.map((p:number)=>({port:p,type:'TCP'}));
+    if (udp.length && typeof udp[0] === 'number') udp = udp.map((p:number)=>({port:p,type:'UDP'}));
+    portList.value = [...tcp.map((x:any)=>({...x,type:'TCP'})), ...udp.map((x:any)=>({...x,type:'UDP'}))];
+  } catch (e) {
+    message.error('获取本地端口失败');
+    portList.value = [];
+  }
+  loadingPorts.value = false;
+}
+
+function handlePortCardClick(port: number) {
+  selectedPortCard.value = port;
+}
+
+function handlePortSelect() {
+  if (selectedPortCard.value) {
+    proxyData.value.local_port = selectedPortCard.value;
+    showPortDialog.value = false;
+    message.success(`已选择本地端口: ${selectedPortCard.value}`);
+  }
+}
 </script>
 
 <template>
@@ -403,7 +440,7 @@ const formRef = ref();
                       "
                     >
                       <template #suffix>
-                        <span>&nbsp;</span>
+                        <n-button size="tiny" @click="openPortDialog" style="margin-left: 4px;">选择本地端口</n-button>
                       </template>
                     </n-input-number>
                   </n-form-item-gi>
@@ -631,5 +668,46 @@ const formRef = ref();
         </n-layout>
       </div>
     </n-form>
+    <n-modal v-model:show="showPortDialog" title="选择本地端口" preset="dialog" style="width: 630px; max-height: 480px;">
+      <div v-if="loadingPorts" style="text-align:center;padding:32px 0;">
+        <n-spin size="large">正在扫描本地端口...</n-spin>
+      </div>
+      <n-scrollbar v-else style="max-height: 340px; min-height: 120px;">
+        <n-space wrap :size="8">
+          <n-card
+            v-for="item in portList"
+            :key="item.type + '-' + item.port + '-' + (item.pid || '')"
+            :class="['port-card', { selected: selectedPortCard === item.port }]"
+            size="small"
+            style="width: 180px; cursor: pointer;margin-bottom: 3px;"
+            @click="handlePortCardClick(item.port)"
+          >
+            <template #header>
+              <span style="font-weight:bold;font-size:1.1em;">{{ item.port }}</span>
+            
+            </template>
+            <template #header-extra>
+               <n-tag type="info">{{ item.type }}</n-tag> 
+            </template>
+            <template #default>
+              <n-ellipsis :line-clamp="1" style="font-size:0.95em;">{{ item.process || '-' }}</n-ellipsis>
+            </template>
+            <template #footer>
+              <span style="font-size:0.9em;color:#888;">PID: {{ item.pid || '-' }}</span>
+            </template>
+          </n-card>
+        </n-space>
+      </n-scrollbar>
+      <template #action>
+        <n-button type="primary" @click="handlePortSelect" :disabled="!selectedPortCard">确定</n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
+
+<style scoped>
+        .port-card.selected {
+          border: 2px solid #0F6FB8 !important;
+          /* background: #e6f7ff; */
+        }
+</style>

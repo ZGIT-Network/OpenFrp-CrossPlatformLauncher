@@ -1100,6 +1100,107 @@ fn open_app_data_dir() -> Result<(), String> {
     Ok(())
 }
 
+use std::collections::HashSet;
+use std::process::Command as StdCommand;
+
+#[tauri::command]
+async fn get_local_ports() -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use std::collections::HashMap;
+        let output = std::process::Command::new("netstat").args(["-ano"]).output().map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut tcp_ports = Vec::new();
+        let mut udp_ports = Vec::new();
+        let mut pid_map: HashMap<u32, String> = HashMap::new();
+        // 获取进程名
+        if let Ok(tasklist) = std::process::Command::new("tasklist").output() {
+            let taskout = String::from_utf8_lossy(&tasklist.stdout);
+            for line in taskout.lines().skip(3) {
+                let parts: Vec<_> = line.split_whitespace().collect();
+                if parts.len() >= 2 {
+                    if let Ok(pid) = parts[1].parse::<u32>() {
+                        pid_map.insert(pid, parts[0].to_string());
+                    }
+                }
+            }
+        }
+        for line in stdout.lines() {
+            let line = line.trim();
+            let parts: Vec<_> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let proto = parts[0].to_uppercase();
+                let addr = parts[1];
+                let pid = parts.last().and_then(|s| s.parse::<u32>().ok());
+                if let Some(idx) = addr.rfind(':') {
+                    if let Ok(port) = addr[idx+1..].parse::<u16>() {
+                        let process = pid.and_then(|p| pid_map.get(&p)).cloned();
+                        let entry = serde_json::json!({
+                            "port": port,
+                            "pid": pid,
+                            "process": process,
+                        });
+                        if proto.starts_with("TCP") {
+                            tcp_ports.push(entry);
+                        } else if proto.starts_with("UDP") {
+                            udp_ports.push(entry);
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(serde_json::json!({ "tcp": tcp_ports, "udp": udp_ports }));
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::collections::HashMap;
+        let output = std::process::Command::new("netstat").args(["-tunlp"]).output().map_err(|e| e.to_string())?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut tcp_ports = Vec::new();
+        let mut udp_ports = Vec::new();
+        let mut pid_map: HashMap<u32, String> = HashMap::new();
+        // 解析 /proc 获取进程名
+        if let Ok(entries) = std::fs::read_dir("/proc") {
+            for entry in entries.flatten() {
+                if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
+                    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
+                        let name = cmdline.split('\0').next().unwrap_or("").split('/').last().unwrap_or("").to_string();
+                        pid_map.insert(pid, name);
+                    }
+                }
+            }
+        }
+        for line in stdout.lines() {
+            let line = line.trim();
+            let parts: Vec<_> = line.split_whitespace().collect();
+            if parts.len() >= 6 {
+                let proto = parts[0].to_lowercase();
+                let addr = parts[3];
+                let pid_info = parts[6];
+                let pid = pid_info.split('/').next().and_then(|s| s.parse::<u32>().ok());
+                if let Some(idx) = addr.rfind(':') {
+                    if let Ok(port) = addr[idx+1..].parse::<u16>() {
+                        let process = pid.and_then(|p| pid_map.get(&p)).cloned();
+                        let entry = serde_json::json!({
+                            "port": port,
+                            "pid": pid,
+                            "process": process,
+                        });
+                        if proto.starts_with("tcp") {
+                            tcp_ports.push(entry);
+                        } else if proto.starts_with("udp") {
+                            udp_ports.push(entry);
+                        }
+                    }
+                }
+            }
+        }
+        return Ok(serde_json::json!({ "tcp": tcp_ports, "udp": udp_ports }));
+    }
+    #[allow(unreachable_code)]
+    Ok(serde_json::json!({ "tcp": [], "udp": [] }))
+}
+
 // 修改 main 函数
 fn main() {
     let app = tauri::Builder::default()
@@ -1170,6 +1271,7 @@ fn main() {
             api_proxy::proxy_api,
             get_app_data_dir,
             open_app_data_dir,
+            get_local_ports, // 新增端口扫描命令
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
