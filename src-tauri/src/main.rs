@@ -90,7 +90,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.4.2".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.0".to_string()));
         }
 
         // 更新版本号
@@ -961,7 +961,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.4.2".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.5.0".to_string()))
 }
 
 #[tauri::command]
@@ -1114,9 +1114,7 @@ fn main() {
             Some(vec!["--autostart".into()]),
         ))
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // 当收到第二个实例的启动参数时
             println!("新实例参数: {:?}", argv);
-            // 发送事件到前端
             let _ = app.emit("second-instance", argv);
         }))
         .plugin(tauri_plugin_deep_link::init())
@@ -1131,42 +1129,6 @@ fn main() {
             }
 
             let _tray = create_tray_menu(app)?;
-
-            // 检查是否是通过自启动启动的
-            let args: Vec<String> = env::args().collect();
-           
-            let is_autostart = args.iter().any(|arg| arg == "--autostart");
-
-            // 获取主窗口
-            let window = app.get_webview_window("main").unwrap();
-
-            if is_autostart {
-                // 如果是自启动，通过 eval 添加查询参数
-                window.eval("window.location.search += window.location.search ? '&autostart=true' : '?autostart=true'").unwrap();
-                
-                // 添加自启动标记到localStorage
-                window.eval("localStorage.setItem('appStartedByAutostart', 'true')").unwrap();
-
-                println!("检测到自启动");
-                
-                // 隐藏窗口
-                // window.hide().unwrap();
-            }
-
-            // 检查 frpc 是否存在
-            let frpc_path = app_dir.join(if cfg!(target_os = "windows") {
-                "frpc_windows_amd64.exe"
-            } else {
-                "frpc_linux_amd64"
-            });
-            if !frpc_path.exists() {
-                // 如果 frpc 不存在，发送事件通知前端
-                let window = app.get_webview_window("main").unwrap();
-                // 发送一个带有路由信息的事件
-                window
-                    .emit("redirect_to_settings", "need_download")
-                    .unwrap();
-            }
 
             #[cfg(target_os = "windows")]
             {
@@ -1187,7 +1149,6 @@ fn main() {
         })
         .manage(FrpcProcesses::default())
         .invoke_handler(tauri::generate_handler![
-
             check_frpc_status,
             download_frpc,
             start_frpc_instance,
@@ -1213,10 +1174,31 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    app.run(|_app_handle, event| {
+    app.run(|app_handle, event| {
         match event {
-            // 处理所有可能的事件
-            tauri::RunEvent::Ready => {}
+            tauri::RunEvent::Ready => {
+                // 迁移自启动参数、frpc 检查、emit 事件等到这里
+                let args: Vec<String> = std::env::args().collect();
+                let is_autostart = args.iter().any(|arg| arg == "--autostart");
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    if is_autostart {
+                        let _ = window.eval("window.location.search += window.location.search ? '&autostart=true' : '?autostart=true'");
+                        let _ = window.eval("localStorage.setItem('appStartedByAutostart', 'true')");
+                        println!("检测到自启动");
+                        // window.hide().unwrap(); // 如需隐藏窗口可取消注释
+                    }
+                    // 检查 frpc 是否存在
+                    let app_dir = get_app_dir();
+                    let frpc_path = app_dir.join(if cfg!(target_os = "windows") {
+                        "frpc_windows_amd64.exe"
+                    } else {
+                        "frpc_linux_amd64"
+                    });
+                    if !frpc_path.exists() {
+                        let _ = window.emit("redirect_to_settings", "need_download");
+                    }
+                }
+            }
             tauri::RunEvent::Resumed => {}
             tauri::RunEvent::MainEventsCleared => {}
             tauri::RunEvent::Exit => {}

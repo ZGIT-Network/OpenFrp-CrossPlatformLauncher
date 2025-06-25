@@ -61,7 +61,11 @@ onMounted(() => {
           // 使用平滑过渡
           setTimeout(() => {
             router.push(redirectPath).then(() => {
-              window.location.reload();
+              router.go(0);
+              // window.location.reload();
+              // window.dispatchEvent(new Event('userInfoUpdated'));
+              console.log('登录成功，跳转到:', redirectPath);
+              loadingbar.finish();
             });
           }, 1000);
         } else {

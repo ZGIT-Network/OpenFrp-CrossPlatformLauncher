@@ -35,6 +35,7 @@ import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener';
 import Cookies from '@/utils/cookies'
+import { useRouter } from 'vue-router';
 import { callApi } from '@/utils/apiClient'
 import dayjs from 'dayjs';
 import numbro from 'numbro';
@@ -46,6 +47,7 @@ import { logoutCurr } from '@/requests/frpApi/api2'
 // const router = useRouter()
 const { colorScheme, toggleColorScheme } = inject('darkMode') as any
 const isDark = ref(colorScheme.value === 'dark')
+const router = useRouter();
 
 watch(isDark, (newValue) => {
     if (newValue && colorScheme.value !== 'dark') {
@@ -461,7 +463,7 @@ const logout = () => {
             Cookies.remove('authorization');
             localStorage.removeItem('userToken')
             message.success('已成功退出登录')
-            window.location.reload()
+            router.go(0);
         }
     })
 }
@@ -481,7 +483,7 @@ const Authlogout = () => {
             tempToken.value = ''
             localStorage.removeItem('userToken')
             message.success('已成功退出登录')
-            window.location.reload()
+            router.go(0);
         }
     })
 }
@@ -517,7 +519,7 @@ const AuthLogin = async () => {
         localStorage.setItem('userToken', Authorization.value);
         tempToken.value = Authorization.value;
         message.success('登录成功');
-        window.location.reload();
+        router.go(0);
     } catch (error: any) {
         console.error('登录失败:', error);
         message.error(error?.message || '登录失败：无效的 Authorization');

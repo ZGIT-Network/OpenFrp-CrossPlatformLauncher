@@ -29,8 +29,8 @@ declare global {
   }
 }
 
-const message = useMessage()
-const notification = useNotification()
+const message = useMessage();
+const notification = useNotification();
 const dialog = useDialog()
 const tunnels = ref<any[]>([])
 const loading = ref(false)
@@ -300,8 +300,23 @@ const startTunnel = async (tunnel: any) => {
       // 不再发送success类型事件，避免生成重复日志
       // 成功日志已经通过隧道日志直接显示
       // await invoke('emit_event', { ... type: 'success' ... })
-      
       message.success(`隧道 ${tunnel.name} 启动成功`)
+      // 新增：推送通知和系统通知
+      // console.log(tunnel);
+      notification.success({
+          title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`,
+          description: `隧道启动成功！连接地址: ${tunnel.remote}`,
+          content: () => h('div', [
+            h(NButton, {
+              type: 'success',
+              text: true,
+              onClick: () => copyToClipboard(tunnel.remote)
+            }, '复制链接地址')
+          ]),
+          duration: 5000
+        })
+        await sendNotification({ title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`, body: `请使用链接地址：\n${tunnel.remote}` })
+
       tunnel.status = 'running'
       saveTunnelStates()
     } else {

@@ -181,12 +181,12 @@ document.oncontextmenu = function (event: any) {
           <n-message-provider>
             <n-layout style="height: 100vh">
               <!-- 头部 -->
-              <n-layout-header bordered style="height: 64px; padding: 0">
+              <n-layout-header bordered style="height: 55px; padding: 0">
                 <Header />
               </n-layout-header>
               
               <!-- 主体布局 -->
-              <n-layout has-sider position="absolute" style="top: 64px; bottom: 0">
+              <n-layout has-sider position="absolute" style="top: 55px; bottom: 0">
                 <!-- 侧边栏组件 -->
                 <Sidebar v-model:collapsed="collapsed" />
                 
@@ -197,7 +197,7 @@ document.oncontextmenu = function (event: any) {
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
                       OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划 {{ userInfo?.username }}
                     </n-text>
-                    <n-scrollbar style="max-height: calc(100vh - 64px - 48px);">
+                    <n-scrollbar style="max-height: calc(100vh - 64px - 40px);">
                       <router-view></router-view>
                     </n-scrollbar>
                   </n-layout-content>

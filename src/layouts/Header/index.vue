@@ -285,14 +285,24 @@ const isSuccessLog = (log: string): boolean => {
 
 const handleDeepLink = async (url: string) => {
   const urlObj = new URL(url)
-  console.log('deep link:', url);
   if (urlObj.protocol !== 'openfrp:') return
   // 直接解析 URL 字符串
   const match = url.match(/^openfrp:\/\/([^/?]+)/)
   if (!match) return
 
   const path = match[1]
-  console.log('解析路径:', path)
+  // 只对 login 做去重
+  if (path === 'login') {
+    const processedUrls = JSON.parse(localStorage.getItem('processedUrls') || '[]');
+    if (processedUrls.includes(url)) {
+      console.log('已处理过该 login deeplink，跳过:', url);
+      return;
+    }
+    processedUrls.push(url);
+    if (processedUrls.length > 10) processedUrls.shift();
+    localStorage.setItem('processedUrls', JSON.stringify(processedUrls));
+  }
+
   // 将窗口提升到最前方
   try {
     const appWindow = await getCurrentWindow()
@@ -336,7 +346,7 @@ const handleDeepLink = async (url: string) => {
       return
     }
   }
-  // 处理登录回调
+  // 远程启动隧道
   if (path === 'start_proxy') {
     const params = new URLSearchParams(urlObj.search)
     const user = params.get('user')
@@ -368,7 +378,7 @@ const handleDeepLink = async (url: string) => {
         }
       })
 
-      message.loading('正在启动隧道', { duration: 1000 })
+      // message.loading('正在启动隧道', { duration: 1000 })
 
       // 等待日志响应
       const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
@@ -676,8 +686,8 @@ const toggleDarkMode = () => {
               d="M393.4,156.33v-50.4h19.66a27.67,27.67,0,0,1,11.3,2.09,16,16,0,0,1,7.2,6,18.85,18.85,0,0,1,0,18.83,16.38,16.38,0,0,1-7.2,6,27.33,27.33,0,0,1-11.3,2.12h-15.7l3.24-3.38v18.64Zm7.2-17.92-3.24-3.6h15.48q6.92,0,10.48-3a11.57,11.57,0,0,0,0-16.7q-3.57-3-10.48-3H397.36l3.24-3.6Z"
               transform="translate(-72.79 -105.36)" />
           </svg>
+          &nbsp;<span>Cross Platform Launcher</span>
         </div>
-        Cross Platform Launcher Beta 0.4.2
       </div>
     </div>
     <div class="header-right" data-tauri-drag-region>
@@ -754,9 +764,11 @@ const toggleDarkMode = () => {
 }
 
 .header-logo span {
-  font-size: 18px;
-  font-weight: bold;
-  line-height: 28px;
+  font-size: 17px;
+  font-weight: normal;
+  color: var(--n-text-color);
+  /* line-height: 28px; */
+  line-height: 1;
 }
 
 .header-logo svg {
