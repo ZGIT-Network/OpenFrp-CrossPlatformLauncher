@@ -313,7 +313,8 @@ body.blur-enabled .n-layout-content,
 body.blur-enabled .n-layout-sider,
 body.blur-enabled .n-layout-header {
   /* 亮色高斯模糊 */
-  background: rgba(255,255,255,0.18) !important;
+  background: var(--n-color) !important;
+
   filter: blur(0px); /* 兼容性兜底 */
   backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
   -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
@@ -324,7 +325,8 @@ body.actual-dark.blur-enabled .n-layout-content,
 body.actual-dark.blur-enabled .n-layout-sider,
 body.actual-dark.blur-enabled .n-layout-header {
   /* 深色高斯模糊 */
-  background: rgba(30,34,40,0.32) !important;
+  background: var(--n-color) !important;
+
   filter: blur(0px);
   backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
   -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
@@ -344,7 +346,8 @@ body.gaussian-blur-enabled .n-layout,
 body.gaussian-blur-enabled .n-layout-content,
 body.gaussian-blur-enabled .n-layout-sider,
 body.gaussian-blur-enabled .n-layout-header {
-  background: rgba(255,255,255,0.12) !important;
+  background: var(--n-color) !important;
+
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
   transition: background 0.3s;
@@ -353,7 +356,8 @@ body.actual-dark.gaussian-blur-enabled .n-layout,
 body.actual-dark.gaussian-blur-enabled .n-layout-content,
 body.actual-dark.gaussian-blur-enabled .n-layout-sider,
 body.actual-dark.gaussian-blur-enabled .n-layout-header {
-  background: rgba(30,34,40,0.22) !important;
+  background: var(--n-color) !important;
+
   backdrop-filter: blur(24px);
   -webkit-backdrop-filter: blur(24px);
 }

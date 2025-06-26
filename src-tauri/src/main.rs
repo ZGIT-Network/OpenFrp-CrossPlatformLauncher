@@ -92,7 +92,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.1".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.0".to_string()));
         }
 
         // 更新版本号
@@ -963,7 +963,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.5.1".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.5.0".to_string()))
 }
 
 #[tauri::command]
