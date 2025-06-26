@@ -6,7 +6,7 @@ import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationPro
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { useRouter, useRoute } from 'vue-router';
-import { setWindowBlurEffect } from '@/utils/windowEffect';
+// import { setWindowBlurEffect } from '@/utils/windowEffect';
 
 // 导入布局组件
 import Header from './layouts/Header/index.vue';
