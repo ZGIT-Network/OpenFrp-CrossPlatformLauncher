@@ -479,4 +479,4 @@ jobs:
       - name: Write Tauri private key for updater signature
         if: env.TAURI_SIGNING_PRIVATE_KEY != ''
         run: |
-          echo "$TAURI_SIGNING_PRIVATE_KEY" > src-tauri/private.key
+          echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > src-tauri/private.key
