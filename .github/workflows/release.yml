@@ -14,19 +14,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-22.04, windows-latest]
+        platform: [macos-latest, ubuntu-latest, windows-latest]
         arch: [x64, arm64]
         exclude:
           - platform: macos-latest
             arch: x64
           - platform: macos-latest
             arch: arm64
-          - platform: ubuntu-22.04
+          - platform: ubuntu-latest
             arch: arm64
         include:
           - platform: macos-latest
             arch: universal
-          
     runs-on: ${{ matrix.platform }}
     env:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -53,10 +52,10 @@ jobs:
           shared-key: "tauri-build-${{ matrix.platform }}-${{ matrix.arch || 'x64' }}"
 
       - name: Install Dependencies (ubuntu only)
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-0 libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
 
       - name: Install frontend dependencies
         run: npm install
@@ -72,7 +71,7 @@ jobs:
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
 
       - name: Build the app (Standard x64)
-        if: matrix.arch == 'x64' && matrix.platform != 'ubuntu-latest'
+        if: matrix.arch == 'x64'
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
@@ -82,19 +81,6 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
-
-      - name: Build the app (Linux x64, Docker Ubuntu 20.04)
-        if: matrix.arch == 'x64' && matrix.platform == 'ubuntu-22.04'
-        run: |
-          docker run --rm -v $PWD:/workspace -w /workspace ubuntu:20.04 bash -c '
-            apt-get update && \
-            apt-get install -y build-essential curl libgtk-3-dev libwebkit2gtk-4.1-0 libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev nodejs npm libjavascriptcoregtk-4.1-dev libsoup-3.0-dev && \
-            export PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig:$PKG_CONFIG_PATH && \
-            curl https://sh.rustup.rs -sSf | sh -s -- -y && \
-            . $HOME/.cargo/env && \
-            npm install && \
-            npm run tauri build
-          '
 
       - name: Upload x64 artifacts
         if: matrix.arch == 'x64'
@@ -489,3 +475,25 @@ jobs:
           gh release upload ${{ github.ref_name }} update.json --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build AppImage in Ubuntu 20.04 Docker (x64)
+        if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'x64'
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/workspace" -w /workspace ubuntu:20.04 bash -c "\
+            apt-get update && \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y curl build-essential libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev ca-certificates npm && \
+            curl https://sh.rustup.rs -sSf | bash -s -- -y && \
+            source $HOME/.cargo/env && \
+            npm install && \
+            npm run tauri build -- --bundles appimage\
+          "
+
+      - name: Upload x64 artifacts (docker)
+        if: matrix.platform == 'ubuntu-latest' && matrix.arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-x64-artifacts
+          path: |
+            src-tauri/gen/*/metadata.json
+            src-tauri/target/**/release/bundle/appimage/*.AppImage
+          if-no-files-found: warn
