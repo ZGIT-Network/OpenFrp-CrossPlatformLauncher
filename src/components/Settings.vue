@@ -137,6 +137,13 @@ onMounted(() => {
     getCurrentVersion()
     checkAutoStartSettings()
     checkDeepLinkStatus()
+
+    // 初始化高斯模糊特效
+    if (enableGaussianBlur.value) {
+        document.body.classList.add('gaussian-blur-enabled');
+    } else {
+        document.body.classList.remove('gaussian-blur-enabled');
+    }
 })
 
 // 监听自动启动状态变化
@@ -657,6 +664,35 @@ onMounted(async () => {
     // ... existing code ...
     await getAppDataDir();
 });
+
+const enableBlur = ref(localStorage.getItem('enableBlur') !== 'false'); // 默认开启毛玻璃
+
+watch(enableBlur, (val) => {
+  localStorage.setItem('enableBlur', val ? 'true' : 'false');
+  // 触发全局样式切换
+  document.body.classList.toggle('blur-enabled', val);
+});
+
+// 高斯模糊特效开关
+const enableGaussianBlur = ref(localStorage.getItem('enableGaussianBlur') !== 'false'); // 默认开启
+
+watch(enableGaussianBlur, (val) => {
+  localStorage.setItem('enableGaussianBlur', val ? 'true' : 'false');
+  if (val) {
+    document.body.classList.add('gaussian-blur-enabled');
+  } else {
+    document.body.classList.remove('gaussian-blur-enabled');
+  }
+});
+
+onMounted(() => {
+  // 初始化高斯模糊特效
+  if (enableGaussianBlur.value) {
+    document.body.classList.add('gaussian-blur-enabled');
+  } else {
+    document.body.classList.remove('gaussian-blur-enabled');
+  }
+});
 </script>
 
 <template>
@@ -844,6 +880,11 @@ onMounted(async () => {
                                             </n-icon>
                                         </template>
                                     </n-button>
+                                </n-space>
+                                <!-- 高斯模糊特效开关 -->
+                                <n-space align="center">
+                                    <n-switch v-model:value="enableGaussianBlur" disabled/>
+                                    <span>高斯模糊视觉特效（窗口需支持透明）</span>
                                 </n-space>
                             </n-space>
                         </n-collapse-item>

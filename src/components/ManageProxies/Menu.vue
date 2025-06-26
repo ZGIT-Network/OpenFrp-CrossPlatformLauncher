@@ -39,6 +39,11 @@ const options = [
     icon: renderIcon(RefreshOutline),
   },
   {
+    label: '启用/禁用隧道',
+    key: 'stateChange',
+    icon: renderIcon(PlayOutline),
+  },
+  {
     key: 'menu-divider',
     type: 'divider',
   },

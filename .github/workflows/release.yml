@@ -55,7 +55,17 @@ jobs:
         if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev musl-tools
+
+      - name: Add musl target (ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+
+      - name: Set RUSTFLAGS for static linking (ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        run: |
+          echo "RUSTFLAGS='-C target-feature=+crt-static'" >> $GITHUB_ENV
 
       - name: Install frontend dependencies
         run: npm install
@@ -71,7 +81,7 @@ jobs:
           echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
 
       - name: Build the app (Standard x64)
-        if: matrix.arch == 'x64'
+        if: matrix.arch == 'x64' && matrix.platform != 'ubuntu-latest'
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
@@ -81,6 +91,19 @@ jobs:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
           includeUpdaterJson: true
+
+      - name: Build the app (Linux x64 static)
+        if: matrix.arch == 'x64' && matrix.platform == 'ubuntu-latest'
+        uses: tauri-apps/tauri-action@v0
+        with:
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          includeRelease: true
+          includeUpdaterJson: true
+          args: --target x86_64-unknown-linux-musl
 
       - name: Upload x64 artifacts
         if: matrix.arch == 'x64'

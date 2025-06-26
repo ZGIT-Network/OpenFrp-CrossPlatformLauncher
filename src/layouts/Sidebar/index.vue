@@ -141,4 +141,10 @@ watch(() => route.name, (newRouteName) => {
 .n-menu {
   height: 100%;
 }
+
+.n-layout-sider {
+  background-color: rgba(250,250,250, 0.01);
+  backdrop-filter: blur(10px);    /* 模糊强度 */
+  -webkit-backdrop-filter: blur(10px); /* Safari 兼容 */
+}
 </style>

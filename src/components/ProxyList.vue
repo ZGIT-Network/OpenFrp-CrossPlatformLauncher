@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted,h, computed, nextTick, watch,inject,Ref } from 'vue'
-import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider } from 'naive-ui'
+import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification,useLoadingBar, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
@@ -13,6 +13,7 @@ import frpApiGetUserProxies from '@/requests/frpApi/frpApiGetUserProxies';
 import frpApiRemoveProxy from '@/requests/frpApi/frpApiRemoveProxy';
 import frpApiEditProxy from '@/requests/frpApi/frpApiEditProxy';
 import frpApiForceOff from '@/requests/frpApi/frpApiForceOff';
+import frpApiChangeProxy from '@/requests/frpApi/frpApiChangeProxy'
 import { BuildOutline, CreateOutline, InformationOutline, TrashOutline, RefreshOutline, CloudOfflineOutline, DocumentOutline, CopyOutline } from '@vicons/ionicons5'
 
 // 导入现有组件
@@ -21,6 +22,7 @@ import Infomation from '@/components/ManageProxies/Infomation.vue';
 import GetConf from '@/components/ManageProxies/GetConf.vue';
 import Menu from '@/components/ManageProxies/Menu.vue';
 import copy from 'copy-to-clipboard';
+
 
 // 扩展Window接口，添加全局属性
 declare global {
@@ -35,6 +37,7 @@ const dialog = useDialog()
 const tunnels = ref<any[]>([])
 const loading = ref(false)
 const loadingTunnels = ref<Set<string>>(new Set())
+const loadingBar = useLoadingBar();
 
 const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
 const userInfo = userInfoObj?.userInfo;
@@ -130,6 +133,8 @@ const requestNotificationPermission = async () => {
     return false
   }
 }
+
+
 
 const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
@@ -546,6 +551,32 @@ const getDisabledReason = (tunnel: any) => {
   return '';
 }
 
+const changeUserProxyAsync = async (proxyId: bigint, method: boolean) => {
+  loadingBar.start();
+  try {
+    const res = await frpApiChangeProxy({
+      proxy_id: proxyId,
+      proxy_do: method,
+    });
+    
+    if (res.flag) {
+      loadingBar.finish();
+      fetchProxyList();
+      message.success(`隧道 #${proxyId}  已${method ? '启用' : '禁用'}`);
+      return true;
+    } else {
+      message.info(res.msg);
+      loadingBar.error();
+    }
+  } catch (error) {
+    if (error instanceof Error) {
+      message.error(error.message);
+      loadingBar.error();
+    }
+  }
+  return false;
+};
+
 const renderIcon = (icon: any) => {
   return () => h(NIcon, null, { default: () => h(icon) })
 }
@@ -555,6 +586,11 @@ const handleOnSelected = (key: string, row: any) => {
     case 'refreshState': {
       // 刷新隧道状态
       fetchProxyList();
+      break;
+    }
+    case 'stateChange': {
+      // 切换隧道状态
+      changeUserProxyAsync(row.id, !row.apiStatus);
       break;
     }
     case 'getConf': {

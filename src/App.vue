@@ -6,6 +6,7 @@ import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationPro
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import { useRouter, useRoute } from 'vue-router';
+import { setWindowBlurEffect } from '@/utils/windowEffect';
 
 // 导入布局组件
 import Header from './layouts/Header/index.vue';
@@ -138,13 +139,13 @@ onMounted(async () => {
       appendLog(event.payload.message);
     });
     cleanupFunctions.value.push(globalLogUnlisten);
-    
     // 其他监听器...
-    
     isLogSystemInitialized.value = true;
   } catch (e) {
     console.error('初始化日志系统失败:', e);
   }
+
+ 
 });
 
 onUnmounted(() => {
@@ -220,11 +221,13 @@ body {
   padding: 0;
   height: 100%;
   width: 100%;
+  
 }
 
 #app {
   height: 100%;
   width: 100%;
+  
 }
 
 .n-layout-content {
@@ -293,5 +296,72 @@ body {
 
 .actual-light {
   color-scheme: light;
+}
+
+/* 高斯模糊视觉特效，兼容 Naive UI 深色/亮色模式 */
+body,
+#app,
+.n-layout,
+.n-layout-content,
+.n-layout-sider,
+.n-layout-header {
+  background: transparent !important;
+}
+
+body.blur-enabled .n-layout,
+body.blur-enabled .n-layout-content,
+body.blur-enabled .n-layout-sider,
+body.blur-enabled .n-layout-header {
+  /* 亮色高斯模糊 */
+  background: rgba(255,255,255,0.18) !important;
+  filter: blur(0px); /* 兼容性兜底 */
+  backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
+  transition: background 0.3s;
+}
+body.actual-dark.blur-enabled .n-layout,
+body.actual-dark.blur-enabled .n-layout-content,
+body.actual-dark.blur-enabled .n-layout-sider,
+body.actual-dark.blur-enabled .n-layout-header {
+  /* 深色高斯模糊 */
+  background: rgba(30,34,40,0.32) !important;
+  filter: blur(0px);
+  backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
+  -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
+}
+body:not(.blur-enabled) .n-layout,
+body:not(.blur-enabled) .n-layout-content,
+body:not(.blur-enabled) .n-layout-sider,
+body:not(.blur-enabled) .n-layout-header {
+  background: unset !important;
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* 高斯模糊特效（全局，兼容深色/NaiveUI） */
+body.gaussian-blur-enabled .n-layout,
+body.gaussian-blur-enabled .n-layout-content,
+body.gaussian-blur-enabled .n-layout-sider,
+body.gaussian-blur-enabled .n-layout-header {
+  background: rgba(255,255,255,0.12) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  transition: background 0.3s;
+}
+body.actual-dark.gaussian-blur-enabled .n-layout,
+body.actual-dark.gaussian-blur-enabled .n-layout-content,
+body.actual-dark.gaussian-blur-enabled .n-layout-sider,
+body.actual-dark.gaussian-blur-enabled .n-layout-header {
+  background: rgba(30,34,40,0.22) !important;
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+body:not(.gaussian-blur-enabled) .n-layout,
+body:not(.gaussian-blur-enabled) .n-layout-content,
+body:not(.gaussian-blur-enabled) .n-layout-sider,
+body:not(.gaussian-blur-enabled) .n-layout-header {
+  background: var(--n-color) !important;
+
 }
 </style>

@@ -122,7 +122,7 @@ async function initAutoRestoreTunnels() {
         }
       });
       
-      message.info('正在自启动隧道')
+      
       
       // 获取保存的隧道状态
       const savedStates = localStorage.getItem('tunnelStates');
@@ -146,6 +146,7 @@ async function initAutoRestoreTunnels() {
               message: '自启动模式，开始恢复隧道...'
             }
           });
+          message.info('正在自启动隧道')
           
           // 初始化日志系统（隐式加载）
           const initLogSystem = async () => {
@@ -755,6 +756,9 @@ const toggleDarkMode = () => {
   justify-content: space-between;
   align-items: center;
   padding: 0 5px;
+  background-color: rgba(255,255,255,0.01);
+  backdrop-filter: blur(10px);    
+  -webkit-backdrop-filter: blur(10px); 
 }
 
 .header-left {

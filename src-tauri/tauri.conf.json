@@ -15,7 +15,8 @@
         "title": "OpenFrp Cross Platform Launcher",
         "width": 1205,
         "height": 650,
-        "decorations": false
+        "decorations": false,
+        "transparent": true
       }
     ],
     "security": {
