@@ -81,13 +81,14 @@ fn compare_versions(current: &str, remote: &str) -> bool {
     remote_parts.len() > current_parts.len()
 }
 
+#[tauri::command]
 // 下载并安装更新
-pub async fn download_and_install_update(app_handle: AppHandle) -> Result<(), Box<dyn Error>> {
+pub async fn download_and_install_update(app_handle: AppHandle) -> Result<(), String> {
     // 使用 Tauri 的更新器 API
-    let updater = app_handle.updater()?;
+    let updater = app_handle.updater().map_err(|e| e.to_string())?;
     
     // 检查更新
-    let update = updater.check().await?;
+    let update = updater.check().await.map_err(|e| e.to_string())?;
     
     if let Some(update) = update {
         // 设置进度监听器
@@ -172,17 +173,17 @@ pub async fn download_and_install_update(app_handle: AppHandle) -> Result<(), Bo
                     Err(e) => {
                         println!("更新安装失败: {}", e);
                         let _ = app_handle.emit("update-error", format!("更新安装失败: {}", e));
-                        Err(e.into())
+                        Err(e.to_string())
                     }
                 }
             },
             Err(e) => {
                 println!("更新下载失败: {}", e);
                 let _ = app_handle.emit("update-error", format!("更新下载失败: {}", e));
-                Err(e.into())
+                Err(e.to_string())
             }
         }
     } else {
-        Err("没有可用的更新".into())
+        Err("没有可用的更新".to_string())
     }
 }

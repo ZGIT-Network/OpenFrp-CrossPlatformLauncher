@@ -65,6 +65,9 @@ const byteFormat = (num: number) => {
 
 
 const message = useMessage()
+let downloadingMsg: ReturnType<typeof message.loading> | null = null
+let downloadingPercent = ref(0)
+
 const dialog = useDialog()
 
 const downloading = ref(false)
@@ -278,7 +281,7 @@ const checkUpdate = async () => {
     try {
         const update = await invoke('check_update') as CplUpdate
         if (update) {
-            dialog.info({
+            const updateDialog = dialog.info({
                 title: update.title,
                 content: () =>
                     h('div', [
@@ -291,13 +294,29 @@ const checkUpdate = async () => {
                 positiveText: '立即更新',
                 negativeText: '取消',
                 onPositiveClick: async () => {
+                    updateDialog.destroy();
                     try {
-                        message.loading('正在下载更新...', { duration: 0 })
-                        await invoke('download_and_update')
+                        if (downloadingMsg) downloadingMsg.destroy()
+                        downloadingPercent.value = 0
+                        downloadingMsg = message.loading(
+                          `正在下载更新...`,
+                          { duration: 0 }
+                        )
+                        
+                        await invoke('download_and_install_update')
+                        if (downloadingMsg) {
+                          downloadingMsg.destroy()
+                          downloadingMsg = null
+                        }
                         message.success('更新已下载完成，重启应用后生效')
                     } catch (e) {
-                        message.error(`更新失败: ${e}`)
+                        if (downloadingMsg) {
+                          downloadingMsg.destroy()
+                          downloadingMsg = null
+                        }
+                        // message.error(`更新失败: ${e}`)
                     }
+                    
                 }
             })
         } else {
@@ -692,6 +711,33 @@ onMounted(() => {
   } else {
     document.body.classList.remove('gaussian-blur-enabled');
   }
+});
+
+// 监听自动更新进度与结果
+onMounted(() => {
+  listen('update-progress', (event) => {
+    const percent = parseFloat(String(event.payload).replace('%', ''))
+    if (!isNaN(percent)) {
+      downloadingPercent.value = Math.round(percent)
+      if (downloadingMsg) {
+        downloadingMsg.content = () => `正在下载更新... ${downloadingPercent.value}%`
+      }
+    }
+  })
+  listen('update-error', (event) => {
+    if (downloadingMsg) {
+      downloadingMsg.destroy()
+      downloadingMsg = null
+    }
+    // message.error(event.payload as string)
+  })
+  listen('update-success', (event) => {
+    if (downloadingMsg) {
+      downloadingMsg.destroy()
+      downloadingMsg = null
+    }
+    // message.success(event.payload as string || '更新已下载完成，重启应用后生效')
+  })
 });
 </script>
 

@@ -233,6 +233,8 @@ onMounted(async () => {
 const dialog = useDialog()
 import './style.less';
 const message = useMessage()
+let downloadingMsg: ReturnType<typeof message.loading> | null = null
+let downloadingPercent = ref(0)
 
 let unlistenNeedDownload: any = null
 
@@ -520,12 +522,30 @@ onMounted(async () => {
             onClick: async () => {
               notificationInstance.destroy()
               try {
-                await invoke('download_and_update')
+                if (downloadingMsg) downloadingMsg.destroy()
+                downloadingPercent.value = 0
+                downloadingMsg = message.loading(
+                  () => h('span', [
+                    '正在下载更新... ',
+                    downloadingPercent.value > 0 ? `${downloadingPercent.value}%` : ''
+                  ]),
+                  { duration: 0 }
+                )
+                await invoke('download_and_install_update')
+                if (downloadingMsg) {
+                  downloadingMsg.destroy()
+                  downloadingMsg = null
+                }
+                message.success('更新已下载完成，重启应用后生效')
               } catch (e) {
-                notification.error({
-                  title: '更新失败',
-                  content: String(e)
-                })
+                if (downloadingMsg) {
+                  downloadingMsg.destroy()
+                  downloadingMsg = null
+                }
+                // notification.error({
+                //   title: '更新失败',
+                //   content: String(e)
+                // })
               }
             },
             style: 'margin-top: 8px;'
@@ -537,6 +557,42 @@ onMounted(async () => {
   } catch (e) {
     console.error('检查更新失败:', e)
   }
+
+  // 监听进度
+  await listen('update-progress', (event) => {
+    const percent = parseFloat(String(event.payload).replace('%', ''))
+    if (!isNaN(percent)) {
+      downloadingPercent.value = Math.round(percent)
+      if (downloadingMsg) {
+        downloadingMsg.content = () => h('span', [
+          '正在下载更新... ',
+          `${downloadingPercent.value}%`
+        ])
+      }
+    }
+  })
+  // 监听错误
+  await listen('update-error', (event) => {
+    if (downloadingMsg) {
+      downloadingMsg.destroy()
+      downloadingMsg = null
+    }
+    notification.error({
+      title: '更新失败',
+      content: String(event.payload)
+    })
+  })
+  // 监听成功
+  await listen('update-success', (event) => {
+    if (downloadingMsg) {
+      downloadingMsg.destroy()
+      downloadingMsg = null
+    }
+    // notification.success({
+    //   title: '更新完成',
+    //   content: String(event.payload || '更新已下载完成，重启应用后生效')
+    // })
+  })
 
   unlistenNeedDownload = await listen('need_download', async () => {
     const notificationInstance = notification.warning({

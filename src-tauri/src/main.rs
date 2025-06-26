@@ -23,10 +23,12 @@ use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
 use tauri::{command, Emitter, Runtime, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+
 use tauri_plugin_deep_link;
 // use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater;
 use crate::update::UpdateInfo;
+use crate::update::download_and_install_update;
 use tauri::Listener;
 mod api_proxy;
 mod update; // 添加这一行
@@ -1272,6 +1274,7 @@ fn main() {
             get_app_data_dir,
             open_app_data_dir,
             get_local_ports, // 新增端口扫描命令
+            download_and_install_update,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
