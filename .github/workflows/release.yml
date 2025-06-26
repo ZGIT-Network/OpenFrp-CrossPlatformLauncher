@@ -475,3 +475,8 @@ jobs:
           gh release upload ${{ github.ref_name }} update.json --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write Tauri private key for updater signature
+        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
+        run: |
+          echo "$TAURI_SIGNING_PRIVATE_KEY" > src-tauri/private.key
