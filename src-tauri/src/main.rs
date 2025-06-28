@@ -1167,7 +1167,7 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
     #[cfg(not(target_os = "windows"))]
     {
         use std::collections::HashMap;
-        let output = std::process::Command::new("netstat").args(["-tunlp"]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
+        let output = std::process::Command::new("netstat").args(["-tunlp"]).output().map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tcp_ports = Vec::new();
         let mut udp_ports = Vec::new();
