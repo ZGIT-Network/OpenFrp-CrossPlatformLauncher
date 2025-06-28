@@ -72,16 +72,15 @@
       "certificateThumbprint": null,
       "digestAlgorithm": null,
       "timestampUrl": null,
+      "wix": {
+        "language": ["en-US","zh-CN"]
+      },
       "nsis": {
         "installMode": "both",
         "displayLanguageSelector": true,
         "compression": "lzma",
         "languages": ["SimpChinese", "TradChinese", "English", "Japanese"],
         "installerIcon": "icons/desktop.ico"
-      },
-      
-       "wix": {
-        "language": "zh-CN"
       },
       "webviewInstallMode": {
         "type": "downloadBootstrapper",

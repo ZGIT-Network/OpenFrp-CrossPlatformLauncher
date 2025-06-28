@@ -177,6 +177,7 @@ jobs:
             src-tauri/gen/universal-apple-darwin/metadata.json
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
+              src-tauri/target/universal-apple-darwin/release/bundle/**/*.tar.gz
             src-tauri/target/*.dmg
             src-tauri/target/*.zip
           if-no-files-found: warn
@@ -431,7 +432,7 @@ jobs:
               },
               "darwin-universal": {
                 "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg"
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.tar.gz"
               },
               "linux-x86_64": {
                 "signature": "",
@@ -475,8 +476,3 @@ jobs:
           gh release upload ${{ github.ref_name }} update.json --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Write Tauri private key for updater signature
-        if: env.TAURI_SIGNING_PRIVATE_KEY != ''
-        run: |
-          echo "$TAURI_SIGNING_PRIVATE_KEY" | base64 -d > src-tauri/private.key
