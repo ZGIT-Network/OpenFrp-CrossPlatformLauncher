@@ -282,6 +282,9 @@ const isSuccessLog = (log: string): boolean => {
   const successPatterns = [
     /start.*success/i,          // 匹配 "start xxx success"
     /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
+    /隧道.*启动成功/i,         // 中文启动成功消息，如"隧道 [newsrdp] 启动成功"
+    /success for proxy/i,
+    /proxy.*start.*success/i    // 代理启动成功
   ]
   return successPatterns.some(pattern => pattern.test(log))
 }
@@ -385,28 +388,36 @@ const handleDeepLink = async (url: string) => {
 
       // 等待日志响应
       const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
+        let resolved = false;
         const timeout = setTimeout(async () => {
-          // 超时时检查隧道是否实际在运行
+          if (resolved) return;
+          resolved = true;
+          // 超时后检查隧道是否实际在运行
           try {
             const isRunning = await invoke('check_frpc_status', { id: proxyId })
             if (isRunning) {
-              resolve({ success: true, message: '隧道已启动' })
+              resolve({ success: false, message: '进程已运行但未收到日志事件，启动结果未知' })
             } else {
               resolve({ success: false, message: '启动超时，请检查日志。' })
+              message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
             }
           } catch (e) {
             resolve({ success: false, message: '启动超时，请检查日志。' })
+            message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
           }
+          logListener.then(unlisten => unlisten())
         }, 5000)
 
         const logListener = listen(`frpc-log-${proxyId}`, (event: any) => {
+          if (resolved) return;
           const log = event.payload.message
-
           if (isSuccessLog(log)) {
+            resolved = true;
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
             resolve({ success: true, message: log })
           } else if (log.includes('启动失败')) {
+            resolved = true;
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
             const errorMatch = log.match(/启动失败:\s*(.+)/)
@@ -415,16 +426,14 @@ const handleDeepLink = async (url: string) => {
           }
         })
 
-        // 先检查是否已经在运行
+        // 先检查是否已经在运行（不再直接判定为 success，只做提示）
         invoke('check_frpc_status', { id: proxyId })
           .then(isRunning => {
             if (isRunning) {
-              clearTimeout(timeout)
-              logListener.then(unlisten => unlisten())
-              resolve({ success: true, message: '隧道已在运行' })
+              // 不再直接 resolve success，只等日志事件
+              // 可选：可在此处提示“进程已在运行，等待日志事件..."
               return
             }
-
             // 如果没有运行，则启动隧道
             return invoke('start_frpc_instance', {
               id: proxyId,
@@ -436,6 +445,8 @@ const handleDeepLink = async (url: string) => {
             })
           })
           .catch((error) => {
+            if (resolved) return;
+            resolved = true;
             clearTimeout(timeout)
             logListener.then(unlisten => unlisten())
             resolve({ success: false, message: String(error) })

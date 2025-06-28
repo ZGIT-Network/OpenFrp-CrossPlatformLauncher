@@ -27,7 +27,7 @@ pub async fn proxy_api(
     // 添加统一的 User-Agent
     let os_name = std::env::consts::OS;
     let version = env!("CARGO_PKG_VERSION");
-    let user_agent = format!("OpenFrp-CPL-{}/{}", version, os_name);
+    let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
     request_builder = request_builder.header("User-Agent", &user_agent);
 
     // 添加请求头

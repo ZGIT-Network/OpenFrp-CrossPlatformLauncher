@@ -40,15 +40,15 @@ const toggleCollapse = (value: boolean) => {
 // 菜单配置
 const menuOptions = computed(() => [
   {
-    label: () => h(RouterLink, { to: { name: 'Home' } }, { default: () => '主页' }),
+    label: () => h(RouterLink, { to: { name: 'Home' } }, () => '主页'),
     key: 'home',
     icon: () => h(HomeOutline)
   },
   {
     label: () => {
       // 根据登录状态决定是否使用RouterLink或普通span
-      return isLoggedIn.value 
-        ? h(RouterLink, { to: { name: 'CreateProxy' } }, { default: () => '新建隧道' })
+      return isLoggedIn.value
+        ? h(RouterLink, { to: { name: 'CreateProxy' } }, () => '新建隧道')
         : h('span', { class: 'disabled-menu-item' }, '新建隧道');
     },
     key: 'newproxy',
@@ -56,15 +56,15 @@ const menuOptions = computed(() => [
     disabled: !isLoggedIn.value
   },
   {
-    label: () => h(RouterLink, { to: { name: 'ProxyList' } }, { default: () => '隧道管理' }),
+    label: () => h(RouterLink, { to: { name: 'ProxyList' } }, () => '隧道管理'),
     key: 'proxylist',
     icon: () => h(BuildOutline)
   },
   // {
   //   label: () => {
   //     // 根据登录状态决定是否使用RouterLink或普通span
-  //     return isLoggedIn.value 
-  //       ? h(RouterLink, { to: { name: 'NodeStatus' } }, { default: () => '节点状态' })
+  //     return isLoggedIn.value
+  //       ? h(RouterLink, { to: { name: 'NodeStatus' } }, () => '节点状态')
   //       : h('span', { class: 'disabled-menu-item' }, '节点状态');
   //   },
   //   key: 'NodeStatus',
@@ -72,27 +72,22 @@ const menuOptions = computed(() => [
   //   disabled: !isLoggedIn.value
   // },
   {
-    label: () => h(RouterLink, { to: { name: 'FrpcManager' } }, { default: () => '日志' }),
+    label: () => h(RouterLink, { to: { name: 'FrpcManager' } }, () => '日志'),
     key: 'frpc',
     icon: () => h(TerminalOutline)
   },
   {
-    label: () => h(RouterLink, { to: { name: 'Settings' } }, { default: () => '设置' }),
+    label: () => h(RouterLink, { to: { name: 'Settings' } }, () => '设置'),
     key: 'settings',
     icon: () => h(SettingsOutline)
   },
   {
-    label: () => h(RouterLink, { to: { name: 'Info' } }, { default: () => '关于' }),
+    label: () => h(RouterLink, { to: { name: 'Info' } }, () => '关于'),
     key: 'info',
     icon: () => h(InformationOutline)
   },
   {
-    label: () => h('div', { 
-      style: 'cursor: pointer;',
-      onClick: async() => {
-        await openUrl('https://console.openfrp.net/fastlogin?auth='+Coockies.get('authorization'))
-        }
-    }, { default: () => '打开网页面板' }),
+    label: '打开网页面板',
     key: 'webpanel',
     icon: () => h(EnterOutline)
   }
@@ -101,12 +96,30 @@ const menuOptions = computed(() => [
 // 设置默认选中的菜单项
 const selectedKey = ref('home');
 
+// 处理菜单点击事件
+const handleMenuSelect = async (key: string) => {
+  if (key === 'webpanel') {
+    try {
+      const auth = Coockies.get('authorization');
+      if (auth) {
+        await openUrl('https://console.openfrp.net/fastlogin?auth=' + auth);
+      } else {
+        await openUrl('https://console.openfrp.net/');
+      }
+    } catch (error) {
+      console.error('打开网页面板失败:', error);
+    }
+  } else {
+    selectedKey.value = key;
+  }
+};
+
 // 监听路由变化，更新选中的菜单项
 watch(() => route.name, (newRouteName) => {
   if (newRouteName) {
     // 将路由名称转换为小写，以匹配菜单key
     const routeKey = newRouteName.toString().toLowerCase();
-    
+
     // 检查是否有匹配的菜单项
     const menuItem = menuOptions.value.find(item => item.key === routeKey);
     if (menuItem) {
@@ -127,12 +140,13 @@ watch(() => route.name, (newRouteName) => {
     @collapse="toggleCollapse(true)" 
     @expand="toggleCollapse(false)"
   >
-    <n-menu 
-      :collapsed="props.collapsed" 
-      :collapsed-width="64" 
-      :collapsed-icon-size="22" 
+    <n-menu
+      :collapsed="props.collapsed"
+      :collapsed-width="64"
+      :collapsed-icon-size="22"
       :options="menuOptions"
-      v-model:value="selectedKey" 
+      v-model:value="selectedKey"
+      @update:value="handleMenuSelect"
     />
   </n-layout-sider>
 </template>

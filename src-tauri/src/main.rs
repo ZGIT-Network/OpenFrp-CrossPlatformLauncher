@@ -92,7 +92,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.1".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.2".to_string()));
         }
 
         // 更新版本号
@@ -213,6 +213,15 @@ fn save_config(config: &Config) -> Result<(), String> {
 #[command]
 async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
     let os = std::env::consts::OS;
+    
+    let os_name = os;
+    let version = env!("CARGO_PKG_VERSION");
+    let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
+    let client = reqwest::Client::builder()
+        .user_agent(&user_agent)
+        .build()
+        .map_err(|e| e.to_string())?;
+
     let os_name = match os {
         "windows" => "windows",
         "linux" => "linux",
@@ -243,7 +252,8 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = reqwest::get("https://api.openfrp.net/commonQuery/get?key=software")
+    let response = client.get("https://api.openfrp.net/commonQuery/get?key=software")
+        .send()
         .await
         .map_err(|e| e.to_string())?;
 
@@ -319,7 +329,8 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = reqwest::get(&download_url)
+    let response = client.get(&download_url)
+        .send()
         .await
         .map_err(|e| e.to_string())?;
 
@@ -963,7 +974,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.5.1".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.5.2".to_string()))
 }
 
 #[tauri::command]
@@ -1110,13 +1121,13 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
         use std::collections::HashMap;
-        let output = std::process::Command::new("netstat").args(["-ano"]).output().map_err(|e| e.to_string())?;
+        let output = std::process::Command::new("netstat").args(["-ano"]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tcp_ports = Vec::new();
         let mut udp_ports = Vec::new();
         let mut pid_map: HashMap<u32, String> = HashMap::new();
         // 获取进程名
-        if let Ok(tasklist) = std::process::Command::new("tasklist").output() {
+        if let Ok(tasklist) = std::process::Command::new("tasklist").creation_flags(CREATE_NO_WINDOW).output() {
             let taskout = String::from_utf8_lossy(&tasklist.stdout);
             for line in taskout.lines().skip(3) {
                 let parts: Vec<_> = line.split_whitespace().collect();
@@ -1156,7 +1167,7 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
     #[cfg(not(target_os = "windows"))]
     {
         use std::collections::HashMap;
-        let output = std::process::Command::new("netstat").args(["-tunlp"]).output().map_err(|e| e.to_string())?;
+        let output = std::process::Command::new("netstat").args(["-tunlp"]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tcp_ports = Vec::new();
         let mut udp_ports = Vec::new();

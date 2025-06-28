@@ -25,9 +25,7 @@ const renderIcon = (icon: Component, size = '16px') => {
     return h(
       NIcon,
       { size },
-      {
-        default: () => h(icon),
-      },
+      () => h(icon)
     );
   };
 };

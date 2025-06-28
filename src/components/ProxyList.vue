@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted,h, computed, nextTick, watch,inject,Ref } from 'vue'
-import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification,useLoadingBar, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider } from 'naive-ui'
+import { ref, onMounted, onUnmounted, h, computed, nextTick, watch, inject, Ref } from 'vue'
+import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, useLoadingBar, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
@@ -14,7 +14,7 @@ import frpApiRemoveProxy from '@/requests/frpApi/frpApiRemoveProxy';
 import frpApiEditProxy from '@/requests/frpApi/frpApiEditProxy';
 import frpApiForceOff from '@/requests/frpApi/frpApiForceOff';
 import frpApiChangeProxy from '@/requests/frpApi/frpApiChangeProxy'
-import { BuildOutline, CreateOutline, InformationOutline, TrashOutline, RefreshOutline, CloudOfflineOutline, DocumentOutline, CopyOutline } from '@vicons/ionicons5'
+import { Refresh, BuildOutline, CreateOutline, InformationOutline, TrashOutline, RefreshOutline, CloudOfflineOutline, DocumentOutline, CopyOutline } from '@vicons/ionicons5'
 
 // 导入现有组件
 import Edit from '@/components/ManageProxies/Edit.vue';
@@ -61,16 +61,16 @@ const fetchProxyList = async () => {
   loading.value = true
   try {
     const response = await frpApiGetUserProxies();
-    
+
     if (response.flag) {
       tunnels.value = response.data.list.map(proxy => {
         const local = `${proxy.localIp}:${proxy.localPort}`;
-        
+
         let remote = proxy.connectAddress;
         if (proxy.proxyType !== 'http' && proxy.proxyType !== 'https' && !remote.includes(':')) {
           remote = `${remote}:${proxy.remotePort}`;
         }
-        
+
         return {
           id: proxy.id,
           name: proxy.proxyName,
@@ -94,7 +94,7 @@ const fetchProxyList = async () => {
           nodeHostname: proxy.nodeHostname
         };
       });
-      
+
       tunnels.value.sort((a, b) => a.id - b.id)
 
       loadTunnelStates()
@@ -176,6 +176,8 @@ const copyToClipboard = async (text: string) => {
 }
 
 const startTunnel = async (tunnel: any) => {
+  // 启动前通知日志页面注册监听器
+  window.dispatchEvent(new CustomEvent('setup-tunnel-listener', { detail: { tunnelId: tunnel.id.toString() } }));
   console.log(`开始启动隧道 ${tunnel.id}`)
 
   // 如果已经在运行，不重复启动
@@ -186,7 +188,7 @@ const startTunnel = async (tunnel: any) => {
 
   // 设置加载状态
   loadingTunnels.value.add(tunnel.id.toString())
-  
+
   // 设置状态为启动中
   tunnel.status = 'starting'
 
@@ -210,76 +212,52 @@ const startTunnel = async (tunnel: any) => {
 
   try {
     // 等待日志响应
-    const result = await new Promise<{success: boolean, message: string}>((resolve) => {
-      // 设置超时检查
+    const result = await new Promise<{ success: boolean, message: string }>((resolve) => {
       let timeout: any = null;
-      
-      // 用于检测隧道是否成功启动
-      const checkSuccess = async () => {
-        try {
-          const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
-          console.log(`隧道${tunnel.id}状态检查:`, isRunning)
-          if (isRunning) {
-            resolve({success: true, message: '隧道已成功运行'})
-            if (timeout) clearTimeout(timeout)
-          }
-        } catch (e) {
-          console.error(`检查隧道状态出错:`, e)
-        }
-      }
-      
-      // 每5秒检查一次隧道状态，持续30秒
-      let checkAttempts = 0
-      const maxAttempts = 6
-      const checkInterval = setInterval(async () => {
-        if (checkAttempts >= maxAttempts) {
-          clearInterval(checkInterval)
-          return
-        }
-        checkAttempts++
-        await checkSuccess()
-      }, 5000)
-      
+      let resolved = false;
       // 定义成功回调
       const successEventListener = (event: any) => {
+        if (resolved) return;
+        resolved = true;
         const msg = event.detail?.message || '隧道启动成功'
         console.log(`收到隧道${tunnel.id}成功事件:`, msg)
-        resolve({success: true, message: msg})
+        resolve({ success: true, message: msg })
         if (timeout) clearTimeout(timeout)
-        clearInterval(checkInterval)
+        window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
       }
-      
       // 监听成功事件
       window.addEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-      
-      // 设置30秒超时
+      // 设置25秒超时
       timeout = setTimeout(async () => {
+        if (resolved) return;
+        resolved = true;
         console.log(`隧道${tunnel.id}启动检查超时`)
-        // 超时时再做一次状态检查
+        // 超时后检查状态，但不再判定为 success，只判定为失败
         try {
           const isRunning = await invoke('check_frpc_status', { id: tunnel.id.toString() })
           if (isRunning) {
-            resolve({success: true, message: '隧道已在运行'})
+            // 进程已运行但无日志事件，判定为失败（不弹窗）
+            resolve({ success: false, message: '进程已运行但未收到日志事件，启动结果未知' })
+            message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
           } else {
-            resolve({success: false, message: '启动超时，请稍后查看状态'})
+            resolve({ success: false, message: '启动超时，请检查日志' })
+            message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
           }
         } catch (e) {
-          resolve({success: false, message: `启动超时: ${e}`})
+          resolve({ success: false, message: `启动超时: ${e}` })
+          message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
         }
-        clearInterval(checkInterval)
         window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-      }, 30000)
-      
+      }, 25000)
       // 发送启动事件
       invoke('emit_event', {
-        event: 'tunnel-event', 
+        event: 'tunnel-event',
         payload: {
           type: 'start',
           tunnelId: tunnel.id.toString(),
           tunnelName: tunnel.name
         }
       }).catch(e => console.error(`发送启动事件失败:`, e))
-      
       // 启动隧道
       console.log(`调用start_frpc_instance启动隧道${tunnel.id}`)
       invoke('start_frpc_instance', {
@@ -290,37 +268,37 @@ const startTunnel = async (tunnel: any) => {
         enableLog: true,
         logUser: userInfo?.value?.username || ''
       }).catch((error) => {
-        console.error(`启动隧道 ${tunnel.id} 失败:`, error)
+        if (resolved) return;
+        resolved = true;
+        console.error(`启动隧道 #${tunnel.id} 失败:`, error)
         if (timeout) clearTimeout(timeout)
-        clearInterval(checkInterval)
         window.removeEventListener(`tunnel-${tunnel.id}-success`, successEventListener)
-        resolve({success: false, message: String(error)})
+        resolve({ success: false, message: String(error) })
       })
     })
 
     console.log(`隧道${tunnel.id}启动结果:`, result)
-    
+
     // 发送事件到系统日志，但不使用success类型，避免生成额外日志
     if (result.success) {
       // 不再发送success类型事件，避免生成重复日志
       // 成功日志已经通过隧道日志直接显示
-      // await invoke('emit_event', { ... type: 'success' ... })
-      message.success(`隧道 ${tunnel.name} 启动成功`)
+      await invoke('emit_event', { event: 'tunnel-event', payload: { type: 'success', tunnelId: tunnel.id.toString(), tunnelName: tunnel.name } })
+      message.success(`隧道 #${tunnel.id} ${tunnel.name} 启动成功`)
       // 新增：推送通知和系统通知
-      // console.log(tunnel);
       notification.success({
-          title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`,
-          description: `隧道启动成功！连接地址: ${tunnel.remote}`,
-          content: () => h('div', [
-            h(NButton, {
-              type: 'success',
-              text: true,
-              onClick: () => copyToClipboard(tunnel.remote)
-            }, '复制链接地址')
-          ]),
-          duration: 5000
-        })
-        await sendNotification({ title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`, body: `请使用链接地址：\n${tunnel.remote}` })
+        title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`,
+        description: `隧道启动成功！连接地址: ${tunnel.remote}`,
+        content: () => h('div', [
+          h(NButton, {
+            type: 'success',
+            text: true,
+            onClick: () => copyToClipboard(tunnel.remote)
+          }, '复制链接地址')
+        ]),
+        duration: 5000
+      })
+      await sendNotification({ title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`, body: `请使用链接地址：\n${tunnel.remote}` })
 
       tunnel.status = 'running'
       saveTunnelStates()
@@ -333,7 +311,7 @@ const startTunnel = async (tunnel: any) => {
           tunnelName: tunnel.name
         }
       })
-      
+
       message.error(`隧道 ${tunnel.name} 启动失败: ${result.message}`)
       tunnel.status = 'stopped'
     }
@@ -341,7 +319,7 @@ const startTunnel = async (tunnel: any) => {
     console.error(`启动隧道异常:`, error)
     message.error(`启动隧道出错: ${error}`)
     tunnel.status = 'stopped'
-    
+
     // 发送事件到系统日志
     await invoke('emit_event', {
       event: 'tunnel-event',
@@ -364,10 +342,10 @@ const saveTunnelStates = () => {
       states[tunnel.id] = tunnel.status
     }
   })
-  
+
   // 记录保存状态到本地存储
   localStorage.setItem('tunnelStates', JSON.stringify(states))
-  
+
   // 记录到系统日志
   const runningCount = Object.keys(states).length
   // if (runningCount > 0) {
@@ -404,7 +382,7 @@ const getTypeColor = (type: string) => {
 
 const restoreTunnels = async () => {
   console.log('开始恢复隧道');
-  
+
   // 发布恢复隧道日志
   await invoke('emit_event', {
     event: 'log',
@@ -412,21 +390,21 @@ const restoreTunnels = async () => {
       message: '开始恢复隧道...'
     }
   });
-  
+
   // 检查是否是自动启动模式（仅作为日志，不阻止恢复）
   const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true';
   if (!isAutoStartMode) {
     console.log('当前不是自动启动模式，但仍然继续恢复隧道');
   }
-  
+
   // 获取保存的隧道状态
   const savedStates = localStorage.getItem('tunnelStates');
   if (savedStates) {
     const states = JSON.parse(savedStates);
     const tunnelsToRestore = tunnels.value.filter(tunnel => states[tunnel.id] === 'running');
-    
+
     console.log('找到需要恢复的隧道:', tunnelsToRestore.map(t => t.id));
-    
+
     // 添加系统事件日志
     await invoke('emit_event', {
       event: 'log',
@@ -434,31 +412,31 @@ const restoreTunnels = async () => {
         message: `找到${tunnelsToRestore.length}个需要恢复的隧道: ${tunnelsToRestore.map(t => t.id).join(', ')}`
       }
     });
-    
+
     if (tunnelsToRestore.length > 0) {
       const delayBetweenTunnels = 5000; // 5秒间隔
-      
+
       for (let i = 0; i < tunnelsToRestore.length; i++) {
         const tunnel = tunnelsToRestore[i];
-        console.log(`准备启动隧道 ${i+1}/${tunnelsToRestore.length}: ${tunnel.id}`);
-        
+        console.log(`准备启动隧道 ${i + 1}/${tunnelsToRestore.length}: ${tunnel.id}`);
+
         await invoke('emit_event', {
           event: 'log',
           payload: {
-            message: `准备恢复隧道 ${i+1}/${tunnelsToRestore.length}: ${tunnel.id} ${tunnel.name}`
+            message: `准备恢复隧道 ${i + 1}/${tunnelsToRestore.length}: ${tunnel.id} ${tunnel.name}`
           }
         });
-        
+
         // 尝试启动隧道
         await startTunnel(tunnel);
-        
+
         // 除了最后一个隧道，每个隧道启动后等待一段时间
         if (i < tunnelsToRestore.length - 1) {
-          console.log(`等待${delayBetweenTunnels/1000}秒后启动下一个隧道...`);
+          console.log(`等待${delayBetweenTunnels / 1000}秒后启动下一个隧道...`);
           await new Promise(resolve => setTimeout(resolve, delayBetweenTunnels));
         }
       }
-      
+
       await invoke('emit_event', {
         event: 'log',
         payload: {
@@ -476,7 +454,7 @@ const getLinkOnlyTunnels = computed(() => {
       result.delete(tunnel.id.toString())
     }
   })
-  
+
   result.forEach(tunnelId => {
     if (!externalTunnels.value.has(tunnelId)) {
       externalTunnels.value.set(tunnelId, {
@@ -485,7 +463,7 @@ const getLinkOnlyTunnels = computed(() => {
       })
     }
   })
-  
+
   return result
 })
 
@@ -533,7 +511,7 @@ const canStartTunnel = (tunnel: any) => {
   if (tunnel.status === 'running') {
     return true;
   }
-  
+
   return tunnel.apiStatus === true && tunnel.apiOnline === false;
 }
 
@@ -541,7 +519,7 @@ const getDisabledReason = (tunnel: any) => {
   if (tunnel.status === 'running') {
     return '';
   }
-  
+
   if (tunnel.apiStatus !== true) {
     return '隧道已被禁用';
   }
@@ -558,7 +536,7 @@ const changeUserProxyAsync = async (proxyId: bigint, method: boolean) => {
       proxy_id: proxyId,
       proxy_do: method,
     });
-    
+
     if (res.flag) {
       loadingBar.finish();
       fetchProxyList();
@@ -716,57 +694,55 @@ const handleOnSelected = (key: string, row: any) => {
         maskClosable: false,
         showIcon: false,
         title: `编辑隧道 ${row.name}`,
-        content: () => h(NMessageProvider, null, {
-          default: () => h(Edit, {
-            isEditMode: true,
-            editConfig: {
-              id: row.id,
-              proxyName: row.name,
-              proxyType: row.type,
-              friendlyNode: row.node,
-              localIp: row.local.split(':')[0],
-              localPort: parseInt(row.local.split(':')[1]),
-              nid: row.nodeId,
-              connectAddress: row.remote,
-              remotePort: row.remotePort || -1,
-              status: row.apiStatus,
-              online: row.apiOnline,
-              useCompression: row.useCompression || false,
-              useEncryption: row.useEncryption || false,
-              domain: row.domain || '[]',
-              custom: row.custom || '',
-              autoTls: row.autoTls || 'false',
-              forceHttps: row.forceHttps || false,
-              proxyProtocolVersion: row.proxyProtocolVersion || false,
-              extAddress: row.extAddress || [],
-              nodeHostname: row.nodeHostname || '',
-              lastLogin: BigInt(0),
-              lastupdate: BigInt(0)
-            },
-            nodeConfig: undefined,
-            watchDog: state,
-            fallback(success, body) {
-              d.loading = true;
-              if (success && body !== undefined) {
-                frpApiEditProxy(body)
-                  .then((res) => {
-                    if (res.flag) {
-                      d?.destroy();
-                      fetchProxyList();
-                    } else {
-                      message.error(res.msg);
-                    }
-                  })
-                  .catch((error) => {
-                    message.error(error.message || '未知错误');
-                  });
-              } else {
-                d.loading = false;
-              }
-              state.value = false;
-            },
-          }),
-        }),
+        content: () => h(NMessageProvider, null, () => h(Edit, {
+          isEditMode: true,
+          editConfig: {
+            id: row.id,
+            proxyName: row.name,
+            proxyType: row.type,
+            friendlyNode: row.node,
+            localIp: row.local.split(':')[0],
+            localPort: parseInt(row.local.split(':')[1]),
+            nid: row.nodeId,
+            connectAddress: row.remote,
+            remotePort: row.remotePort || -1,
+            status: row.apiStatus,
+            online: row.apiOnline,
+            useCompression: row.useCompression || false,
+            useEncryption: row.useEncryption || false,
+            domain: row.domain || '[]',
+            custom: row.custom || '',
+            autoTls: row.autoTls || 'false',
+            forceHttps: row.forceHttps || false,
+            proxyProtocolVersion: row.proxyProtocolVersion || false,
+            extAddress: row.extAddress || [],
+            nodeHostname: row.nodeHostname || '',
+            lastLogin: BigInt(0),
+            lastupdate: BigInt(0)
+          },
+          nodeConfig: undefined,
+          watchDog: state,
+          fallback(success, body) {
+            d.loading = true;
+            if (success && body !== undefined) {
+              frpApiEditProxy(body)
+                .then((res) => {
+                  if (res.flag) {
+                    d?.destroy();
+                    fetchProxyList();
+                  } else {
+                    message.error(res.msg);
+                  }
+                })
+                .catch((error) => {
+                  message.error(error.message || '未知错误');
+                });
+            } else {
+              d.loading = false;
+            }
+            state.value = false;
+          },
+        })),
         positiveText: '保存',
         negativeText: '取消',
         onPositiveClick(e) {
@@ -802,7 +778,7 @@ const renderMenuDropdown = (tunnel: any) => {
       id: tunnel.id,
       proxyName: tunnel.name,
       proxyType: tunnel.type,
-      friendlyNode: tunnel.node, 
+      friendlyNode: tunnel.node,
       localIp: tunnel.local.split(':')[0],
       localPort: parseInt(tunnel.local.split(':')[1]),
       nid: tunnel.nodeId,
@@ -848,16 +824,16 @@ const toggleTunnel = async (tunnel: any) => {
 
 const stopTunnel = async (tunnel: any) => {
   console.log(`停止隧道 ${tunnel.id}`);
-  
+
   // 如果已经停止，不重复操作
   if (tunnel.status === 'stopped') {
     message.info('隧道已经停止');
     return;
   }
-  
+
   try {
     loadingTunnels.value.add(tunnel.id.toString());
-    
+
     // 发送停止事件
     await invoke('emit_event', {
       event: 'tunnel-event',
@@ -867,30 +843,30 @@ const stopTunnel = async (tunnel: any) => {
         tunnelName: tunnel.name
       }
     });
-    
+
     // 停止隧道实例
     await invoke('stop_frpc_instance', { id: tunnel.id.toString() });
-    
+
     // 更新状态
     tunnel.status = 'stopped';
     tunnel.apiOnline = false;
     linkTunnelsStore.removeLinkTunnel(tunnel.id.toString());
-    
+
     // 保存状态
     saveTunnelStates();
-    
+
     message.info(`隧道 ${tunnel.name} 已停止运行`);
-    
+
     // 发送通知
-    await sendNotification({ 
-      title: `隧道 #${tunnel.id} ${tunnel.name} 已停止`, 
-      body: '隧道已成功停止运行' 
+    await sendNotification({
+      title: `隧道 #${tunnel.id} ${tunnel.name} 已停止`,
+      body: '隧道已成功停止运行'
     });
-    
+
   } catch (error) {
     console.error(`停止隧道 ${tunnel.id} 失败:`, error);
     message.error(`停止隧道失败: ${error}`);
-    
+
     // 检查实际状态
     await checkTunnelStatus(tunnel);
   } finally {
@@ -906,14 +882,14 @@ onMounted(async () => {
   // 监听自动启动模式下的隧道恢复
   const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true'
   const autoRestoreTunnels = localStorage.getItem('autoRestoreTunnels') === 'true'
-  
+
   console.log('隧道组件挂载，自动恢复状态:', {
     isAutoStartMode,
     autoRestoreTunnels,
     hasToken: !!userInfo?.value?.token,
     alreadyAttempted: window.__tunnelsRestoreAttempted
   })
-  
+
   // 添加全局恢复隧道事件监听器
   const restoreTunnelsListener = () => {
     console.log('收到全局恢复隧道事件');
@@ -925,9 +901,9 @@ onMounted(async () => {
       console.log('已经尝试过恢复隧道，忽略此事件');
     }
   };
-  
+
   window.addEventListener('global-restore-tunnels', restoreTunnelsListener);
-  
+
   // 检查是否需要自动恢复隧道（确保只执行一次）
   if (isAutoStartMode && autoRestoreTunnels && !window.__tunnelsRestoreAttempted) {
     console.log('自动启动模式，首次恢复隧道');
@@ -970,6 +946,7 @@ onMounted(async () => {
 <template>
   <n-scrollbar>
     <n-space vertical>
+      <n-h2 style="margin-bottom: 3px;">隧道管理</n-h2>
       <n-skeleton v-if="loading" :height="3" />
       <n-card v-else-if="getLinkOnlyTunnels.size > 0" title="外部快速启动隧道">
         <n-space vertical>
@@ -977,16 +954,11 @@ onMounted(async () => {
             <n-space>
               <n-text>外部隧道 #{{ tunnelId }}</n-text>
               <n-tag type="warning" size="small">不属于当前用户</n-tag>
-              <n-tag   type="info" 
-                       size="small">
-                  快速启动
-                </n-tag>
+              <n-tag type="info" size="small">
+                快速启动
+              </n-tag>
             </n-space>
-            <n-button 
-              type="error" 
-              size="small" 
-              @click="stopExternalTunnel(tunnelId)"
-            >
+            <n-button type="error" size="small" @click="stopExternalTunnel(tunnelId)">
               停止
             </n-button>
           </n-space>
@@ -996,28 +968,36 @@ onMounted(async () => {
       <n-card>
         <n-space>
           <n-button @click="fetchProxyList" :loading="loading">
+            <n-icon v-if="!loading" size="large">
+              <Refresh />
+            </n-icon>
             刷新隧道列表
           </n-button>
+          
         </n-space>
+        <n-space justify="end">
+             <n-statistic label="隧道数(已使用/全部)" :value="userInfo?.used || 0" :loading="loading">
+        <template #suffix>
+          / {{ userInfo?.proxies || 0 }}
+        </template>
+      </n-statistic>
+          </n-space>
       </n-card>
 
       <n-skeleton v-if="loading" :height="3" />
       <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
         <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
           <n-card :title="'隧道 #' + tunnel.id + ' ' + tunnel.name" :bordered="false" size="small"
-            :class="{ 'disabled-card': !canStartTunnel(tunnel) }"
-            style="flex: 1; height: 100%;">
+            :class="{ 'disabled-card': !canStartTunnel(tunnel) }" style="flex: 1; height: 100%;">
             <template #header-extra>
               <n-space>
-                <n-tag v-if="linkTunnelsStore.linkLaunchedTunnels.has(tunnel.id.toString())" 
-                       type="info" 
-                       size="small">
+                <n-tag v-if="linkTunnelsStore.linkLaunchedTunnels.has(tunnel.id.toString())" type="info" size="small">
                   通过快速启动
                 </n-tag>
                 <n-tag :type="getTypeColor(tunnel.type)">
                   {{ tunnel.type.toUpperCase() }}
                 </n-tag>
-                
+
               </n-space>
             </template>
             <n-space vertical size="small">
@@ -1035,22 +1015,21 @@ onMounted(async () => {
                 <n-text>{{ tunnel.remote }}</n-text>
               </n-space>
 
-             
 
-             
+
+
             </n-space>
             <template #footer>
               <n-space justify="end">
                 <component :is="renderMenuDropdown(tunnel)"></component>
                 <n-tooltip :disabled="canStartTunnel(tunnel)" trigger="hover">
                   <template #trigger>
-                  <n-switch :value="tunnel.status === 'running'" 
-                            @update:value="() => toggleTunnel(tunnel)"
-                            :loading="loadingTunnels.has(tunnel.id.toString())"
-                            :disabled="loadingTunnels.has(tunnel.id.toString()) || !canStartTunnel(tunnel)" />
-                </template>
-                {{ getDisabledReason(tunnel) }}
-              </n-tooltip>
+                    <n-switch :value="tunnel.status === 'running'" @update:value="() => toggleTunnel(tunnel)"
+                      :loading="loadingTunnels.has(tunnel.id.toString())"
+                      :disabled="loadingTunnels.has(tunnel.id.toString()) || !canStartTunnel(tunnel)" />
+                  </template>
+                  {{ getDisabledReason(tunnel) }}
+                </n-tooltip>
               </n-space>
             </template>
           </n-card>

@@ -361,7 +361,7 @@ onMounted(() => {
 <template>
   <div>
     <!-- 使用本地用户名变量 -->
-    <span class="hometitle">欢迎回来</span><br />
+    <N-H2 style="margin-bottom: 3px;">欢迎回来</N-H2>
     欢迎使用全新 <n-gradient-text type="info">
       OpenFrp Cross Platform Launcher
     </n-gradient-text> !

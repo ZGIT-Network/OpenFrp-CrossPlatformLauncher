@@ -203,7 +203,7 @@ const fullStatusColumns: DataTableColumn[] | any = [
                   ctse?.type == 'warning' ? 'warning' : ctse?.type == 'error' ? 'error' : 'success',
                 size: 'small',
               },
-              { default: () => ctse?.text },
+              () => ctse?.text,
             ),
           ],
         ),
@@ -264,15 +264,13 @@ const fullStatusColumns: DataTableColumn[] | any = [
             h(
               'span',
               {},
-              {
-                default: () =>
-                  numbro(row.total_traffic_out).format({
-                    output: 'byte',
-                    base: 'binary',
-                    mantissa: 2,
-                    spaceSeparated: true,
-                  }),
-              },
+              () =>
+                numbro(row.total_traffic_out).format({
+                  output: 'byte',
+                  base: 'binary',
+                  mantissa: 2,
+                  spaceSeparated: true,
+                })
             ),
           ],
         ),
@@ -298,15 +296,13 @@ const fullStatusColumns: DataTableColumn[] | any = [
             h(
               'span',
               {},
-              {
-                default: () =>
-                  numbro(row.total_traffic_in).format({
-                    output: 'byte',
-                    base: 'binary',
-                    mantissa: 2,
-                    spaceSeparated: true,
-                  }),
-              },
+              () =>
+                numbro(row.total_traffic_in).format({
+                  output: 'byte',
+                  base: 'binary',
+                  mantissa: 2,
+                  spaceSeparated: true,
+                })
             ),
           ],
         ),
@@ -417,7 +413,7 @@ const fullStatusColumns: DataTableColumn[] | any = [
     resizable: true,
     width: 100,
     render(row: Struct.NodeState) {
-      return h('span', {}, { default: () => `${row.m_used_p.toFixed(0)} %` });
+      return h('span', {}, () => `${row.m_used_p.toFixed(0)} %`);
     },
     sorter: (row1: Struct.NodeState, row2: Struct.NodeState) => {
       return row1.m_used_p - row2.m_used_p;

@@ -3,10 +3,10 @@ import { Ref, ref, watch, inject, computed } from 'vue';
 
 import { FormItemRule, useMessage } from 'naive-ui';
 
-import { HelpOutline, ShuffleOutline } from '@vicons/ionicons5';
+import { HelpOutline, ShuffleOutline ,Refresh } from '@vicons/ionicons5';
 
 import { invoke } from '@tauri-apps/api/core'
-import { NModal, NSelect, NButton } from 'naive-ui';
+import { NModal, NSelect, NButton, NIcon } from 'naive-ui';
 
 import './style.less';
 
@@ -392,6 +392,12 @@ async function openPortDialog() {
   loadingPorts.value = false;
 }
 
+function refreshPortList() {
+  loadingPorts.value = true;
+  portList.value = [];
+  openPortDialog();
+}
+
 function handlePortCardClick(port: number) {
   selectedPortCard.value = port;
 }
@@ -739,10 +745,16 @@ function handlePortSelect() {
         <!-- 新增：搜索与过滤控件 -->
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
           <n-input v-model:value="portSearch" clearable placeholder="搜索端口/进程名/PID/类型..." size="small" style="width:260px" />
+          <n-button type="default" size="small" @click="refreshPortList()" secondary>
+            <n-icon size="large">
+              <Refresh />
+            </n-icon>
+            重新探测端口</n-button>
           <n-switch v-model:value="hideSystemProcessPorts" size="small" style="margin-left:8px;">
             <template #checked>隐藏系统服务</template>
             <template #unchecked>显示全部端口</template>
           </n-switch>
+          
         </div>
         <!-- 多列虚拟列表，每行渲染多张卡片 -->
         <n-virtual-list

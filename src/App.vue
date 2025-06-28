@@ -3,7 +3,7 @@ import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
 import { darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
 import { GlobalThemeOverrides } from 'naive-ui';
 import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutHeader, NLayoutContent, NText, NScrollbar } from 'naive-ui';
-import { listen } from '@tauri-apps/api/event';
+
 import { invoke } from '@tauri-apps/api/core';
 import { useRouter, useRoute } from 'vue-router';
 // import { setWindowBlurEffect } from '@/utils/windowEffect';
@@ -13,6 +13,7 @@ import Header from './layouts/Header/index.vue';
 import Sidebar from './layouts/Sidebar/index.vue';
 import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
 import Cookies from '@/utils/cookies';
+import { globalLogService } from '@/services/logService';
 
 // 添加用户信息相关代码
 const userInfo = ref<Struct.UserInfo>();
@@ -113,44 +114,26 @@ const themeOverrides: GlobalThemeOverrides = {
   },
 };
 
-// 存储所有监听器的清理函数
-const cleanupFunctions = ref<(() => void)[]>([]);
-
-// 添加日志的辅助函数
-const appendLog = (message: string) => {
-  const timestamp = new Date().toLocaleTimeString();
-  const logMessage = `[${timestamp}] [系统] ${message}\n`;
-  const savedLogs = localStorage.getItem('frpcLogs') || '';
-  localStorage.setItem('frpcLogs', savedLogs + logMessage);
-};
-
-// 添加一个标志来记录日志系统是否已经初始化
-const isLogSystemInitialized = ref(false);
-
 onMounted(async () => {
-  // 如果日志系统已经初始化，直接返回
-  if (isLogSystemInitialized.value) {
-    return;
-  }
+  console.log('App.vue 挂载，初始化全局日志服务');
 
   try {
-    // 监听全局日志
-    const globalLogUnlisten = await listen('log', (event: any) => {
-      appendLog(event.payload.message);
-    });
-    cleanupFunctions.value.push(globalLogUnlisten);
-    // 其他监听器...
-    isLogSystemInitialized.value = true;
+    // 初始化全局日志服务
+    const success = await globalLogService.initialize();
+    if (success) {
+      console.log('全局日志服务初始化成功');
+    } else {
+      console.error('全局日志服务初始化失败');
+    }
   } catch (e) {
-    console.error('初始化日志系统失败:', e);
+    console.error('初始化全局日志服务时出错:', e);
   }
-
- 
 });
 
 onUnmounted(() => {
-  // 清理所有监听器
-  cleanupFunctions.value.forEach((cleanup: any) => cleanup());
+  console.log('App.vue 卸载，清理全局日志服务');
+  // 注意：这里不清理全局日志服务，因为它应该在整个应用生命周期内保持活跃
+  // globalLogService.cleanup();
 });
 
 // 禁止右键菜单
@@ -296,76 +279,5 @@ body {
 
 .actual-light {
   color-scheme: light;
-}
-
-/* 高斯模糊视觉特效，兼容 Naive UI 深色/亮色模式 */
-body,
-#app,
-.n-layout,
-.n-layout-content,
-.n-layout-sider,
-.n-layout-header {
-  background: transparent !important;
-}
-
-body.blur-enabled .n-layout,
-body.blur-enabled .n-layout-content,
-body.blur-enabled .n-layout-sider,
-body.blur-enabled .n-layout-header {
-  /* 亮色高斯模糊 */
-  background: var(--n-color) !important;
-
-  filter: blur(0px); /* 兼容性兜底 */
-  backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(1.08);
-  transition: background 0.3s;
-}
-body.actual-dark.blur-enabled .n-layout,
-body.actual-dark.blur-enabled .n-layout-content,
-body.actual-dark.blur-enabled .n-layout-sider,
-body.actual-dark.blur-enabled .n-layout-header {
-  /* 深色高斯模糊 */
-  background: var(--n-color) !important;
-
-  filter: blur(0px);
-  backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
-  -webkit-backdrop-filter: blur(24px) saturate(1.2) brightness(0.85);
-}
-body:not(.blur-enabled) .n-layout,
-body:not(.blur-enabled) .n-layout-content,
-body:not(.blur-enabled) .n-layout-sider,
-body:not(.blur-enabled) .n-layout-header {
-  background: unset !important;
-  filter: none !important;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
-}
-
-/* 高斯模糊特效（全局，兼容深色/NaiveUI） */
-body.gaussian-blur-enabled .n-layout,
-body.gaussian-blur-enabled .n-layout-content,
-body.gaussian-blur-enabled .n-layout-sider,
-body.gaussian-blur-enabled .n-layout-header {
-  background: var(--n-color) !important;
-
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  transition: background 0.3s;
-}
-body.actual-dark.gaussian-blur-enabled .n-layout,
-body.actual-dark.gaussian-blur-enabled .n-layout-content,
-body.actual-dark.gaussian-blur-enabled .n-layout-sider,
-body.actual-dark.gaussian-blur-enabled .n-layout-header {
-  background: var(--n-color) !important;
-
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-}
-body:not(.gaussian-blur-enabled) .n-layout,
-body:not(.gaussian-blur-enabled) .n-layout-content,
-body:not(.gaussian-blur-enabled) .n-layout-sider,
-body:not(.gaussian-blur-enabled) .n-layout-header {
-  background: var(--n-color) !important;
-
 }
 </style>
