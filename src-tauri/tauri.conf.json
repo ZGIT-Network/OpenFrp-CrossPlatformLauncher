@@ -79,12 +79,13 @@
         "languages": ["SimpChinese", "TradChinese", "English", "Japanese"],
         "installerIcon": "icons/desktop.ico"
       },
-      "webviewInstallMode": {
-        "type": "downloadBootstrapper",
-        "silent": false
-      },
+      
        "wix": {
         "language": "zh-CN"
+      },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
       }
     }
   },
