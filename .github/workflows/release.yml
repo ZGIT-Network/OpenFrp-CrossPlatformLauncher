@@ -177,7 +177,6 @@ jobs:
             src-tauri/gen/universal-apple-darwin/metadata.json
             src-tauri/target/universal-apple-darwin/release/bundle/**/*.dmg
             src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app
-              src-tauri/target/universal-apple-darwin/release/bundle/**/*.tar.gz
             src-tauri/target/*.dmg
             src-tauri/target/*.zip
           if-no-files-found: warn
@@ -432,7 +431,7 @@ jobs:
               },
               "darwin-universal": {
                 "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.tar.gz"
+                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg"
               },
               "linux-x86_64": {
                 "signature": "",
