@@ -73,7 +73,7 @@
       "digestAlgorithm": null,
       "timestampUrl": null,
       "wix": {
-        "language": ["en-US","zh-CN"]
+        "language": "zh-CN"
       },
       "nsis": {
         "installMode": "both",
