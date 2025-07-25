@@ -1,12 +1,9 @@
 <script lang="ts" setup>
-import { Ref, ref, watch, inject, computed } from 'vue';
+import { Ref, ref, watch } from 'vue';
 
 import { FormItemRule, useMessage } from 'naive-ui';
 
-import { HelpOutline, ShuffleOutline ,Refresh } from '@vicons/ionicons5';
-
-import { invoke } from '@tauri-apps/api/core'
-import { NModal, NSelect, NButton, NIcon } from 'naive-ui';
+import { HelpOutline, ShuffleOutline } from '@vicons/ionicons5';
 
 import './style.less';
 
@@ -21,14 +18,12 @@ const props = defineProps<{
 const customConfigString = ref<string>('');
 
 const autoTlsName = ref<string>('false');
-// 尝试从父组件注入message，如果不存在则创建本地message
-const injectedMessage = inject('message', null);
-const message = injectedMessage || useMessage();
+const message = useMessage();
 
 const autoTlsType = ref([
   {
     label: '关闭',
-    value: '',
+    value: 'false', // 原来是 '', 修改为 'false'
   },
   {
     label: '开启',
@@ -40,6 +35,7 @@ const autoTlsType = ref([
     disabled: true,
   },
 ]);
+
 const proxyType = ref([
   {
     label: 'TCP',
@@ -112,6 +108,12 @@ const proxyRule = ref({
   },
 });
 
+watch(autoTlsName, (newValue) => {
+  if (newValue) {
+    updateAutoTlsOptions(newValue);
+  }
+});
+
 function remotePortRule() {
   return {
     required:
@@ -122,6 +124,26 @@ function remotePortRule() {
     message: '请输入远程端口',
     trigger: 'blur',
   };
+}
+
+function updateAutoTlsOptions(val: string) {
+  const isCustom = val && val !== 'true' && val !== 'false';
+
+  if (isCustom) {
+    // 如果是自定义值，则将第三个选项的内容替换为这个自定义值
+    autoTlsType.value[2] = {
+      label: val,
+      value: val,
+      disabled: false,
+    };
+  } else {
+    // 如果不是自定义值，就恢复第三个选项为默认的、被禁用的占位符状态
+    autoTlsType.value[2] = {
+      label: '可输入对应目录下证书文件名',
+      value: 'none',
+      disabled: true,
+    };
+  }
 }
 
 function domainsRule() {
@@ -154,13 +176,21 @@ function onSelectTypeUpdate(v: string) {
 const randomNum = (min: number, max: number) => {
   return Math.floor(Math.random() * (max - 1 - (min + 1))) + (min + 1);
 };
+
+watch(
+  () => proxyData.value.autoTls,
+  (newValue) => {
+    updateAutoTlsOptions(newValue);
+  },
+);
+
 const randomProxyName = () => {
   const str = 'Aa1Bb2Cc3Dd4Ff6Gg7Hh8Ii9Jj2Ll3Mm4Nn5Oo6Pp7Qq8Rr9Ss1Tt2Uu3Vv4Ww5Xx6Yy7Zz';
   let output = '';
   for (let index = 0; index < 7; index++) {
     output += str[Math.round(Math.random() * (str.length - 1))];
   }
-  proxyData.value.name = "CPL_" + output;
+  proxyData.value.name = output;
 };
 const limit = [25565, 19132, 8233, 80, 443];
 
@@ -300,115 +330,17 @@ if (props.isEditMode && props.editConfig) {
     proxyProtocolVersion: props.editConfig.proxyProtocolVersion,
     forceHttps: props.editConfig.forceHttps,
   };
+
+  autoTlsName.value = proxyData.value.autoTls;
+
+  updateAutoTlsOptions(proxyData.value.autoTls);
+
   if (proxyData.value.type === 'http' || proxyData.value.type === 'https') {
     proxyDomainRebind.value = (JSON.parse(proxyData.value.domain_bind) as string[]).join(',');
   }
 }
 
 const formRef = ref();
-
-const showPortDialog = ref(false);
-const portList = ref<{ port: number; type: string; pid?: number; process?: string }[]>([]);
-const selectedPortCard = ref<number | null>(null);
-const loadingPorts = ref(false);
-
-// 新增：端口搜索与系统进程端口过滤
-const portSearch = ref('');
-const hideSystemProcessPorts = ref(true);
-// 常见系统进程名关键字，兼容 Windows/Linux/macOS
-const systemProcessKeywords = [
-  'system', 'svchost', 'services', 'idle', 'init', 'systemd', 'launchd', 'root','spoolsv','lsass', 'kernel_task', 'kthreadd', 'kworker', 'rcu_sched', 'rcu_bh', 'migration', 'watchdog',
-  'kswapd', 'bioset', 'cpuhp', 'cpuhp/0', 'cpuhp/1', 'cpuhp/2', 'cpuhp/3', 'cpuhp/4', 'cpuhp/5', 'cpuhp/6', 'cpuhp/7', 'cpuhp/8', 'cpuhp/9', 'cpuhp/10', 'cpuhp/11', 'cpuhp/12', 'cpuhp/13', 'cpuhp/14', 'cpuhp/15', 'cpuhp/16', 'cpuhp/17', 'cpuhp/18', 'cpuhp/19', 'cpuhp/20', 'cpuhp/21', 'cpuhp/22', 'cpuhp/23', 'cpuhp/24', 'cpuhp/25', 'cpuhp/26', 'cpuhp/27', 'cpuhp/28', 'cpuhp/29', 'cpuhp/30', 'cpuhp/31', 'cpuhp/32', 'cpuhp/33', 'cpuhp/34', 'cpuhp/35', 'cpuhp/36', 'cpuhp/37', 'cpuhp/38', 'cpuhp/39', 'cpuhp/40', 'cpuhp/41', 'cpuhp/42', 'cpuhp/43', 'cpuhp/44', 'cpuhp/45', 'cpuhp/46', 'cpuhp/47', 'cpuhp/48', 'cpuhp/49', 'cpuhp/50', 'cpuhp/51', 'cpuhp/52', 'cpuhp/53', 'cpuhp/54', 'cpuhp/55', 'cpuhp/56', 'cpuhp/57', 'cpuhp/58', 'cpuhp/59', 'cpuhp/60', 'cpuhp/61', 'cpuhp/62', 'cpuhp/63', 'cpuhp/64', 'cpuhp/65', 'cpuhp/66', 'cpuhp/67', 'cpuhp/68', 'cpuhp/69', 'cpuhp/70', 'cpuhp/71', 'cpuhp/72', 'cpuhp/73', 'cpuhp/74', 'cpuhp/75', 'cpuhp/76', 'cpuhp/77', 'cpuhp/78', 'cpuhp/79', 'cpuhp/80', 'cpuhp/81', 'cpuhp/82', 'cpuhp/83', 'cpuhp/84', 'cpuhp/85', 'cpuhp/86', 'cpuhp/87', 'cpuhp/88', 'cpuhp/89', 'cpuhp/90', 'cpuhp/91', 'cpuhp/92', 'cpuhp/93', 'cpuhp/94', 'cpuhp/95', 'cpuhp/96', 'cpuhp/97', 'cpuhp/98', 'cpuhp/99', 'cpuhp/100', 'cpuhp/101', 'cpuhp/102', 'cpuhp/103', 'cpuhp/104', 'cpuhp/105', 'cpuhp/106', 'cpuhp/107', 'cpuhp/108', 'cpuhp/109', 'cpuhp/110', 'cpuhp/111', 'cpuhp/112', 'cpuhp/113', 'cpuhp/114', 'cpuhp/115', 'cpuhp/116', 'cpuhp/117', 'cpuhp/118', 'cpuhp/119', 'cpuhp/120', 'cpuhp/121', 'cpuhp/122', 'cpuhp/123', 'cpuhp/124', 'cpuhp/125', 'cpuhp/126', 'cpuhp/127', 'cpuhp/128', 'cpuhp/129', 'cpuhp/130', 'cpuhp/131', 'cpuhp/132', 'cpuhp/133', 'cpuhp/134', 'cpuhp/135', 'cpuhp/136', 'cpuhp/137', 'cpuhp/138', 'cpuhp/139', 'cpuhp/140', 'cpuhp/141', 'cpuhp/142', 'cpuhp/143', 'cpuhp/144', 'cpuhp/145', 'cpuhp/146', 'cpuhp/147', 'cpuhp/148', 'cpuhp/149', 'cpuhp/150', 'cpuhp/151', 'cpuhp/152', 'cpuhp/153', 'cpuhp/154', 'cpuhp/155', 'cpuhp/156', 'cpuhp/157', 'cpuhp/158', 'cpuhp/159', 'cpuhp/160', 'cpuhp/161', 'cpuhp/162', 'cpuhp/163', 'cpuhp/164', 'cpuhp/165', 'cpuhp/166', 'cpuhp/167', 'cpuhp/168', 'cpuhp/169', 'cpuhp/170', 'cpuhp/171', 'cpuhp/172', 'cpuhp/173', 'cpuhp/174', 'cpuhp/175', 'cpuhp/176', 'cpuhp/177', 'cpuhp/178', 'cpuhp/179', 'cpuhp/180', 'cpuhp/181', 'cpuhp/182', 'cpuhp/183', 'cpuhp/184', 'cpuhp/185', 'cpuhp/186', 'cpuhp/187', 'cpuhp/188', 'cpuhp/189', 'cpuhp/190', 'cpuhp/191', 'cpuhp/192', 'cpuhp/193', 'cpuhp/194', 'cpuhp/195', 'cpuhp/196', 'cpuhp/197', 'cpuhp/198', 'cpuhp/199', 'cpuhp/200', 'cpuhp/201', 'cpuhp/202', 'cpuhp/203', 'cpuhp/204', 'cpuhp/205', 'cpuhp/206', 'cpuhp/207', 'cpuhp/208', 'cpuhp/209', 'cpuhp/210', 'cpuhp/211', 'cpuhp/212', 'cpuhp/213', 'cpuhp/214', 'cpuhp/215', 'cpuhp/216', 'cpuhp/217', 'cpuhp/218', 'cpuhp/219', 'cpuhp/220', 'cpuhp/221', 'cpuhp/222', 'cpuhp/223', 'cpuhp/224', 'cpuhp/225', 'cpuhp/226', 'cpuhp/227', 'cpuhp/228', 'cpuhp/229', 'cpuhp/230', 'cpuhp/231', 'cpuhp/232', 'cpuhp/233', 'cpuhp/234', 'cpuhp/235', 'cpuhp/236', 'cpuhp/237', 'cpuhp/238', 'cpuhp/239', 'cpuhp/240', 'cpuhp/241', 'cpuhp/242', 'cpuhp/243', 'cpuhp/244', 'cpuhp/245', 'cpuhp/246', 'cpuhp/247', 'cpuhp/248', 'cpuhp/249', 'cpuhp/250', 'cpuhp/251', 'cpuhp/252', 'cpuhp/253', 'cpuhp/254', 'cpuhp/255'
-];
-
-const filteredPortList = computed(() => {
-  let list = portList.value;
-  // 过滤系统进程端口和空进程名端口
-  if (hideSystemProcessPorts.value) {
-    list = list.filter(item => {
-      if (!item.process || !item.process.trim()) return false; // 空进程名直接隐藏
-      const pname = item.process.toLowerCase();
-      return !systemProcessKeywords.some(keyword =>
-        pname === keyword ||
-        pname.startsWith(keyword + ' ') ||
-        pname.includes(keyword + '.exe')
-      );
-    });
-  }
-  // 搜索过滤
-  if (portSearch.value.trim()) {
-    const kw = portSearch.value.trim().toLowerCase();
-    list = list.filter(item => {
-      return (
-        String(item.port).includes(kw) ||
-        (item.process && item.process.toLowerCase().includes(kw)) ||
-        (item.type && item.type.toLowerCase().includes(kw)) ||
-        (item.pid && String(item.pid).includes(kw))
-      );
-    });
-  }
-  // 去重：同 type-port-pid-process 只保留一条
-  const seen = new Set<string>();
-  list = list.filter(item => {
-    const key = `${item.type}-${item.port}-${item.pid || ''}-${item.process || ''}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  // 为虚拟列表每个 item 添加唯一 key 字段（带 index 保证唯一）
-  return list.map((item, idx) => ({ ...item, key: `${item.type}-${item.port}-${item.pid || ''}-${idx}` }));
-});
-// 列数可配置
-const portCardCols = 4; // 推荐 3~4
-const filteredPortRows = computed(() => {
-  const list = filteredPortList.value;
-  const rows = [];
-  for (let i = 0; i < list.length; i += portCardCols) {
-    rows.push(list.slice(i, i + portCardCols));
-  }
-  return rows;
-});
-// 卡顿优化建议：
-// 1. 端口数量较多时，建议用 vue-virtual-scroller 等虚拟列表组件包裹 n-card 渲染区域。
-// 2. 或限制最大渲染数量，或分页展示。
-// 3. Naive UI 官方暂无虚拟滚动 n-space/n-card，需第三方实现。
-
-async function openPortDialog() {
-  showPortDialog.value = true;
-  loadingPorts.value = true;
-  portSearch.value = '';
-  hideSystemProcessPorts.value = true;
-  try {
-    const res = await invoke('get_local_ports');
-    let tcp = (res as any).tcp || [];
-    let udp = (res as any).udp || [];
-    if (tcp.length && typeof tcp[0] === 'number') tcp = tcp.map((p:number)=>({port:p,type:'TCP'}));
-    if (udp.length && typeof udp[0] === 'number') udp = udp.map((p:number)=>({port:p,type:'UDP'}));
-    portList.value = [...tcp.map((x:any)=>({...x,type:'TCP'})), ...udp.map((x:any)=>({...x,type:'UDP'}))];
-  } catch (e) {
-    message.error('获取本地端口失败');
-    portList.value = [];
-  }
-  loadingPorts.value = false;
-}
-
-function refreshPortList() {
-  loadingPorts.value = true;
-  portList.value = [];
-  openPortDialog();
-}
-
-function handlePortCardClick(port: number) {
-  selectedPortCard.value = port;
-}
-
-function handlePortSelect() {
-  if (selectedPortCard.value) {
-    proxyData.value.local_port = selectedPortCard.value;
-    showPortDialog.value = false;
-    message.success(`已选择本地端口: ${selectedPortCard.value}`);
-  }
-}
 </script>
 
 <template>
@@ -509,7 +441,7 @@ function handlePortSelect() {
                       "
                     >
                       <template #suffix>
-                        <n-button size="tiny" @click="openPortDialog" style="margin-left: 4px;">选择本地端口</n-button>
+                        <span>&nbsp;</span>
                       </template>
                     </n-input-number>
                   </n-form-item-gi>
@@ -665,7 +597,7 @@ function handlePortSelect() {
                         filterable
                         :options="autoTlsType"
                         :on-search="
-                          (x: any) => {
+                          (x) => {
                             if (x.length == 0) {
                               autoTlsType[2].disabled = true;
                               autoTlsType[2].label = '输入证书文件名';
@@ -697,7 +629,7 @@ function handlePortSelect() {
                         :value="autoTlsName"
                         placeholder=""
                         @update:value="
-                          (x: any) => {
+                          (x) => {
                             autoTlsName = x;
                           }
                         "
@@ -737,70 +669,5 @@ function handlePortSelect() {
         </n-layout>
       </div>
     </n-form>
-    <n-modal v-model:show="showPortDialog" title="选择本地端口" preset="dialog" style="width: 800px; max-height: 500px;">
-      <div v-if="loadingPorts" style="text-align:center;padding:32px 0;">
-        <n-spin size="large"><template #description>正在扫描本地端口...</template></n-spin>
-      </div>
-      <div v-else>
-        <!-- 新增：搜索与过滤控件 -->
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-          <n-input v-model:value="portSearch" clearable placeholder="搜索端口/进程名/PID/类型..." size="small" style="width:260px" />
-          <n-button type="default" size="small" @click="refreshPortList()" secondary>
-            <n-icon size="large">
-              <Refresh />
-            </n-icon>
-            重新探测端口</n-button>
-          <n-switch v-model:value="hideSystemProcessPorts" size="small" style="margin-left:8px;">
-            <template #checked>隐藏系统服务</template>
-            <template #unchecked>显示全部端口</template>
-          </n-switch>
-          
-        </div>
-        <!-- 多列虚拟列表，每行渲染多张卡片 -->
-        <n-virtual-list
-          style="max-height: 340px; min-height: 120px; width: 100%;"
-          :item-size="70"
-          :items="filteredPortRows"
-          :key-field="undefined"
-        >
-          <template #default="{ item: row, index }">
-            <div style="display: flex; gap: 8px; margin-bottom: 6px;">
-              <n-card
-                v-for="col in row"
-                :key="col.key"
-                :class="['port-card', { selected: selectedPortCard === col.port }]"
-                size="small"
-                style="flex: 1 1 0; min-width: 0; cursor: pointer;"
-                @click="handlePortCardClick(col.port)"
-              >
-                <template #header>
-                  <span style="font-weight:bold;font-size:1.1em;">{{ col.port }}</span>
-                </template>
-                <template #header-extra>
-                  <n-tag type="info" size="small">{{ col.type }}</n-tag>
-                </template>
-                <template #default >
-                  <div style="margin-top:-10px;">
-                  <n-ellipsis :line-clamp="1" style="font-size:0.95em;">{{ col.process || '-' }}</n-ellipsis>
-                  <br/>
-                  <span style="font-size:0.9em;color:#888;">PID: {{ col.pid || '-' }}</span>
-                  </div>
-                </template>
-              </n-card>
-            </div>
-          </template>
-        </n-virtual-list>
-      </div>
-      <template #action>
-        <n-button type="primary" @click="handlePortSelect" :disabled="!selectedPortCard">确定</n-button>
-      </template>
-    </n-modal>
   </div>
 </template>
-
-<style scoped>
-        .port-card.selected {
-          border: 1px solid #0F6FB8 !important;
-          /* background: #e6f7ff; */
-        }
-</style>

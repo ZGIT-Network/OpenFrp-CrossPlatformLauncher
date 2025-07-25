@@ -10,7 +10,17 @@ pub async fn proxy_api(
     headers: Option<Value>,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    let client = reqwest::Client::new();
+    let client_builder = reqwest::Client::builder();
+    
+    // 获取绕过代理设置
+    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
+    let client = if bypass_proxy == "true" {
+        // 绕过系统代理
+        client_builder.no_proxy().build().map_err(|e| e.to_string())?
+    } else {
+        // 使用系统代理
+        client_builder.build().map_err(|e| e.to_string())?
+    };
 
     // 构建请求
     let base_url = "https://api.openfrp.net/frp/api";

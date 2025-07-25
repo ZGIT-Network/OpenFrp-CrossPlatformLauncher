@@ -3,7 +3,7 @@ import { computed, h, inject, Ref, ref } from 'vue';
 import { RouterLink, useRouter } from 'vue-router';
 
 // import classNames from 'classnames';
-import { useLoadingBar, useMessage, useNotification } from 'naive-ui';
+import { useLoadingBar, useMessage, useNotification, NButton } from 'naive-ui';
 
 import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
 import frpApiNewProxy from '@/requests/frpApi/frpApiNewProxy';
@@ -11,6 +11,8 @@ import { RefreshOutline } from '@vicons/ionicons5';
 
 import Edit from '../ManageProxies/Edit.vue';
 import Card from './Card.vue';
+
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 // import frpApiNewProxy from '@/requests/frpApiNewProxy';
 import './style.less';
@@ -71,6 +73,12 @@ const fallbackConf = (success: boolean, body: Struct.EditOrNewUserProxy | undefi
 };
 const handleGetConf = () => {
   watchDog.value = true;
+};
+
+const openUsercenter = () => {
+  if (userInfo.value) {
+    openUrl('https://console.openfrp.net/usercenter');
+  }
 };
 
 const getNodeList = () => {
@@ -166,13 +174,17 @@ const handleSelected = (node: Struct.Node) => {
               default: () => [
                 '该节点需要您先完成实名认证。\n',
                 h(
-                  RouterLink,
+                  NButton,
                   {
-                    to: '/usercenter',
+                    type: 'primary',
+                    size: 'small',
+                    text: true,
                     onClick: () => {
                       lc.destroy();
+                      openUsercenter();
                     },
                   },
+                  
                   '跳转到 个人中心 进行',
                 ),
               ],
@@ -275,8 +287,9 @@ function nodeCountFilter(classify: number) {
         type="error"
       >
         <n-flex :size="[0, 0]" vertical>
-          <n-text>请尽快进行实名认证以获得最佳服务体验。未实名将无法使用中国大陆地区节点。</n-text>
-          <RouterLink to="/usercenter">前往 个人中心 实名认证</RouterLink>
+          <n-text>请尽快进行实名认证以获得最佳服务体验。未实名将无法使用中国大陆地区节点。<br/> 
+            <n-button text   @click="openUsercenter()" style="text-justify: left;">前往 个人中心 实名认证</n-button></n-text>
+         
         </n-flex>
       </n-alert>
       <n-flex align="center" :size="[12, 8]" style="margin-top: -24px">

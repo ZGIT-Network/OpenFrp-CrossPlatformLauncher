@@ -7,27 +7,26 @@ import copy from 'copy-to-clipboard';
 import dayjs from 'dayjs';
 import { useRouter } from 'vue-router';
 
+import  Coockies  from '@/utils/cookies';
+
+import { openUrl } from '@tauri-apps/plugin-opener';
+
 // 导入获取用户信息的API
 import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
 
-import { CalendarOutline, CheckmarkCircle, KeyOutline } from '@vicons/ionicons5';
+import { CalendarOutline, KeyOutline } from '@vicons/ionicons5';
 
 import numbro from 'numbro';
 
 const message = useMessage()
 
 import frpApiGetSignInfo from '@/requests/frpApi/frpApiGetSignInfo';
-import frpApiUserSign from '@/requests/frpApi/frpApiUserSign';
 
 const signInfo = ref<Struct.SignInfo>();
 const signed = ref<boolean>();
 const loading = ref(true); // 添加一个加载状态变量
 
 const router = useRouter();
-import '@/assets/tianai/tac.min.js';
-import '@/assets/tianai/enc.js';
-import '@/assets/tianai/styles/tac.css';
-import '@/assets/tianai/styles/tac-custom.css';
 
 // 尝试注入对象
 const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
@@ -42,6 +41,8 @@ const byteFormat = (num: number) => {
 // 创建本地用户名变量
 const username = ref('');
 const userInfo = userInfoObj?.userInfo;
+
+
 
 const notification = useNotification();
 
@@ -77,21 +78,13 @@ const fetchBoardCast = async () => {
 }
 
 // 修改获取签到信息的函数，添加重试机制
-const getSignInfo = (retries = 2) => {
+const getSignInfo = () => {
   frpApiGetSignInfo().then((res) => {
     if (res.flag) {
       signInfo.value = res.data;
       signed.value = dayjs(res.data.signdate).diff(dayjs().startOf('day')) >= 0;
-      loading.value = false; // 签到信息加载完成
     } else {
-      if (retries > 0) {
-        console.log(`获取签到信息失败，尝试重试，剩余次数: ${retries-1}`);
-        setTimeout(() => {
-          getSignInfo(retries - 1);
-        }, 500);
-      } else {
-        message.error(res.msg);
-      }
+      message.error(res.msg);
     }
   });
 };
@@ -140,9 +133,12 @@ const checkinfo = () => {
 
   if(userInfo?.value) {
     getSignInfo();
+    getSignInfo();
     checkRealname(); 
   } else {
     fetchUserInfo();
+    getSignInfo();
+
   }
 }
 const checkRealname = () => {
@@ -192,98 +188,18 @@ onMounted(() => {
 });
 
 function userSign() {
-  console.log('开始签到流程');
-  const config = {
-    requestCaptchaDataUrl: 'https://captcha.naids.com/gen',
-    validCaptchaUrl: 'https://captcha.naids.com/check',
-    bindEl: '#captcha-box',
-    chainString: 'cl>json>rsaaes>base64',
-    customParentClass: 'tianai-custom-parent',
-    validSuccess: (result: any, c: any, t: any) => {
-      // 销毁
-      window.document.body.classList.remove('no-scroll');
-      t.destroyWindow();
-      
-      console.log('验证码验证成功，准备签到', result);
-      console.log('验证码验证结果:', result.data.token);
-      console.log('验证码验证结果:', result.data.randstr)
-
-      
-      // 确保传递正确的参数格式
-      const signParams = {
-        ticket: result.data.token,
-        randstr: result.data.randstr || ''
-      };
-      
-      console.log('签到参数:', signParams);
-      
-      // 调用签到API
-      frpApiUserSign(signParams).then((res) => {
-        console.log('签到API响应:', res);
-        if (res.flag) {
-          message.success(res.data);
-          getSignInfo();
-        } else {
-          notification.error({ 
-            title: '签到失败',
-            content: res.msg,
-            duration: 4500 
-          });
-        }
-      }).catch(error => {
-        console.error('签到API调用出错:', error);
-        notification.error({ 
-          title: '签到失败',
-          content: '请求发生错误，请稍后重试',
-          duration: 4500 
-        });
-      });
-    },
-    validFail: (err: any) => {
-      console.error('验证码验证失败:', err);
-      notification.error({ 
-        title: '验证失败',
-        content: '验证码验证失败，请重试',
-        duration: 3000 
-      });
-      window.document.body.classList.remove('no-scroll');
-    }
-  };
-  
   try {
-    window.document.body.classList.add('no-scroll');
-    console.log('初始化验证码组件');
-    
-    // 确保有一个容器元素
-    if (!document.getElementById('captcha-box')) {
-      const captchaBox = document.createElement('div');
-      captchaBox.id = 'captcha-box';
-      document.body.appendChild(captchaBox);
-    }
-    
-    const tacInstance = new (window as any).TAC(config);
-    tacInstance.init();
-    
-    // 添加关闭按钮事件监听
-    setTimeout(() => {
-      const closeBtn = document.getElementById('tianai-captcha-slider-close-btn');
-      if (closeBtn) {
-        closeBtn.addEventListener('click', () => {
-          window.document.body.classList.remove('no-scroll');
-          console.log('用户关闭了验证码');
-        });
+      const auth = Coockies.get('authorization');
+      if (auth) {
+        openUrl('https://console.openfrp.net/fastlogin?auth=' + auth+'&type=sign');
+      } else {
+        openUrl('https://console.openfrp.net/?type=sign');
       }
-    }, 500);
-  } catch (error) {
-    console.error('初始化验证码组件失败:', error);
-    window.document.body.classList.remove('no-scroll');
-    notification.error({ 
-      title: '签到失败',
-      content: '初始化验证码失败，请稍后重试',
-      duration: 3000 
-    });
-  }
-}
+    } catch (error) {
+      console.error('打开网页面板失败:', error);
+    }
+};
+
 
 // 添加刷新整个窗体的函数
 const refreshEntireWindow = () => {
@@ -367,7 +283,7 @@ onMounted(() => {
     </n-gradient-text> !
     <div style="margin-top: 10px;">
       <n-space vertical>
-        <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时与开发则反馈。</n-alert>
+        <!-- <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时与开发则反馈。</n-alert> -->
 
         <div v-if="headAlert?.status" style="margin-bottom: -8px;" v-external>
           <n-alert :title="headAlert.title" :type="headAlert.type" closable style="margin-bottom: 8px;">
@@ -439,9 +355,9 @@ onMounted(() => {
                   </template>
                   复制访问密钥
                 </n-tooltip>
-                <!-- <n-tooltip v-if="!signed" trigger="hover">
+                <n-tooltip v-if="!signed" trigger="hover">
                   <template #trigger>
-                    <n-button :disabled="false" type="success" text @click="userSign">
+                    <n-button type="success" text @click="userSign">
                       <template #icon>
                         <n-icon>
                           <CalendarOutline />
@@ -450,8 +366,8 @@ onMounted(() => {
                       签到
                     </n-button>
                   </template>
-                  CPL 暂时无法使用签到功能，请打开网页版签到。
-                </n-tooltip> -->
+                 立即签到获取更多流量
+                </n-tooltip>
               </n-space>
             </n-space>
           </n-flex>

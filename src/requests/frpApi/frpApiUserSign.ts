@@ -1,17 +1,12 @@
 import { callApi } from '../../utils/apiClient';
 
-interface SignRequest {
-  ticket: string;
-  randstr?: string;
-}
-
 interface Response {
   data: string;
   flag: boolean;
   msg: string;
 }
 
-export default async (req: SignRequest) => {
+export default async (req: any) => {
   try {
     // 确保请求参数格式正确
     const response = await callApi<Response>('userSign', {

@@ -211,8 +211,8 @@ onMounted(async () => {
     }
     
     // 从localStorage读取token，从configs.json获取自启动等设置
-    // ... existing code ...
-})
+    await getAppDataDir();
+});
 
 onUnmounted(() => {
     if (unlistenLog) {
@@ -476,82 +476,109 @@ const helpDrawer = (type: string) => {
 // 添加退出登录函数
 const logout = () => {
 
-    dialog.warning({
-        title: '确认退出',
-        content: '确定要退出登录吗？',
-        positiveText: '确定',
-        negativeText: '取消',
-        onPositiveClick: () => {
-            // 清除用户token
-            logoutCurr()
-            userToken.value = ''
-            tempToken.value = ''
-            Cookies.remove('authorization');
-            localStorage.removeItem('userToken')
-            message.success('已成功退出登录')
-            router.go(0);
-        }
-    })
-}
-
-const Authlogout = () => {
-
-    dialog.warning({
-        title: '确认退出',
-        content: '确定要退出登录吗？',
-        positiveText: '确定',
-        negativeText: '取消',
-        onPositiveClick: () => {
-            // 清除用户token
-            logoutCurr()
-            Cookies.remove('authorization');
-            userToken.value = ''
-            tempToken.value = ''
-            localStorage.removeItem('userToken')
-            message.success('已成功退出登录')
-            router.go(0);
-        }
-    })
-}
-const AuthLogin = async () => {
-    if (!Authorization.value) {
-        message.error('请输入 Authorization');
-        return;
+        dialog.warning({
+            title: '确认退出',
+            content: '确定要退出登录吗？',
+            positiveText: '确定',
+            negativeText: '取消',
+            onPositiveClick: () => {
+                // 清除用户token
+                logoutCurr()
+                userToken.value = ''
+                tempToken.value = ''
+                Cookies.remove('authorization');
+                localStorage.removeItem('userToken')
+                message.success('已成功退出登录')
+                router.go(0);
+            }
+        })
     }
-    message.loading('正在登录...', { duration: 2000 });
 
-    try {
-        // 直接使用 invoke 而不是 callApi，避免循环检查
-        const testResponse = await invoke('proxy_api', {
-            url: 'getUserInfo',
-            method: 'POST',
-            headers: {
-                Authorization: Authorization.value
-            },
-            body: {},
-        });
-        console.log(testResponse);
+    const Authlogout = () => {
 
-        if (!testResponse || !(testResponse as any).flag) {
-            message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
+        dialog.warning({
+            title: '确认退出',
+            content: '确定要退出登录吗？',
+            positiveText: '确定',
+            negativeText: '取消',
+            onPositiveClick: () => {
+                // 清除用户token
+                logoutCurr()
+                Cookies.remove('authorization');
+                userToken.value = ''
+                tempToken.value = ''
+                localStorage.removeItem('userToken')
+                message.success('已成功退出登录')
+                router.go(0);
+            }
+        })
+    }
+    
+    // 绕过代理设置
+    const bypassProxy = ref<boolean>(localStorage.getItem('bypassProxy') === 'true');
+    
+    // 监听绕过代理设置变化
+    watch(bypassProxy, (value) => {
+        localStorage.setItem('bypassProxy', value ? 'true' : 'false');
+        // 设置环境变量
+        if (value) {
+            // 设置绕过代理环境变量
+            import('@tauri-apps/api/core').then((module) => {
+                module.invoke('set_env', { key: 'BYPASS_PROXY', value: 'true' });
+            });
+        } else {
+            // 清除绕过代理环境变量
+            import('@tauri-apps/api/core').then((module) => {
+                module.invoke('set_env', { key: 'BYPASS_PROXY', value: 'false' });
+            });
+        }
+    });
+    
+    const AuthLogin = async () => {
+        if (!Authorization.value) {
+            message.error('请输入 Authorization');
             return;
         }
+        message.loading('正在登录...', { duration: 2000 });
 
-        // Authorization 有效，保存登录状态
-        Cookies.set('authorization', Authorization.value, {
-            expires: 7,
-        });
-        userToken.value = Authorization.value;
-        localStorage.setItem('userToken', Authorization.value);
-        tempToken.value = Authorization.value;
-        message.success('登录成功');
-        router.go(0);
-    } catch (error: any) {
-        console.error('登录失败:', error);
-        message.error(error?.message || '登录失败：无效的 Authorization');
+        try {
+            // 直接使用 invoke 而不是 callApi，避免循环检查
+            const testResponse = await invoke('proxy_api', {
+                url: 'getUserInfo',
+                method: 'POST',
+                headers: {
+                    Authorization: Authorization.value
+                },
+                body: {},
+            });
+            console.log(testResponse);
+
+            if (!testResponse || !(testResponse as any).flag) {
+                message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
+                return;
+            }
+
+            // Authorization 有效，保存登录状态
+            Cookies.set('authorization', Authorization.value, {
+                expires: 7,
+            });
+            userToken.value = Authorization.value;
+            localStorage.setItem('userToken', Authorization.value);
+            tempToken.value = Authorization.value;
+            message.success('登录成功');
+            router.go(0);
+        } catch (error) {
+            console.error('登录过程中出错:', error);
+            message.error('登录失败，请稍后重试');
+        }
     }
-}
-
+    
+    // 页面加载时初始化绕过代理设置
+    onMounted(() => {
+        if (bypassProxy.value) {
+            invoke('set_env', { key: 'BYPASS_PROXY', value: 'true' });
+        }
+    });
 // 添加手动放置frpc的相关功能
 const appDataDir = ref('');
 const manualModeVisible = ref(false);
@@ -680,7 +707,6 @@ const showManualMode = async () => {
 };
 
 onMounted(async () => {
-    // ... existing code ...
     await getAppDataDir();
 });
 
@@ -933,6 +959,22 @@ onMounted(() => {
                                     <n-switch v-model:value="enableGaussianBlur" disabled/>
                                     <span>高斯模糊视觉特效（窗口需支持透明）</span>
                                 </n-space> -->
+                            </n-space>
+                        </n-collapse-item>
+                        <n-collapse-item title="网络设置" name="4">
+                            <n-space vertical>
+                                <n-space align="center">
+                                    <n-switch v-model:value="bypassProxy" />
+                                    <span>绕过系统代理</span>
+                                    <n-tooltip trigger="hover">
+                                        <template #trigger>
+                                            <n-icon>
+                                                <HelpCircleOutline />
+                                            </n-icon>
+                                        </template>
+                                        启用后将不使用系统代理直接连接网络
+                                    </n-tooltip>
+                                </n-space>
                             </n-space>
                         </n-collapse-item>
                     </n-collapse>

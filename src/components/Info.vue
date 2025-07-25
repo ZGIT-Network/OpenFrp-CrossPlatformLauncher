@@ -5,6 +5,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { darkTheme } from 'naive-ui'
 
 import cardImage from '@/assets/pexels-pok-rie-6135376.jpg';
+import ymaalyp from '@/assets/ymaalyp.png';
+import ymavx from '@/assets/ymawx.png';
 
 const currentVersion = ref('v0.1')
 
@@ -103,8 +105,8 @@ onMounted(async () => {
                                 感谢使用。<br />
                                 如果您愿意赞助本项目，请扫描下方二维码，或者前往 <a href="https://afdian.com/a/zgitnetwork">爱发电</a>
                                 赞助。<br />您的每一笔赞助都将用于本项目的开发并标注在 <a href="https://www.zyghit.cn/sponsor">赞助者列表</a>。<br />
-                                <n-image width="300" src="https://r.zyghit.cn/images/ymawx.png" /><n-image width="200"
-                                    src="https://r.zyghit.cn/images/ymaalyp.png" /><br />
+                                <n-image width="300" :src="ymavx" /><n-image width="200"
+                                    :src="ymaalyp" /><br />
                             </n-text>
                         </div>
                     </n-collapse-item>

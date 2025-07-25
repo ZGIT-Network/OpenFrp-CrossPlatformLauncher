@@ -20,6 +20,18 @@ const tunnelOptions = ref<SelectOption[]>([
 ])
 const selectedTunnel = ref('all')
 
+// 计算动态行数
+const dynamicRows = ref(23)
+
+// 根据窗口高度计算行数
+const calculateRows = () => {
+  // 获取窗口高度并计算合适的行数
+  // 假设每行大约占用20px高度，根据实际情况调整
+  const availableHeight = window.innerHeight - 300 // 减去其他组件占用的高度
+  const calculatedRows = Math.max(23, Math.floor(availableHeight / 16)) // 最少显示23行
+  dynamicRows.value = calculatedRows
+}
+
 // 更新隧道选项
 function updateTunnelOptions() {
   // 保留已有的'全部日志'选项
@@ -107,6 +119,12 @@ const clearLogs = () => {
 onMounted(async () => {
   console.log("FrpcManager组件挂载");
   
+  // 计算初始行数
+  calculateRows()
+  
+  // 监听窗口大小变化
+  window.addEventListener('resize', calculateRows)
+  
   // 初始加载日志并构建索引
   globalLogService.loadLogsAndRebuildIndices();
   console.log('初始加载日志完成，共有日志条数:', logStore.value.size);
@@ -126,6 +144,8 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  // 移除窗口大小变化监听器
+  window.removeEventListener('resize', calculateRows)
   // 组件卸载时不清理全局监听器，只清理组件特定的监听器
   console.log("FrpcManager组件卸载，保持全局日志监听器运行");
 });
@@ -134,16 +154,19 @@ onUnmounted(() => {
 
 <template>
   <n-space vertical>
-    <n-h2 style="margin-bottom: 3px;">运行日志</n-h2>
+    <n-h2 style="margin-bottom: 1px;">运行日志</n-h2>
     <n-card >
-      <template #header-extra>
-        <n-space>
-          <n-select 
+      <template #header>
+         <n-select 
             v-model:value="selectedTunnel" 
             :options="tunnelOptions" 
             placeholder="选择隧道" 
             style="width: 180px"
           />
+      </template>
+      <template #header-extra>
+        <n-space>
+         
           <n-switch v-model:value="autoScroll">
             <template #checked>自动滚动开启</template>
             <template #unchecked>自动滚动关闭</template>
@@ -154,7 +177,7 @@ onUnmounted(() => {
         </n-space>
       </template>
       <n-log 
-        :rows="25"
+        :rows="dynamicRows"
         :log="logs"
         :loading="false"
         :hljs="hljs"

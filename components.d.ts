@@ -18,6 +18,7 @@ declare module 'vue' {
     Infomation: typeof import('./src/components/ManageProxies/Infomation.vue')['default']
     Login: typeof import('./src/components/Login.vue')['default']
     Menu: typeof import('./src/components/ManageProxies/Menu.vue')['default']
+    NA: typeof import('naive-ui')['NA']
     NAlert: typeof import('naive-ui')['NAlert']
     NAvatar: typeof import('naive-ui')['NAvatar']
     NBackTop: typeof import('naive-ui')['NBackTop']

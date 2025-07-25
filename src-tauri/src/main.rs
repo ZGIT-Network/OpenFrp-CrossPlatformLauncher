@@ -92,7 +92,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.5.2".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.6.0".to_string()));
         }
 
         // 更新版本号
@@ -523,6 +523,15 @@ async fn start_frpc_instance<R: Runtime>(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     println!("{:?}", cmd);
+
+    // 添加绕过系统代理的环境变量
+    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
+    if bypass_proxy == "true" {
+        cmd.env("HTTP_PROXY", "");
+        cmd.env("HTTPS_PROXY", "");
+        cmd.env("http_proxy", "");
+        cmd.env("https_proxy", "");
+    }
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
 
@@ -974,7 +983,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.5.2".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.6.0".to_string()))
 }
 
 #[tauri::command]
