@@ -597,7 +597,7 @@ const formRef = ref();
                         filterable
                         :options="autoTlsType"
                         :on-search="
-                          (x) => {
+                          (x: any) => {
                             if (x.length == 0) {
                               autoTlsType[2].disabled = true;
                               autoTlsType[2].label = '输入证书文件名';
@@ -629,7 +629,7 @@ const formRef = ref();
                         :value="autoTlsName"
                         placeholder=""
                         @update:value="
-                          (x) => {
+                          (x: any) => {
                             autoTlsName = x;
                           }
                         "
