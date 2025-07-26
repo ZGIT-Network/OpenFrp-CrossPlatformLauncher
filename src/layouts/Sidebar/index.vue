@@ -4,7 +4,7 @@ import { h } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { NMenu, NLayoutSider } from 'naive-ui';
 import type { MenuOption } from 'naive-ui';
-import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, EnterOutline, AddOutline, InformationOutline,ServerOutline } from '@vicons/ionicons5';
+import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, LogoWebComponent, EnterOutline, AddOutline, InformationOutline,ServerOutline } from '@vicons/ionicons5';
 import { invoke } from '@tauri-apps/api/core';
 import  Coockies  from '@/utils/cookies';
 
@@ -75,6 +75,11 @@ const menuOptions = computed(() => [
     label: () => h(RouterLink, { to: { name: 'FrpcManager' } }, () => '日志'),
     key: 'frpc',
     icon: () => h(TerminalOutline)
+  },
+  {
+    label: () => h(RouterLink, { to: { name: 'Network' } }, () => '网络'),
+    key: 'network',
+    icon: () => h(LogoWebComponent)
   },
   {
     label: () => h(RouterLink, { to: { name: 'Settings' } }, () => '设置'),

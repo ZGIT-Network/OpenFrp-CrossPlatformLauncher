@@ -6,6 +6,7 @@ import ProxyList from '../components/ProxyList.vue'
 import Info from '../components/Info.vue'
 import CreateProxy from '../components/CreateProxies/index.vue'
 import Login from '@/components/Login.vue'
+import Network from '../components/Network.vue'
 // import NodeStatus from '@/components/NodeStatus.vue.bak'
 
 const routes = [
@@ -43,6 +44,11 @@ const routes = [
   //   name: 'NodeStatus',
   //   component: NodeStatus
   // },
+  {
+    path: '/network',
+    name: 'Network',
+    component: Network
+  },
   {
     path: '/settings',
     name: 'Settings',

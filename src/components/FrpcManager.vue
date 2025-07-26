@@ -4,6 +4,8 @@ import { useMessage, NButton, NCard, NLog, NSpace, NSwitch, NSelect } from 'naiv
 import type { LogInst, SelectOption } from 'naive-ui'
 import hljs from 'highlight.js'
 import { globalLogService } from '../services/logService'
+import { invoke } from '@tauri-apps/api/core';
+
 
 const message = useMessage()
 const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
@@ -13,6 +15,12 @@ const logs = ref('')
 // 使用全局日志服务的数据
 const logStore = globalLogService.getLogStore()
 const tunnelLogIndices = globalLogService.getTunnelLogIndices()
+
+// 右键菜单相关
+const showDropdown = ref(false)
+const dropdownX = ref(0)
+const dropdownY = ref(0)
+const selectedText = ref('')
 
 // 添加隧道筛选功能
 const tunnelOptions = ref<SelectOption[]>([
@@ -58,6 +66,170 @@ function updateTunnelOptions() {
   // 更新选项
   tunnelOptions.value = options;
 }
+
+const currentVersion = ref('v0.1')
+
+const getCurrentVersion = async () => {
+    try {
+        const version = await invoke('get_cpl_version')
+        currentVersion.value = version as string
+    } catch (e) {
+        currentVersion.value = '获取失败'
+        console.error('获取版本失败:', e)
+    }
+}
+getCurrentVersion()
+
+const systemInfo = ref('')
+const buildInfo = ref('')
+
+onMounted(async () => {
+    try {
+        currentVersion.value = await invoke('get_cpl_version')
+        systemInfo.value = await invoke('get_system_info')
+        buildInfo.value = await invoke('get_build_info')
+    } catch (e) {
+        console.error('获取版本信息失败:', e)
+    }
+})
+
+// 保存日志功能 - 使用原生Web API实现
+const saveLogs = () => {
+  try {
+    // 创建一个函数来过滤HTML标签
+    const stripHtmlTags = (text: string): string => {
+      const div = document.createElement('div');
+      div.innerHTML = text;
+      return div.textContent || div.innerText || '';
+    };
+
+    // 构建包含基本信息的日志内容
+    const timestamp = new Date().toISOString()
+    let logHeader = `OpenFrp 跨平台启动器 日志文件\n`
+    logHeader += `CPL版本: Beta v${currentVersion.value} 构建号：${buildInfo.value}\n`
+    logHeader += `生成时间: ${timestamp}\n`
+    logHeader += `平台: ${systemInfo.value}\n`
+    logHeader += `用户代理: ${navigator.userAgent}\n`
+    
+    // 添加隧道信息
+    if (selectedTunnel.value === 'all') {
+      logHeader += `日志范围: 全部隧道\n`
+    } else if (selectedTunnel.value.startsWith('link-')) {
+      logHeader += `日志范围: 快速隧道 #${selectedTunnel.value}\n`
+    } else {
+      logHeader += `日志范围: 隧道 #${selectedTunnel.value}\n`
+    }
+    
+    logHeader += `日志条目数: ${logs.value.split('\n').filter(line => line.trim() !== '').length}\n`
+    logHeader += `=`.repeat(80) + `\n\n`
+    
+    // 过滤日志内容中的HTML标签
+    const cleanLogs = stripHtmlTags(logs.value);
+    
+    // 合并头部信息和日志内容
+    const fullLogContent = logHeader + cleanLogs
+    
+    // 创建一个Blob对象包含日志内容
+    const blob = new Blob([fullLogContent], { type: 'text/plain;charset=utf-8' })
+    
+    // 创建一个虚拟的下载链接
+    const link = document.createElement('a')
+    
+    // 设置下载文件名，包含时间戳
+    const filenameTimestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    let filename = `openfrp-cpl-logs-${filenameTimestamp}.txt`
+    
+    // 如果当前筛选的是特定隧道，则在文件名中包含隧道ID
+    if (selectedTunnel.value !== 'all') {
+      filename = `openfrp-cpl-logs-tunnel-#${selectedTunnel.value}-${filenameTimestamp}.txt`
+    }
+    
+    // 创建对象URL
+    link.href = URL.createObjectURL(blob)
+    link.download = filename
+    
+    // 触发下载
+    document.body.appendChild(link)
+    link.click()
+    
+    // 清理 - 移除链接和对象URL
+    document.body.removeChild(link)
+    URL.revokeObjectURL(link.href)
+    
+    message.success('日志已成功保存到默认下载位置')
+  } catch (error) {
+    console.error('保存日志失败:', error)
+    message.error('保存日志失败: ' + (error as Error).message)
+  }
+}
+
+
+// 右键菜单选项
+const dropdownOptions = ref([
+  {
+    label: '复制',
+    key: 'copy'
+  },
+  {
+    label: '全选',
+    key: 'selectAll'
+  }
+])
+
+// 处理右键菜单事件
+const handleContextMenu = (e: MouseEvent) => {
+  e.preventDefault()
+  showDropdown.value = false
+  
+  // 获取当前选中的文本
+  nextTick().then(() => {
+    const selection = window.getSelection()
+    if (selection && selection.toString().length > 0) {
+      selectedText.value = selection.toString()
+    } else {
+      selectedText.value = ''
+    }
+    
+    showDropdown.value = true
+    dropdownX.value = e.clientX
+    dropdownY.value = e.clientY
+  })
+}
+// 获取选中文本
+const getSelectedText = () => {
+  const text = window.getSelection?.() || document.getSelection?.()
+  return text ? text.toString() : ''
+}
+
+// 处理菜单选项
+const handleSelect = (key: string) => {
+  showDropdown.value = false
+  
+  if (key === 'copy') {
+    if (selectedText.value) {
+      navigator.clipboard.writeText(selectedText.value).then(() => {
+        message.success('已复制到剪贴板')
+      }).catch(() => {
+        message.error('复制失败')
+      })
+    } else {
+      message.warning('没有选中任何内容')
+    }
+  } else if (key === 'selectAll') {
+    const logElement = document.querySelector('.n-log')
+    if (logElement) {
+      const selection = window.getSelection()
+      const range = document.createRange()
+      range.selectNodeContents(logElement)
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+      // 更新选中的文本
+      selectedText.value = selection?.toString() || ''
+    }
+  }
+}
+
+
 
 // 更新显示的日志
 function updateDisplayedLogs() {
@@ -154,7 +326,7 @@ onUnmounted(() => {
 
 <template>
   <n-space vertical>
-    <n-h2 style="margin-bottom: 1px;">运行日志</n-h2>
+    <n-h2 style="margin-bottom: 1px;">运行日志 </n-h2> 
     <n-card >
       <template #header>
          <n-select 
@@ -171,12 +343,37 @@ onUnmounted(() => {
             <template #checked>自动滚动开启</template>
             <template #unchecked>自动滚动关闭</template>
           </n-switch>
+          <n-button text type="primary" @click="saveLogs">
+            保存日志
+          </n-button>
           <n-button text type="primary" @click="clearLogs">
             清除日志
           </n-button>
         </n-space>
       </template>
-      <n-log 
+      <div @contextmenu="handleContextMenu">
+        <n-log 
+          :rows="dynamicRows"
+          :log="logs"
+          :loading="false"
+          :hljs="hljs"
+          ref="logInst"
+          @scroll="handleScroll"
+          language="naive-log"
+          trim
+        />
+      </div>
+      <n-dropdown
+        placement="bottom-start"
+        trigger="manual"
+        :x="dropdownX"
+        :y="dropdownY"
+        :options="dropdownOptions"
+        :show="showDropdown"
+        :on-clickoutside="() => {showDropdown = false}"
+        @select="handleSelect"
+      />
+      <!-- <n-log 
         :rows="dynamicRows"
         :log="logs"
         :loading="false"
@@ -185,7 +382,7 @@ onUnmounted(() => {
         @scroll="handleScroll"
         language="naive-log"
         trim
-      />
+      /> -->
     </n-card>
   </n-space>
 </template>

@@ -945,7 +945,7 @@ onMounted(async () => {
 
 <template>
   <n-scrollbar>
-    <n-space vertical>
+    <n-space vertical style="margin-left: 8px;margin-right: 8px; height: 100%;margin-bottom: 8px;">
       <n-h2 style="margin-bottom: 3px;">隧道管理</n-h2>
       <n-skeleton v-if="loading" :height="3" />
       <n-card v-else-if="getLinkOnlyTunnels.size > 0" title="外部快速启动隧道">

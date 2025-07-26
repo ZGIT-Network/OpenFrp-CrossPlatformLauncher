@@ -5,7 +5,7 @@
   "author": "云默安 @ ZGIT Network",
   "homepage": "https://www.openfrp.net",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,6 +18,7 @@
     "@tauri-apps/plugin-autostart": "^2.2.0",
     "@tauri-apps/plugin-deep-link": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-fs": "^2.4.1",
     "@tauri-apps/plugin-http": "^2.3.0",
     "@tauri-apps/plugin-notification": "^2.2.1",
     "@tauri-apps/plugin-opener": "^2.2.6",
