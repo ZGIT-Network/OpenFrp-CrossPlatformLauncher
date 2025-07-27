@@ -596,10 +596,396 @@ fn get_system_info() -> String {
 }
 
 #[command]
+fn get_detailed_system_info() -> String {
+    let os = std::env::consts::OS;
+    
+    match os {
+        "windows" => get_windows_build_info(), // 使用改进的Windows版本信息函数
+        "linux" => get_linux_version(),
+        "macos" => get_macos_version(),
+        _ => format!("{}-{}", os, std::env::consts::ARCH),
+    }
+}
+
+fn get_windows_version() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // 尝试通过systeminfo命令获取Windows版本
+        let output = Command::new("cmd")
+            .args(&["/C", "systeminfo"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                for line in output_str.lines() {
+                    if line.starts_with("OS Name:") {
+                        let os_name = line.split(":").nth(1).unwrap_or("").trim();
+                        // 尝试获取OS Version
+                        if let Some(version_line) = output_str.lines().find(|l| l.starts_with("OS Version:")) {
+                            let version = version_line.split(":").nth(1).unwrap_or("").trim();
+                            return format!("{} ({})", os_name, version);
+                        }
+                        return os_name.to_string();
+                    }
+                }
+            }
+        }
+        
+        // 备用方法：通过 wmic 获取更详细的信息
+        let output = Command::new("wmic")
+            .args(&["os", "get", "Name,Caption,Version,OSArchitecture", "/value"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                let mut caption = "";
+                let mut version = "";
+                let mut architecture = "";
+                
+                for line in output_str.lines() {
+                    let line = line.trim();
+                    if line.starts_with("Caption=") {
+                        caption = line.split("=").nth(1).unwrap_or("");
+                    } else if line.starts_with("Version=") {
+                        version = line.split("=").nth(1).unwrap_or("");
+                    } else if line.starts_with("OSArchitecture=") {
+                        architecture = line.split("=").nth(1).unwrap_or("");
+                    }
+                }
+                
+                if !caption.is_empty() && !version.is_empty() && !architecture.is_empty() {
+                    return format!("{} ({}) {}", caption, version, architecture);
+                } else if !caption.is_empty() {
+                    return caption.to_string();
+                }
+            }
+        }
+        
+        // 再次备用方法：通过 ver 命令
+        let output = Command::new("cmd")
+            .args(&["/C", "ver"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let version_string = String::from_utf8_lossy(&output.stdout);
+                return version_string.trim().to_string();
+            }
+        }
+        
+        // 最后的备用方法：读取注册表信息
+        let output = Command::new("reg")
+            .args(&["query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "ProductName"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                for line in output_str.lines() {
+                    if line.contains("ProductName") && line.contains("REG_SZ") {
+                        let parts: Vec<&str> = line.split("REG_SZ").collect();
+                        if parts.len() > 1 {
+                            return parts[1].trim().to_string();
+                        }
+                    }
+                }
+            }
+        }
+        
+        "Windows (unknown version)".to_string()
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Windows (not available on this platform)".to_string()
+    }
+}
+
+fn get_windows_build_info() -> String {
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        
+        // 获取详细的 Windows 版本信息
+        let output = Command::new("wmic")
+            .args(&["os", "get", "BuildNumber,Version,OSArchitecture,Locale,CurrentBuild", "/value"])
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                let mut version = "";
+                let mut build_number = "";
+                let mut architecture = "";
+                let mut locale = "";
+                
+                for line in output_str.lines() {
+                    let line = line.trim();
+                    if line.starts_with("Version=") {
+                        version = line.split("=").nth(1).unwrap_or("");
+                    } else if line.starts_with("BuildNumber=") {
+                        build_number = line.split("=").nth(1).unwrap_or("");
+                    } else if line.starts_with("OSArchitecture=") {
+                        architecture = line.split("=").nth(1).unwrap_or("");
+                    } else if line.starts_with("Locale=") {
+                        locale = line.split("=").nth(1).unwrap_or("");
+                    }
+                }
+                
+                // 尝试获取本地化信息
+                let locale_str = match locale {
+                    "0409" => "en-US",
+                    "0804" => "zh-CN",
+                    "0404" => "zh-TW",
+                    _ => locale,
+                };
+                
+                if !version.is_empty() && !build_number.is_empty() && !architecture.is_empty() {
+                    return format!("Microsoft Windows [Version {}.{}]_{}fre_{}", 
+                                 version, build_number, 
+                                 architecture.to_lowercase().replace("bit", ""),
+                                 locale_str);
+                }
+            }
+        }
+        
+        // 备用方案：通过注册表获取
+        let current_version = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
+        
+        // 获取主要版本信息
+        let product_name = get_registry_value(current_version, "ProductName");
+        let current_build = get_registry_value(current_version, "CurrentBuild");
+        let ubr = get_registry_value(current_version, "UBR");
+        let arch = std::env::consts::ARCH;
+        
+        if !product_name.is_empty() && !current_build.is_empty() {
+            let ubr_val = if !ubr.is_empty() { 
+                format!(".{}", ubr) 
+            } else { 
+                "".to_string() 
+            };
+            
+            return format!("{} [Version {}.{}{}]_{}fre_{}", 
+                          product_name,
+                          current_build,
+                          current_build,
+                          ubr_val,
+                          arch,
+                          get_windows_locale());
+        }
+        
+        "Windows (unknown build)".to_string()
+    }
+    
+    #[cfg(not(target_os = "windows"))]
+    {
+        "Windows build info (not available on this platform)".to_string()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn get_registry_value(key: &str, value_name: &str) -> String {
+    use std::process::Command;
+    
+    let output = Command::new("reg")
+        .args(&["query", key, "/v", value_name])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output();
+        
+    if let Ok(output) = output {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                if line.contains(value_name) && (line.contains("REG_SZ") || line.contains("REG_DWORD")) {
+                    // 根据值类型处理
+                    if line.contains("REG_SZ") {
+                        let parts: Vec<&str> = line.split("REG_SZ").collect();
+                        if parts.len() > 1 {
+                            return parts[1].trim().to_string();
+                        }
+                    } else if line.contains("REG_DWORD") {
+                        let parts: Vec<&str> = line.split("REG_DWORD").collect();
+                        if parts.len() > 1 {
+                            return parts[1].trim().to_string();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    String::new()
+}
+
+#[cfg(target_os = "windows")]
+fn get_windows_locale() -> String {
+    use std::process::Command;
+    
+    let output = Command::new("wmic")
+        .args(&["os", "get", "Locale", "/value"])
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output();
+        
+    if let Ok(output) = output {
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            for line in output_str.lines() {
+                let line = line.trim();
+                if line.starts_with("Locale=") {
+                    let locale = line.split("=").nth(1).unwrap_or("");
+                    return match locale {
+                        "0409" => "en-US".to_string(),
+                        "0804" => "zh-CN".to_string(),
+                        "0404" => "zh-TW".to_string(),
+                        _ => format!("locale-{}", locale),
+                    };
+                }
+            }
+        }
+    }
+    
+    "unknown".to_string()
+}
+
+fn get_linux_version() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        
+        // 尝试读取 /etc/os-release 文件
+        if let Ok(content) = fs::read_to_string("/etc/os-release") {
+            for line in content.lines() {
+                if line.starts_with("PRETTY_NAME=") {
+                    if let Some(version) = line.strip_prefix("PRETTY_NAME=") {
+                        return version.trim_matches('"').to_string();
+                    }
+                }
+            }
+        }
+        
+        // 尝试读取 /proc/version 文件
+        if let Ok(content) = fs::read_to_string("/proc/version") {
+            let parts: Vec<&str> = content.split_whitespace().take(3).collect();
+            return parts.join(" ");
+        }
+        
+        "Linux (unknown distribution)".to_string()
+    }
+    
+    #[cfg(not(target_os = "linux"))]
+    {
+        "Linux (not available on this platform)".to_string()
+    }
+}
+
+fn get_macos_version() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        
+        // 使用 system_profiler 获取 macOS 版本
+        let output = Command::new("sw_vers")
+            .output();
+            
+        if let Ok(output) = output {
+            if output.status.success() {
+                let content = String::from_utf8_lossy(&output.stdout);
+                let mut product_name = "macOS";
+                let mut version = "";
+                
+                for line in content.lines() {
+                    if line.starts_with("ProductName:") {
+                        product_name = line.split(':').nth(1).unwrap_or("macOS").trim();
+                    } else if line.starts_with("ProductVersion:") {
+                        version = line.split(':').nth(1).unwrap_or("").trim();
+                    }
+                }
+                
+                return format!("{} {}", product_name, version);
+            }
+        }
+        
+        "macOS (unknown version)".to_string()
+    }
+    
+    #[cfg(not(target_os = "macos"))]
+    {
+        "macOS (not available on this platform)".to_string()
+    }
+}
+
+#[command]
 fn get_build_info() -> String {
     let build_time = env!("BUILD_TIME", "未知构建时间");
     let _commit_id = env!("GIT_HASH", "未知提交");
     format!("build.{}", build_time)
+}
+
+#[command]
+async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Instant;
+    println!("tcp_ping called with host: {}, port: {}", host, port);
+
+    
+    // 解析主机名和端口为SocketAddr
+    let addrs = match (host.as_str(), port).to_socket_addrs() {
+        Ok(addrs) => addrs,
+        Err(e) => {
+            return Ok(serde_json::json!({
+                "success": false,
+                "latency_ms": null,
+                "message": format!("地址解析失败: {}", e)
+            }));
+        }
+    };
+    
+    
+    // 取第一个地址进行连接测试
+   let addr = match addrs.into_iter().next() {
+        Some(addr) => {
+            println!("Using address: {:?}", addr);
+            addr
+        },
+        None => {
+            println!("No valid address found");
+            return Ok(serde_json::json!({
+                "success": false,
+                "latency_ms": null,
+                "message": "未能解析到有效的地址"
+            }));
+        }
+    };
+    
+    let start = Instant::now();
+    match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)) {
+        Ok(_) => {
+            let duration = start.elapsed();
+            println!("Connection successful, latency: {}ms", duration.as_millis());
+            Ok(serde_json::json!({
+                "success": true,
+                "latency_ms": duration.as_millis(),
+                "message": format!("测试连接成功，延迟 {}ms", duration.as_millis())
+            }))
+        },
+        Err(e) => {
+            println!("Connection failed: {}", e);
+            Ok(serde_json::json!({
+                "success": false,
+                "latency_ms": null,
+                "message": format!("发生错误，连接失败: {}", e)
+            }))
+        }
+    }
 }
 
 #[command]
@@ -1291,11 +1677,13 @@ fn main() {
             install_update,
             get_build_info,
             get_system_info,
+            get_detailed_system_info,
             api_proxy::proxy_api,
             get_app_data_dir,
             open_app_data_dir,
             get_local_ports, // 新增端口扫描命令
             download_and_install_update,
+            tcp_ping,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
