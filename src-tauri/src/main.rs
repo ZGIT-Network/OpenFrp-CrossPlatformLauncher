@@ -92,7 +92,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.6.1".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.6.3".to_string()));
         }
 
         // 更新版本号
@@ -252,7 +252,7 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = client.get("https://api.openfrp.net/commonQuery/get?key=software")
+    let response = client.get("https://of-dev-api.bfsea.com/commonQuery/get?key=software")
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -933,7 +933,8 @@ fn get_build_info() -> String {
 #[command]
 async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> {
     use std::net::{TcpStream, ToSocketAddrs};
-    use std::time::Instant;
+    use std::time::{Instant, Duration};
+    use serde_json::Value;
     println!("tcp_ping called with host: {}, port: {}", host, port);
 
     
@@ -966,26 +967,70 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
         }
     };
     
-    let start = Instant::now();
-    match TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(5)) {
-        Ok(_) => {
-            let duration = start.elapsed();
-            println!("Connection successful, latency: {}ms", duration.as_millis());
-            Ok(serde_json::json!({
-                "success": true,
-                "latency_ms": duration.as_millis(),
-                "message": format!("测试连接成功，延迟 {}ms", duration.as_millis())
-            }))
-        },
-        Err(e) => {
-            println!("Connection failed: {}", e);
-            Ok(serde_json::json!({
-                "success": false,
-                "latency_ms": null,
-                "message": format!("发生错误，连接失败: {}", e)
-            }))
+    let mut latencies: Vec<u128> = Vec::new();
+    let start_time = Instant::now();
+    let max_duration = Duration::from_secs(2); // 最多测试2秒钟
+    
+    // 在1秒钟内进行多次测试
+    while start_time.elapsed() < max_duration {
+        let start = Instant::now();
+        match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
+            Ok(_) => {
+                let duration = start.elapsed();
+                latencies.push(duration.as_millis());
+                // 短暂休眠以避免过于频繁的连接尝试
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            },
+            Err(e) => {
+                println!("Connection failed: {}", e);
+                // 即使连接失败也记录时间，但用0表示失败
+                latencies.push(0);
+                // 短暂休眠
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
         }
     }
+    
+    // 计算统计数据
+    if latencies.is_empty() {
+        return Ok(serde_json::json!({
+            "success": false,
+            "latency_ms": null,
+            "message": "未能执行任何测试"
+        }));
+    }
+    
+    // 过滤掉失败的连接(延迟为0的)
+    let successful_latencies: Vec<u128> = latencies.iter().filter(|&&x| x > 0).cloned().collect();
+    
+    if successful_latencies.is_empty() {
+        return Ok(serde_json::json!({
+            "success": false,
+            "latency_ms": 0,
+            "message": "所有连接测试均失败",
+            "total_tests": latencies.len(),
+            "successful_tests": 0
+        }));
+    }
+    
+    let total_tests = latencies.len();
+    let successful_tests = successful_latencies.len();
+    let avg_latency = successful_latencies.iter().sum::<u128>() / successful_tests as u128;
+    
+    // 计算最小和最大延迟
+    let min_latency = *successful_latencies.iter().min().unwrap();
+    let max_latency = *successful_latencies.iter().max().unwrap();
+    
+    println!("Connection successful, average latency: {}ms", avg_latency);
+    Ok(serde_json::json!({
+        "success": true,
+        "latency_ms": avg_latency,
+        "message": format!("测试完成，平均延迟 {}ms (最小: {}ms, 最大: {}ms)", avg_latency, min_latency, max_latency),
+        "total_tests": total_tests,
+        "successful_tests": successful_tests,
+        "min_latency": min_latency,
+        "max_latency": max_latency
+    }))
 }
 
 #[command]
@@ -1369,7 +1414,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.6.1".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.6.3".to_string()))
 }
 
 #[tauri::command]
@@ -1439,7 +1484,7 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
     form.insert("redirect_url", "https://www.zyghit.cn/ofcpl_login".to_string());
 
     let res = client
-        .post("https://api.openfrp.net/oauth2/callback")
+        .post("https://of-dev-api.bfsea.com/oauth2/callback")
         .form(&form)
         .send()
         .await

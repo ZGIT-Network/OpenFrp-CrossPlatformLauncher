@@ -23,7 +23,7 @@ pub async fn proxy_api(
     };
 
     // 构建请求
-    let base_url = "https://api.openfrp.net/frp/api";
+    let base_url = "https://of-dev-api.bfsea.com/frp/api";
     let full_url = format!("{}/{}", base_url, url);
 
     let mut request_builder = match method.to_lowercase().as_str() {
@@ -76,8 +76,26 @@ pub async fn proxy_api(
     // 发送请求
     let response = request_builder.send().await.map_err(|e| e.to_string())?;
 
+    // 获取响应头
+    let response_headers: std::collections::HashMap<String, String> = response
+        .headers()
+        .iter()
+        .map(|(name, value)| {
+            (
+                name.to_string(),
+                value.to_str().unwrap_or("").to_string(),
+            )
+        })
+        .collect();
+
     // 解析响应
     let response_body = response.json::<Value>().await.map_err(|e| e.to_string())?;
 
-    Ok(response_body)
+    // 返回包含响应头和响应体的对象
+    let result = serde_json::json!({
+        "data": response_body,
+        "headers": response_headers
+    });
+
+    Ok(result)
 }

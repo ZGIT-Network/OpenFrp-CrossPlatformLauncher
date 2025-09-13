@@ -823,10 +823,16 @@ const toggleDarkMode = () => {
   justify-content: space-between;
   align-items: center;
   padding: 0 5px;
-  background-color: rgba(255,255,255,0.01);
+  background-color: rgba(255, 255, 255, 0.01); /* 调整为半透明背景 */
   backdrop-filter: blur(10px);    
-  -webkit-backdrop-filter: blur(10px); 
+  -webkit-backdrop-filter: blur(10px);
 }
+
+/* 暗色主题下的透明效果 */
+.actual-dark .header {
+  background-color: rgba(30, 30, 30, 0.2); /* 暗色主题下的半透明背景 */
+}
+
 
 .header-left {
   display: flex;
@@ -934,4 +940,6 @@ const toggleDarkMode = () => {
 .header-logo {
   -webkit-app-region: drag;
 }
+
+
 </style>

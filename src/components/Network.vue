@@ -64,7 +64,7 @@ const serviceChecks = ref<ServiceCheck[]>([
     {
         id: 'main-api',
         name: 'OPENFRP 基本 API  (ofapi)',
-        url: 'https://api.openfrp.net/commonQuery/get?key=test',
+        url: 'https://of-dev-api.bfsea.com/commonQuery/get?key=test',
         status: null,
         checking: false,
         error: null,
@@ -223,19 +223,22 @@ const checkServiceStatus = async (service: ServiceCheck) => {
         const endTime = Date.now()
         service.latency = endTime - startTime
 
-        // 将404状态码也视为正常连接（根据用户要求）
-        // 对于CORS错误，fetch会抛出异常，我们在catch块中处理
-        service.status = response.ok || response.status === 404
-        if (!response.ok && response.status !== 404) {
+        // 只有响应成功或者403/404状态码视为正常连接
+        service.status = response.ok || response.status === 403 || response.status === 404
+        if (!response.ok && response.status !== 403 && response.status !== 404) {
             service.error = `HTTP ${response.status}: ${response.statusText}`
         }
         clearTimeout(timeoutId)
     } catch (e: any) {
         console.error(`${service.name}检查失败:`, e)
-        // 即使出现CORS错误或其他网络错误，也视为连接正常
-        // 因为这表明服务器是可访问的，只是存在跨域限制
-        service.status = true
-        service.error = null
+        // 检查是否为CORS错误
+        if (e.name === 'TypeError' && (e.message.includes('CORS') || e.message.includes('Failed to fetch'))) {
+            service.status = false  // CORS错误应视为连接失败
+            service.error = 'CORS限制或网络问题'
+        } else {
+            service.status = false
+            service.error = e.message || '网络连接异常'
+        }
     } finally {
         service.checking = false
     }
@@ -496,7 +499,7 @@ const maskHostname = (hostname: string): string => {
                     <template v-else>
 
                         <n-h4>互联网状态</n-h4>
-                        <n-text>{{ onlineStatus ? "OpenFrp Cross Platform Launcher 已连接至互联网" : "无法访问互联网" }}。</n-text>
+                        <n-text style="margin-left: 15px; margin-bottom: 5px;">{{ onlineStatus ? "OpenFrp Cross Platform Launcher 已连接至互联网" : "OpenFrp Cross Platform Launcher 无法访问互联网" }}。</n-text>
 
                         <n-h4>服务状态</n-h4>
                         <div v-for="service in serviceChecks" :key="service.id"

@@ -162,8 +162,22 @@ watch(() => route.name, (newRouteName) => {
 }
 
 .n-layout-sider {
-  background-color: rgba(250,250,250, 0.01);
-  backdrop-filter: blur(10px);    /* 模糊强度 */
-  -webkit-backdrop-filter: blur(10px); /* Safari 兼容 */
+  background-color: rgba(250, 250, 250, 0.3) !important; /* 增加透明度 */
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* 暗色主题下的样式 */
+.actual-dark .n-layout-sider {
+  background-color: rgba(30, 30, 30, 0.3) !important;
+}
+
+/* 收起状态下的样式 */
+.n-layout-sider--collapsed {
+  background-color: rgba(250, 250, 250, 0.2) !important;
+}
+
+.actual-dark .n-layout-sider--collapsed {
+  background-color: rgba(30, 30, 30, 0.2) !important;
 }
 </style>

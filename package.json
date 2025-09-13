@@ -5,7 +5,7 @@
   "author": "云默安 @ ZGIT Network",
   "homepage": "https://www.openfrp.net",
   "private": true,
-  "version": "0.6.1",
+  "version": "0.6.3",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -32,7 +32,6 @@
     "datejs": "^1.0.0-rc3",
     "dayjs": "^1.11.13",
     "highlight.js": "^11.11.1",
-    "js-cookie": "^3.0.5",
     "less": "^4.2.2",
     "marked": "^15.0.6",
     "naive-ui": "^2.41.0",
@@ -48,6 +47,7 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2",
     "@types/js-cookie": "^3.0.6",
+    "@types/node": "^24.1.0",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.6.2",

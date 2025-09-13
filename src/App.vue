@@ -134,6 +134,7 @@ onUnmounted(() => {
   console.log('App.vue 卸载，清理全局日志服务');
   // 注意：这里不清理全局日志服务，因为它应该在整个应用生命周期内保持活跃
   // globalLogService.cleanup();
+  
 });
 
 // 禁止右键菜单
@@ -154,16 +155,33 @@ document.oncontextmenu = function (event: any) {
     return false;
   }
 };
+
+const version = `OFCPL 开发模式 | 开发中功能，不代表最终效果`;
+const shouldWatermark = !__DEV_MODE__;
 </script>
 
 <template>
+  <n-watermark
+    v-if="shouldWatermark"
+    :content="version"
+    cross
+    fullscreen
+    :font-size="16"
+    :line-height="80"
+    :width="600"
+    :height="800"
+    :x-offset="12"
+    :y-offset="60"
+    :rotate="-12"
+    style="z-index: 99999"
+  />
   <div id="captcha-box"></div>
   <n-config-provider :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" :theme="theme">
     <n-dialog-provider>
       <n-loading-bar-provider>
         <n-notification-provider>
           <n-message-provider>
-            <n-layout style="height: 100vh">
+            <n-layout style="height: 100vh;">
               <!-- 头部 -->
               <n-layout-header bordered style="height: 55px; padding: 0">
                 <Header />
@@ -172,7 +190,7 @@ document.oncontextmenu = function (event: any) {
               <!-- 主体布局 -->
               <n-layout has-sider position="absolute" style="top: 55px; bottom: 0">
                 <!-- 侧边栏组件 -->
-                <Sidebar v-model:collapsed="collapsed" />
+                <Sidebar v-model:collapsed="collapsed" style="background-color: transparent !important;"/>
                 
                 <!-- 内容区域 -->
                 <n-layout>
@@ -204,20 +222,59 @@ body {
   padding: 0;
   height: 100%;
   width: 100%;
-  
+  background-color: transparent !important;
 }
 
 #app {
   height: 100%;
   width: 100%;
-  
+  background-color: transparent !important;
 }
 
-.n-layout-content {
+.gaussian-blur-enabled {
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* .n-layout {
+  background-color: rgba(255, 255, 255, 0.25) !important; 
+}
+
+.n-layout-header {
+  background-color: rgba(255, 255, 255, 0.25) !important; 
+}
+
+.actual-dark .n-layout  {
+  background-color: rgba(30, 30, 30, 0.3) !important; 
+  height: 100%;
+  /* 暗色主题下内容区域背景 */
+/* } */
+
+
+/* .actual-dark .n-layout-header  {
+  background-color: rgba(30, 30, 30, 0.2) !important; 
+  height: 100%;
+  /* 暗色主题下内容区域背景 */
+/* }  */
+
+/* .n-layout-content {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
+  background-color: rgba(255, 255, 255, 0.4) !important; 
+  /* 内容区域半透明但不完全透明 */
+  /* height:100%;
   flex: auto;
+} */ 
+
+/* .actual-dark .n-layout-content {
+  background-color: rgba(30, 30, 30, 0.5) !important; 
+  height: 100%;
+  /* 暗色主题下内容区域背景 */
+/* }  */
+
+.n-layout-sider {
+  background-color: transparent !important;
 }
 
 a {
@@ -259,6 +316,7 @@ body {
 .actual-dark,
 .actual-light {
   height: 100%;
+  background-color: transparent !important;
 }
 
 @media screen and (min-width: 700px) {

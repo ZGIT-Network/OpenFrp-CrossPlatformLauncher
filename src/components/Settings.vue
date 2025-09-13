@@ -142,11 +142,11 @@ onMounted(() => {
     checkDeepLinkStatus()
 
     // 初始化高斯模糊特效
-    // if (enableGaussianBlur.value) {
-    //     document.body.classList.add('gaussian-blur-enabled');
-    // } else {
-    //     document.body.classList.remove('gaussian-blur-enabled');
-    // }
+    if (enableGaussianBlur.value) {
+        document.body.classList.add('gaussian-blur-enabled');
+    } else {
+        document.body.classList.remove('gaussian-blur-enabled');
+    }
 })
 
 // 监听自动启动状态变化
@@ -719,25 +719,25 @@ watch(enableBlur, (val) => {
 });
 
 // 高斯模糊特效开关
-// const enableGaussianBlur = ref(localStorage.getItem('enableGaussianBlur') !== 'false'); // 默认开启
+const enableGaussianBlur = ref(localStorage.getItem('enableGaussianBlur') !== 'false'); // 默认开启
 
-// watch(enableGaussianBlur, (val) => {
-//   localStorage.setItem('enableGaussianBlur', val ? 'true' : 'false');
-//   if (val) {
-//     document.body.classList.add('gaussian-blur-enabled');
-//   } else {
-//     document.body.classList.remove('gaussian-blur-enabled');
-//   }
-// });
+watch(enableGaussianBlur, (val) => {
+  localStorage.setItem('enableGaussianBlur', val ? 'true' : 'false');
+  if (val) {
+    document.body.classList.add('gaussian-blur-enabled');
+  } else {
+    document.body.classList.remove('gaussian-blur-enabled');
+  }
+});
 
-// onMounted(() => {
-//   // 初始化高斯模糊特效
-//   if (enableGaussianBlur.value) {
-//     document.body.classList.add('gaussian-blur-enabled');
-//   } else {
-//     document.body.classList.remove('gaussian-blur-enabled');
-//   }
-// });
+onMounted(() => {
+  // 初始化高斯模糊特效
+  if (enableGaussianBlur.value) {
+    document.body.classList.add('gaussian-blur-enabled');
+  } else {
+    document.body.classList.remove('gaussian-blur-enabled');
+  }
+});
 
 // 监听自动更新进度与结果
 onMounted(() => {
@@ -769,7 +769,7 @@ onMounted(() => {
 
 <template>
     <n-scrollbar>
-        <n-space vertical>
+        <n-space vertical style="margin-left: 8px;margin-right: 8px; height: 100%;margin-bottom: 8px;">
             <n-h2 style="margin-bottom: 0px;">设置</n-h2>
 
             <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
@@ -925,7 +925,7 @@ onMounted(() => {
                                 <n-log :rows="10" :log="logs" :loading="false" trim />
                             </n-card>
                         </n-collapse-item>
-                        <n-collapse-item title="启动设置" name="3">
+                        <n-collapse-item title="启动器设置" name="3">
                             <n-space vertical>
                                 <n-space align="center">
                                     <n-switch v-model:value="autoStart" @update:value="toggleAutoStart" />
@@ -955,10 +955,10 @@ onMounted(() => {
                                     </n-button>
                                 </n-space>
                                 <!-- 高斯模糊特效开关 -->
-                                <!-- <n-space align="center">
-                                    <n-switch v-model:value="enableGaussianBlur" disabled/>
+                                <n-space align="center">
+                                    <n-switch v-model:value="enableGaussianBlur"/>
                                     <span>高斯模糊视觉特效（窗口需支持透明）</span>
-                                </n-space> -->
+                                </n-space>
                             </n-space>
                         </n-collapse-item>
                         <n-collapse-item title="网络设置" name="4">

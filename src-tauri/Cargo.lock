@@ -2922,7 +2922,7 @@ dependencies = [
 
 [[package]]
 name = "openfrp_cpl"
-version = "0.6.1"
+version = "0.6.3"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

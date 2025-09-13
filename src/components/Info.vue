@@ -87,8 +87,9 @@ onMounted(async () => {
                     开源地址：<a href="https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher">https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher</a><br />
                     本项目以 Apache-2.0 WITH Commons-Clause 协议开源，有关附加条款请参考代码库。<br />
                     <br />
-                    作者&软件著作权所有人：云默安 <br />
+                    作者&软件著作权所有人：云默安 @至远光辉信息技术（天津）有限公司 <br />
                     特别鸣谢：Kent Ye<br/>
+                    
                     Copyright © 2025 ZGIT Network. All rights reserved.
                 </div>
             </n-card>

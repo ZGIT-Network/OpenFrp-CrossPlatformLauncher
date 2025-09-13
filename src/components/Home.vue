@@ -62,7 +62,7 @@ const headAlert = ref();
 
 const fetchBoardCast = async () => {
   try {
-    const res = await axios.get(`https://api.openfrp.net/commonQuery/get`, {
+    const res = await axios.get(`https://of-dev-api.bfsea.com/commonQuery/get`, {
       params: {
         key: 'help_info',
       }
