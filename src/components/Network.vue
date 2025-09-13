@@ -153,6 +153,11 @@ const networkError = ref<string | null>(null)
 const ipInfo = ref('')
 const showFullIP = ref(false)
 
+// 代理网络检测相关
+const proxyBypassStatus = ref<boolean | null>(null)
+const proxyNetworkTestResults = ref<any>(null)
+const testingProxyNetwork = ref<boolean>(false)
+
 const detailedSystemInfo = ref('')
 const all_total_node = ref(0);
 
@@ -201,6 +206,18 @@ const checkNetworkConnectivity = async () => {
         checkingNetwork.value = false
     }
 }
+
+// 检查代理绕过状态
+const checkProxyBypassStatus = async () => {
+    try {
+        const isBypassed = await invoke('check_proxy_bypass') as boolean
+        proxyBypassStatus.value = isBypassed
+    } catch (e) {
+        console.error('检查代理状态失败:', e)
+        proxyBypassStatus.value = null
+    }
+}
+
 
 // 检查单个服务状态
 const checkServiceStatus = async (service: ServiceCheck) => {
@@ -329,6 +346,8 @@ const performAllChecks = async () => {
         // 增加延迟，使检查过程更明显
         await new Promise(resolve => setTimeout(resolve, 300))
         await checkAllServicesSequentially()
+        // 检查代理状态
+        await checkProxyBypassStatus()
         // 获取节点列表
         await getNodeList()
     } finally {
@@ -523,6 +542,7 @@ const maskHostname = (hostname: string): string => {
                                 </span>
                             </span>
                         </div>
+
                         <template v-if="isLoggedIn">
 
                         <n-h4>节点数据</n-h4>
@@ -622,8 +642,20 @@ const maskHostname = (hostname: string): string => {
                                 </n-text>
                             </td>
                         </tr>
+                        <tr>
+                            <td>代理状态</td>
+                            <td>
+                               
+                                <span >
+                                    <span :style="{ color: proxyBypassStatus ? '#266e48' : '#2080f0' }">
+                                        {{ proxyBypassStatus ? '已绕过系统代理' : '使用系统代理' }}
+                                    </span>
+                                </span>
+                            </td>
+                        </tr>
                     </tbody>
                 </n-table>
+            
 
             </n-card>
 

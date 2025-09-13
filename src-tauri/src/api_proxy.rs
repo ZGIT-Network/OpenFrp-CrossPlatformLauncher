@@ -15,8 +15,11 @@ pub async fn proxy_api(
     // 获取绕过代理设置
     let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
     let client = if bypass_proxy == "true" {
-        // 绕过系统代理
-        client_builder.no_proxy().build().map_err(|e| e.to_string())?
+        // 绕过系统代理 - 清除所有代理环境变量
+        client_builder
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?
     } else {
         // 使用系统代理
         client_builder.build().map_err(|e| e.to_string())?

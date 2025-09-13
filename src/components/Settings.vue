@@ -369,6 +369,31 @@ const toggleAutoStart = async () => {
     }
 }
 
+    // 调试自启动状态
+    const debugAutoStart = async () => {
+        try {
+            const debugInfo = await invoke('debug_auto_start') as any
+            console.log('自启动调试信息:', debugInfo)
+            
+            // 在日志中显示调试信息
+            logs.value += `[${new Date().toLocaleTimeString()}] [调试] 自启动状态调试信息:\n`
+            logs.value += `平台: ${debugInfo.platform}\n`
+            logs.value += `时间戳: ${debugInfo.timestamp}\n`
+            logs.value += `一致性: ${debugInfo.consistent ? '是' : '否'}\n`
+            logs.value += `最终状态: ${debugInfo.final_state !== null ? (debugInfo.final_state ? '启用' : '禁用') : '未知'}\n`
+            
+            debugInfo.checks.forEach((check: any, index: number) => {
+                logs.value += `检查 ${check.attempt}: ${check.success ? (check.enabled ? '启用' : '禁用') : `失败 - ${check.error}`}\n`
+            })
+            logs.value += '\n'
+            
+            message.success('自启动调试信息已记录到日志中')
+        } catch (e) {
+            message.error(`获取自启动调试信息失败: ${e}`)
+            console.error('自启动调试失败:', e)
+        }
+    }
+
 // 切换恢复隧道设置
 const toggleAutoRestoreTunnels = (value: boolean) => {
     autoRestoreTunnels.value = value
@@ -515,22 +540,45 @@ const logout = () => {
     }
     
     // 绕过代理设置
-    const bypassProxy = ref<boolean>(localStorage.getItem('bypassProxy') === 'true');
+    const bypassProxy = ref<boolean>(false);
+    const proxyStatus = ref<string>('检查中...');
+    
+    // 检查代理绕过状态
+    const checkProxyBypassStatus = async () => {
+        try {
+            const isBypassed = await invoke('check_proxy_bypass') as boolean;
+            bypassProxy.value = isBypassed;
+            proxyStatus.value = isBypassed ? '已绕过系统代理' : '使用系统代理';
+            
+            // 同步到 localStorage
+            localStorage.setItem('bypassProxy', isBypassed.toString());
+        } catch (e) {
+            console.error('检查代理状态失败:', e);
+            proxyStatus.value = '检查失败';
+        }
+    };
     
     // 监听绕过代理设置变化
-    watch(bypassProxy, (value) => {
-        localStorage.setItem('bypassProxy', value ? 'true' : 'false');
-        // 设置环境变量
-        if (value) {
-            // 设置绕过代理环境变量
-            import('@tauri-apps/api/core').then((module) => {
-                module.invoke('set_env', { key: 'BYPASS_PROXY', value: 'true' });
+    watch(bypassProxy, async (value) => {
+        try {
+            localStorage.setItem('bypassProxy', value.toString());
+            
+            // 设置环境变量
+            await invoke('set_env', { 
+                key: 'BYPASS_PROXY', 
+                value: value ? 'true' : 'false' 
             });
-        } else {
-            // 清除绕过代理环境变量
-            import('@tauri-apps/api/core').then((module) => {
-                module.invoke('set_env', { key: 'BYPASS_PROXY', value: 'false' });
-            });
+            
+            // 更新状态显示
+            proxyStatus.value = value ? '已绕过系统代理' : '使用系统代理';
+            
+            // 记录日志
+            logs.value += `[${new Date().toLocaleTimeString()}] [网络] ${value ? '启用' : '禁用'}绕过系统代理\n`;
+            
+            message.success(`${value ? '启用' : '禁用'}绕过系统代理成功`);
+        } catch (e) {
+            console.error('设置代理绕过失败:', e);
+            message.error(`设置代理绕过失败: ${e}`);
         }
     });
     
@@ -574,10 +622,8 @@ const logout = () => {
     }
     
     // 页面加载时初始化绕过代理设置
-    onMounted(() => {
-        if (bypassProxy.value) {
-            invoke('set_env', { key: 'BYPASS_PROXY', value: 'true' });
-        }
+    onMounted(async () => {
+        await checkProxyBypassStatus();
     });
 // 添加手动放置frpc的相关功能
 const appDataDir = ref('');
@@ -930,6 +976,9 @@ onMounted(() => {
                                 <n-space align="center">
                                     <n-switch v-model:value="autoStart" @update:value="toggleAutoStart" />
                                     <span>开机自启动</span>
+                                    <n-button size="small" type="info" @click="debugAutoStart">
+                                        调试状态
+                                    </n-button>
                                 </n-space>
                                 <n-space align="center" v-if="autoStart">
                                     <n-switch v-model:value="autoRestoreTunnels"
@@ -963,18 +1012,38 @@ onMounted(() => {
                         </n-collapse-item>
                         <n-collapse-item title="网络设置" name="4">
                             <n-space vertical>
-                                <n-space align="center">
-                                    <n-switch v-model:value="bypassProxy" />
-                                    <span>绕过系统代理</span>
-                                    <n-tooltip trigger="hover">
-                                        <template #trigger>
-                                            <n-icon>
-                                                <HelpCircleOutline />
-                                            </n-icon>
-                                        </template>
-                                        启用后将不使用系统代理直接连接网络
-                                    </n-tooltip>
-                                </n-space>
+                                <n-card title="代理设置" size="small">
+                                    <n-space vertical>
+                                        <n-space align="center">
+                                            <n-switch v-model:value="bypassProxy" />
+                                            <span>绕过系统代理</span>
+                                            <n-tooltip trigger="hover">
+                                                <template #trigger>
+                                                    <n-icon>
+                                                        <HelpCircleOutline />
+                                                    </n-icon>
+                                                </template>
+                                                启用后将不使用系统代理直接连接网络，适用于内网环境或需要直连的场景
+                                            </n-tooltip>
+                                        </n-space>
+                                        <n-space align="center">
+                                            <n-text :type="bypassProxy ? 'success' : 'info'">
+                                                当前状态: {{ proxyStatus }}
+                                            </n-text>
+                                        </n-space>
+                                        <n-alert type="info" show-icon>
+                                            <template #header>
+                                                代理设置说明
+                                            </template>
+                                            <ul>
+                                                <li>绕过系统代理：程序将直接连接网络，不使用系统代理设置</li>
+                                                <li>使用系统代理：程序将遵循系统的代理配置</li>
+                                                <li>建议在网络环境复杂或需要直连时启用绕过代理</li>
+                                                <li>设置更改后立即生效，无需重启程序</li>
+                                            </ul>
+                                        </n-alert>
+                                    </n-space>
+                                </n-card>
                             </n-space>
                         </n-collapse-item>
                     </n-collapse>

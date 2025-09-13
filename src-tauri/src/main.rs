@@ -527,10 +527,21 @@ async fn start_frpc_instance<R: Runtime>(
     // 添加绕过系统代理的环境变量
     let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
     if bypass_proxy == "true" {
+        // 清除所有代理环境变量
         cmd.env("HTTP_PROXY", "");
         cmd.env("HTTPS_PROXY", "");
         cmd.env("http_proxy", "");
         cmd.env("https_proxy", "");
+        cmd.env("NO_PROXY", "");
+        cmd.env("no_proxy", "");
+        cmd.env("ALL_PROXY", "");
+        cmd.env("all_proxy", "");
+        
+        // 在 Windows 上还需要清除系统代理设置
+        #[cfg(target_os = "windows")]
+        {
+            cmd.env("WINHTTP_NO_PROXY", "*");
+        }
     }
 
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
@@ -934,7 +945,6 @@ fn get_build_info() -> String {
 async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> {
     use std::net::{TcpStream, ToSocketAddrs};
     use std::time::{Instant, Duration};
-    use serde_json::Value;
     println!("tcp_ping called with host: {}, port: {}", host, port);
 
     
@@ -1040,7 +1050,7 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
+        if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
@@ -1364,7 +1374,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, mut process_info) in map.drain() {
+                        for (_, process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")
@@ -1420,48 +1430,262 @@ fn get_cpl_version() -> Result<String, String> {
 #[tauri::command]
 async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
     let autostart_manager = app.autolaunch();
-    let current_state = autostart_manager
-        .is_enabled()
-        .map_err(|e| format!("检查状态失败: {}", e))?;
+    
+    // 添加重试机制
+    let mut retries = 3;
+    while retries > 0 {
+        match autostart_manager.is_enabled() {
+            Ok(current_state) => {
+                // 只在状态不一致时进行切换
+                if current_state != enable {
+                    let result = match enable {
+                        true => autostart_manager
+                            .enable()
+                            .map_err(|e| format!("启用失败: {}", e)),
+                        false => autostart_manager
+                            .disable()
+                            .map_err(|e| format!("禁用失败: {}", e)),
+                    };
 
-    // 只在状态不一致时进行切换
-    if current_state != enable {
-        match enable {
-            true => autostart_manager
-                .enable()
-                .map_err(|e| format!("启用失败: {}", e))?,
-            false => autostart_manager
-                .disable()
-                .map_err(|e| format!("禁用失败: {}", e))?,
-        }
+                    if let Err(e) = result {
+                        retries -= 1;
+                        if retries > 0 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                            continue;
+                        }
+                        return Err(e);
+                    }
 
-        // 验证操作是否成功
-        let new_state = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
-        if new_state != enable {
-            return Err(format!(
-                "操作未生效: 目标状态 {} 但当前状态为 {}",
-                enable, new_state
-            ));
+                    // 验证操作是否成功
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    match autostart_manager.is_enabled() {
+                        Ok(new_state) => {
+                            if new_state != enable {
+                                retries -= 1;
+                                if retries > 0 {
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                    continue;
+                                }
+                                return Err(format!(
+                                    "操作未生效: 目标状态 {} 但当前状态为 {}",
+                                    enable, new_state
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            retries -= 1;
+                            if retries > 0 {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                continue;
+                            }
+                            return Err(format!("验证状态失败: {}", e));
+                        }
+                    }
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                retries -= 1;
+                if retries > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    continue;
+                }
+                return Err(format!("检查状态失败: {}", e));
+            }
         }
     }
-
-    Ok(())
+    
+    Err("操作失败，已达到最大重试次数".to_string())
 }
 
 
 #[tauri::command]
 async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
     let autostart_manager = app.autolaunch();
-    // 多次检查以确保状态稳定
-    let state1 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-    let state2 = autostart_manager.is_enabled().map_err(|e| e.to_string())?;
-
-    if state1 != state2 {
-        return Err("状态不稳定，请重试".to_string());
+    
+    // 多次检查以确保状态稳定，增加重试机制
+    let mut retries = 3;
+    while retries > 0 {
+        match autostart_manager.is_enabled() {
+            Ok(state1) => {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                match autostart_manager.is_enabled() {
+                    Ok(state2) => {
+                        if state1 == state2 {
+                            return Ok(state1);
+                        } else {
+                            retries -= 1;
+                            if retries > 0 {
+                                tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                                continue;
+                            }
+                            return Err("状态不稳定，请重试".to_string());
+                        }
+                    }
+                    Err(e) => {
+                        retries -= 1;
+                        if retries > 0 {
+                            tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                            continue;
+                        }
+                        return Err(format!("第二次检查失败: {}", e));
+                    }
+                }
+            }
+            Err(e) => {
+                retries -= 1;
+                if retries > 0 {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+                    continue;
+                }
+                return Err(format!("检查状态失败: {}", e));
+            }
+        }
     }
+    
+    Err("检查自启动状态失败，已达到最大重试次数".to_string())
+}
 
-    Ok(state1)
+// 添加调试自启动状态的命令
+#[tauri::command]
+async fn debug_auto_start(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let autostart_manager = app.autolaunch();
+    
+    let mut debug_info = serde_json::json!({
+        "platform": std::env::consts::OS,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "checks": []
+    });
+    
+    // 进行多次检查以获取详细信息
+    for i in 1..=5 {
+        match autostart_manager.is_enabled() {
+            Ok(enabled) => {
+                debug_info["checks"].as_array_mut().unwrap().push(
+                    serde_json::json!({
+                        "attempt": i,
+                        "enabled": enabled,
+                        "success": true
+                    })
+                );
+            }
+            Err(e) => {
+                debug_info["checks"].as_array_mut().unwrap().push(
+                    serde_json::json!({
+                        "attempt": i,
+                        "enabled": null,
+                        "success": false,
+                        "error": e.to_string()
+                    })
+                );
+            }
+        }
+        
+        if i < 5 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        }
+    }
+    
+    // 计算一致性
+    let checks = debug_info["checks"].as_array().unwrap();
+    let successful_checks: Vec<_> = checks.iter().filter(|c| c["success"].as_bool().unwrap_or(false)).collect();
+    
+    if successful_checks.len() >= 3 {
+        let enabled_values: Vec<bool> = successful_checks.iter()
+            .map(|c| c["enabled"].as_bool().unwrap_or(false))
+            .collect();
+        
+        let all_same = enabled_values.windows(2).all(|w| w[0] == w[1]);
+        debug_info["consistent"] = serde_json::Value::Bool(all_same);
+        debug_info["final_state"] = serde_json::Value::Bool(enabled_values[0]);
+    } else {
+        debug_info["consistent"] = serde_json::Value::Bool(false);
+        debug_info["final_state"] = serde_json::Value::Null;
+    }
+    
+    Ok(debug_info)
+}
+
+// 设置环境变量命令
+#[tauri::command]
+fn set_env(key: String, value: String) -> Result<(), String> {
+    std::env::set_var(&key, &value);
+    Ok(())
+}
+
+// 获取环境变量命令
+#[tauri::command]
+fn get_env(key: String) -> Result<Option<String>, String> {
+    Ok(std::env::var(&key).ok())
+}
+
+// 检查代理绕过状态
+#[tauri::command]
+fn check_proxy_bypass() -> Result<bool, String> {
+    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
+    Ok(bypass_proxy == "true")
+}
+
+// 测试网络连接
+#[tauri::command]
+async fn test_network_connection() -> Result<serde_json::Value, String> {
+    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
+    
+    let client_builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10));
+    
+    let client = if bypass_proxy == "true" {
+        client_builder
+            .no_proxy()
+            .build()
+            .map_err(|e| e.to_string())?
+    } else {
+        client_builder.build().map_err(|e| e.to_string())?
+    };
+    
+    let mut results = serde_json::json!({
+        "bypass_proxy": bypass_proxy == "true",
+        "tests": []
+    });
+    
+    // 测试多个端点
+    let test_urls = vec![
+        ("OpenFrp API", "https://of-dev-api.bfsea.com/frp/api/getUserInfo"),
+        ("GitHub", "https://api.github.com"),
+        ("Google DNS", "https://8.8.8.8"),
+    ];
+    
+    for (name, url) in test_urls {
+        let start = std::time::Instant::now();
+        match client.get(url).send().await {
+            Ok(response) => {
+                let duration = start.elapsed();
+                results["tests"].as_array_mut().unwrap().push(
+                    serde_json::json!({
+                        "name": name,
+                        "url": url,
+                        "success": true,
+                        "status": response.status().as_u16(),
+                        "latency_ms": duration.as_millis()
+                    })
+                );
+            }
+            Err(e) => {
+                let duration = start.elapsed();
+                results["tests"].as_array_mut().unwrap().push(
+                    serde_json::json!({
+                        "name": name,
+                        "url": url,
+                        "success": false,
+                        "error": e.to_string(),
+                        "latency_ms": duration.as_millis()
+                    })
+                );
+            }
+        }
+    }
+    
+    Ok(results)
 }
 
 // 添加状态结构体
@@ -1481,7 +1705,7 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
     let client = reqwest::Client::new();
     let mut form = std::collections::HashMap::new();
     form.insert("code", code);
-    form.insert("redirect_url", "https://www.zyghit.cn/ofcpl_login".to_string());
+    form.insert("redirect_url", "https://staticassets.naids.com/ofcpl_login".to_string());
 
     let res = client
         .post("https://of-dev-api.bfsea.com/oauth2/callback")
@@ -1553,8 +1777,6 @@ fn open_app_data_dir() -> Result<(), String> {
     Ok(())
 }
 
-use std::collections::HashSet;
-use std::process::Command as StdCommand;
 
 #[tauri::command]
 async fn get_local_ports() -> Result<serde_json::Value, String> {
@@ -1717,6 +1939,11 @@ fn main() {
             get_cpl_version,
             toggle_auto_start,
             check_auto_start,
+            debug_auto_start,
+            set_env,
+            get_env,
+            check_proxy_bypass,
+            test_network_connection,
             oauth_callback,
             check_update,
             install_update,

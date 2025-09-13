@@ -38,6 +38,7 @@ tauri-plugin-dialog = "2"
 is_elevated = "0.1.2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-http = "2"
+chrono = { version = "0.4", features = ["serde"] }
 
 # 将 winreg 移动到 Windows 特定依赖中
 [target.'cfg(windows)'.dependencies]
