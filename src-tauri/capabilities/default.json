@@ -70,6 +70,10 @@
     "updater:allow-check",
     "updater:allow-download-and-install",
     "core:window:allow-start-dragging",
+    "core:window:allow-create",
+    "core:window:allow-center",
+    "core:window:allow-set-always-on-top",
+    "core:webview:allow-create-webview-window",
     {
       "identifier": "http:default",
       "allow": [

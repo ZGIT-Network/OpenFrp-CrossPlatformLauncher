@@ -21,6 +21,7 @@ use tar::Archive;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
+mod argo_access;
 use tauri::{command, Emitter, Runtime, State};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
@@ -1956,6 +1957,11 @@ fn main() {
             get_local_ports, // 新增端口扫描命令
             download_and_install_update,
             tcp_ping,
+            argo_access::argo_generate_public_key,
+            argo_access::argo_request_login,
+            argo_access::argo_poll_login,
+            argo_access::argo_wait_authorization,
+            argo_access::argo_cancel_wait,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

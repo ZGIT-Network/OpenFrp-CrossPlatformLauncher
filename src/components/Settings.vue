@@ -34,6 +34,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener';
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import Cookies from '@/utils/cookies'
 import { useRouter } from 'vue-router';
 import { callApi } from '@/utils/apiClient'
@@ -102,6 +103,20 @@ onBeforeRouteLeave((_to, _from, next) => {
             negativeText: '离开',
             onPositiveClick: () => { next(false) },
             onNegativeClick: () => { next() }
+        })
+    } else if (remoteLogging.value) {
+        dialog.warning({
+            title: '提示',
+            content: '正在等待远程登录授权，离开页面将取消本次登录。确定要离开吗？',
+            positiveText: '继续等待',
+            negativeText: '离开并取消',
+            onPositiveClick: () => { next(false) },
+            onNegativeClick: async () => {
+                try { if (currentRequestUuid.value) await argoCancelWait(currentRequestUuid.value) } catch {}
+                remoteLogging.value = false
+                currentRequestUuid.value = ''
+                next()
+            }
         })
     } else {
         next()
@@ -442,6 +457,7 @@ const toggleDeepLink = async (value: boolean) => {
 
 // const router = useRouter()
 import getLoginUrl from '@/requests/oauth/getLoginUrl'
+import { argoRequestLogin, argoWaitAuthorization, argoCancelWait } from '@/requests/argoAccess/request'
 
 const oauthLogin = () => {
     message.loading('正在准备登录...', { duration: 3000 });
@@ -581,6 +597,64 @@ const logout = () => {
             message.error(`设置代理绕过失败: ${e}`);
         }
     });
+
+    const remoteLogging = ref(false)
+    const currentRequestUuid = ref('')
+    let remoteTimer: any = null
+    const logArgo = (msg: string) => {
+        logs.value += `[${new Date().toLocaleTimeString()}] [Argo] ${msg}\n`
+    }
+    const remoteLogin = async () => {
+        if (remoteLogging.value) return
+        try {
+            remoteLogging.value = true
+            logArgo('开始发起远程登录请求')
+            const data = await argoRequestLogin()
+            logArgo(`获取到 request_uuid=${data.request_uuid}`)
+            currentRequestUuid.value = data.request_uuid
+            message.info('请在浏览器中完成授权')
+            await openUrl(data.authorization_url)
+
+            logArgo('切换为后端轮询，等待后端返回授权结果')
+            const auth = await argoWaitAuthorization(data.request_uuid)
+            logArgo('收到授权明文，准备保存登录状态')
+            Cookies.set('authorization', auth, { expires: 7 })
+            localStorage.setItem('userToken', auth)
+            userToken.value = auth
+            message.success('登录成功')
+            try {
+                const appWindow = await getCurrentWindow()
+                await appWindow.show()
+                await appWindow.setFocus()
+            } catch (e) { console.error('置顶窗口失败:', e) }
+            logArgo('登录成功，刷新页面以生效')
+            remoteLogging.value = false
+            currentRequestUuid.value = ''
+            router.go(0)
+        } catch (e) {
+            console.error(e)
+            logArgo(`发起登录失败: ${String(e || '')}`)
+            remoteLogging.value = false
+            currentRequestUuid.value = ''
+            message.error('远程登录发起失败')
+        }
+    }
+    const cancelRemoteLogin = async () => {
+        try {
+            logArgo('用户请求取消远程登录')
+            // request_uuid 在日志或本地无法直接取回，简化：提示用户重新发起
+            // 若需严格取消，可在状态中缓存最近一次 request_uuid
+            if (currentRequestUuid.value) {
+                await argoCancelWait(currentRequestUuid.value)
+            }
+        } catch {}
+        remoteLogging.value = false
+        currentRequestUuid.value = ''
+        message.info('已取消远程登录')
+    }
+    onUnmounted(() => {
+        if (remoteTimer) clearTimeout(remoteTimer)
+    })
     
     const AuthLogin = async () => {
         if (!Authorization.value) {
@@ -832,7 +906,7 @@ onMounted(() => {
                                     :src="'https://api.zyghit.cn/avatar/?email=' + userInfo?.email + '&s=256'"
                                     fallback-src="https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg" />
                             </template>
-                            更换头像？请前往 Gravatar !
+                            更换头像？请前往 Weavatar !
                         </n-tooltip>
                     </template>
                     <template #header>
@@ -896,11 +970,23 @@ onMounted(() => {
                                 <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
 
                                     <n-tabs type="bar" animated>
+                                        <n-tab-pane name="remote" tab="远程安全登录 (Argo)">
+                                            <n-space vertical>
+                                                <n-text depth="3">将生成一次性密钥并请求授权，需在浏览器完成确认。</n-text>
+                                                <n-space>
+                                                    <n-button type="primary" @click="remoteLogin" :loading="remoteLogging">开始远程登录</n-button>
+                                                    <n-button @click="cancelRemoteLogin" :disabled="!remoteLogging">取消</n-button>
+                                                </n-space>
+                                                <n-text v-if="remoteLogging">已发起登录请求，正在等待授权（最长5分钟）...</n-text>
+                                            </n-space>
+                                        </n-tab-pane>
+                                        
                                         <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
                                             <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
 
 
                                         </n-tab-pane>
+                                       
                                         <n-tab-pane name="authorization" tab="通过 Authorization 登录">
                                             <n-form-item-row label="请输入在面板获取的 Authorization">
                                                 <n-input v-model:value="Authorization" type="password"
