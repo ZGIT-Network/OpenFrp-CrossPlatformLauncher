@@ -6,9 +6,10 @@ interface Response {
   msg: string;
 }
 
-export default () => {
-  return axios.request<Response>({
-    url: 'https://of-dev-api.bfsea.com/oauth2/login?redirect_url=https://staticassets.naids.com/ofcpl_login',
+export default (redirectUrl: string) => {
+  return axios.request
+  <Response>({
+    url: `https://api.openfrp.net/oauth2/login?redirect_url=${encodeURIComponent(redirectUrl)}`,
     method: 'get',
   });
 };

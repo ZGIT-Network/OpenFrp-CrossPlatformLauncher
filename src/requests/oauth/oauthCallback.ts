@@ -1,16 +1,19 @@
 import { invoke } from '@tauri-apps/api/core';
 
-export default async (code: string) => {
+type OAuthResponse = {
+  authorization: string;
+  flag: boolean;
+  msg: string;
+  data: string;
+};
+
+export default async (code: string, redirectUrl?: string) => {
   try {
-    const auth = await invoke('oauth_callback', { code });
+    const resp = (await invoke('oauth_callback', { code, redirectUrl })) as OAuthResponse;
     return {
-      data: {
-        flag: true,
-        msg: '登录成功',
-        data: auth
-      },
+      data: resp,
       headers: {
-        authorization: auth
+        authorization: resp.authorization
       }
     };
   } catch (error) {

@@ -2,7 +2,6 @@ use once_cell::sync::Lazy;
 use base64::Engine; // for URL_SAFE_NO_PAD.encode()/decode()
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sodiumoxide::crypto::scalarmult::curve25519 as x25519;
 use sodiumoxide::crypto::box_ as cbox;
 use sodiumoxide::randombytes::randombytes;

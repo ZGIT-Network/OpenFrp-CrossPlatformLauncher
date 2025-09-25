@@ -38,20 +38,10 @@ onMounted(() => {
     oauthCallback(String(callbackCode))
       .then((res) => {
         if (res.data.flag) {
-          // 统一获取授权信息
-          const authData = res.data.data || {};
-          const authorization = (authData as any).authorization;
-          
-          if (!authorization) {
-            throw new Error('未获取到授权信息');
-          }
-          
-          // 保存授权信息
-          Cookies.set('authorization', authorization, {
-            expires: 7,
-          });
-          
-          message.success((authData as any).msg || '登录成功');
+          const authorization = res.headers.authorization;
+          if (!authorization) throw new Error('未获取到授权信息');
+          Cookies.set('authorization', authorization, { expires: 7 });
+          message.success(res.data.msg || '登录成功');
           loginStatus.value = 'success';
           
           // 处理重定向

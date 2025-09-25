@@ -33,6 +33,9 @@ use crate::update::download_and_install_update;
 use tauri::Listener;
 mod api_proxy;
 mod update; // 添加这一行
+use std::thread;
+use tiny_http::{Server, Response, Header};
+use std::net::TcpListener;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -1051,7 +1054,7 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
+        if let Some(process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
@@ -1375,7 +1378,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, mut process_info) in map.drain() {
+                        for (_, process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")
@@ -1702,11 +1705,15 @@ struct OAuthResponse {
 }
 
 #[command]
-async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
+async fn oauth_callback(code: String, redirect_url: Option<String>) -> Result<OAuthResponse, String> {
     let client = reqwest::Client::new();
     let mut form = std::collections::HashMap::new();
     form.insert("code", code);
-    form.insert("redirect_url", "https://staticassets.naids.com/ofcpl_login".to_string());
+    // 使用与获取登录URL时相同的 redirect_url，确保服务端校验通过
+    form.insert(
+        "redirect_url",
+        redirect_url.unwrap_or_else(|| "https://staticassets.naids.com/ofcpl_login".to_string()),
+    );
 
     let res = client
         .post("https://of-dev-api.bfsea.com/oauth2/callback")
@@ -1734,6 +1741,81 @@ async fn oauth_callback(code: String) -> Result<OAuthResponse, String> {
         msg: json["msg"].as_str().unwrap_or("").to_string(),
         data: json["data"].as_str().unwrap_or("").to_string(),
     })
+}
+
+#[tauri::command]
+async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
+    // 先用 TcpListener 绑定随机端口以获取实际端口
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let server = Server::from_listener(listener, None).map_err(|e| e.to_string())?;
+
+    let app_handle = app.clone();
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            let url = req.url().to_string();
+            // 仅接受 /oauth_callback
+            if url.starts_with("/oauth_callback") {
+                let full = format!("http://127.0.0.1:{}{}", port, url);
+                // 解析 code
+                let code = full
+                    .split('?')
+                    .nth(1)
+                    .and_then(|qs| {
+                        qs.split('&')
+                          .find(|kv| kv.starts_with("code="))
+                          .and_then(|kv| kv.split('=').nth(1))
+                    })
+                    .map(|c| c.to_string())
+                    .unwrap_or_default();
+                let _ = app_handle.emit(
+                    "oauth-code",
+                    serde_json::json!({ "url": full, "code": code }),
+                );
+                // 后端直接执行登录流程，并将结果回传主进程
+                if !code.is_empty() {
+                    let app_for_emit = app_handle.clone();
+                    let code_clone = code.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match oauth_callback(code_clone, Some(format!("http://127.0.0.1:{}/oauth_callback", port))).await {
+                            Ok(resp) => {
+                                let _ = app_for_emit.emit(
+                                    "oauth-auth",
+                                    serde_json::json!({
+                                        "flag": resp.flag,
+                                        "msg": resp.msg,
+                                        "authorization": resp.authorization,
+                                        "data": resp.data,
+                                    })
+                                );
+                            }
+                            Err(e) => {
+                                let _ = app_for_emit.emit(
+                                    "oauth-auth",
+                                    serde_json::json!({
+                                        "flag": false,
+                                        "msg": format!("{}", e),
+                                    })
+                                );
+                            }
+                        }
+                    });
+                }
+                // 返回应用内置的 login.html 内容
+                let html = include_str!("../../src/login.html");
+                let _ = req.respond(
+                    Response::from_string(html)
+                        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap())
+                        .with_status_code(200)
+                );
+                break;
+            } else {
+                let _ = req.respond(Response::from_string("Not Found").with_status_code(404));
+            }
+        }
+    });
+
+    Ok(format!("http://127.0.0.1:{}", port))
 }
 
 #[command]
@@ -1931,6 +2013,7 @@ fn main() {
             download_frpc,
             start_frpc_instance,
             stop_frpc_instance,
+            start_local_oauth_server,
             get_frpc_version,
             get_frpc_cli_version,
             check_and_download,
