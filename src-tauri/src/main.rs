@@ -1054,7 +1054,7 @@ async fn stop_frpc_instance<R: Runtime>(
     id: String,
 ) -> Result<(), String> {
     if let Ok(mut map) = processes.0.lock() {
-        if let Some(process_info) = map.remove(&id) {
+        if let Some(mut process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
                 let mut cmd = Command::new("taskkill");
@@ -1378,7 +1378,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             "quit_with_frpc" => {
                 if let Some(processes) = app.try_state::<FrpcProcesses>() {
                     if let Ok(mut map) = processes.0.lock() {
-                        for (_, process_info) in map.drain() {
+                        for (_, mut process_info) in map.drain() {
                             #[cfg(target_os = "windows")]
                             {
                                 let _ = Command::new("taskkill")
