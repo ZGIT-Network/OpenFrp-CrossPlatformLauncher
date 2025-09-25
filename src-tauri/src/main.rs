@@ -938,6 +938,8 @@ fn get_macos_version() -> String {
     }
 }
 
+// ===== Argo stubs removed - now using real argo_access functions =====
+
 #[command]
 fn get_build_info() -> String {
     let build_time = env!("BUILD_TIME", "未知构建时间");
@@ -2045,6 +2047,12 @@ fn main() {
             argo_access::argo_poll_login,
             argo_access::argo_wait_authorization,
             argo_access::argo_cancel_wait,
+            // Argo stubs (已废弃)
+            // argo_generate_public_key,
+            // argo_request_login,
+            // argo_poll_login,
+            // argo_wait_authorization,
+            // argo_cancel_wait,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

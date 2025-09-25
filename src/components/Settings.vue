@@ -470,10 +470,10 @@ const oauthLogin = async () => {
         // 用内置 login.html 作为回调展示页，通过本地 HTTP 服务回调
         const callbackPage = `${localBase}/oauth_callback`;
         const res = await getLoginUrl(callbackPage);
-        if (!res.data.flag) {
-            message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
-            return;
-        }
+            if (!res.data.flag) {
+                message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
+                return;
+            }
 
         // API 已返回带有我们指定 redirect 的登录地址
         const url = res.data.data as string;
@@ -720,22 +720,22 @@ const oauthLogin = async () => {
             openUrl(url).catch((err) => {
                 console.error('回退到外部浏览器失败:', err);
                 message.error('无法打开登录页面，请手动复制链接进行登录');
-                dialog.info({
-                    title: '手动登录',
-                    content: '请复制以下链接在浏览器中打开完成登录:',
-                    action: () => h(NInput, {
+                            dialog.info({
+                                title: '手动登录',
+                                content: '请复制以下链接在浏览器中打开完成登录:',
+                                action: () => h(NInput, {
                         value: url,
-                        readonly: true,
-                        onFocus: (e: FocusEvent) => {
-                            const target = e.target as HTMLInputElement;
-                            target?.select();
-                        }
-                    })
-                });
-            });
-        }
+                                    readonly: true,
+                                    onFocus: (e: FocusEvent) => {
+                                        const target = e.target as HTMLInputElement;
+                                        target?.select();
+                                    }
+                                })
+                            });
+                        });
+            }
     } catch (err: any) {
-        console.error('获取登录URL失败:', err);
+            console.error('获取登录URL失败:', err);
         message.error('请求登录URL时发生错误: ' + (err?.message || '未知错误'));
     }
 }
@@ -849,6 +849,25 @@ const logout = () => {
             const data = await argoRequestLogin()
             logArgo(`获取到 request_uuid=${data.request_uuid}`)
             currentRequestUuid.value = data.request_uuid
+            // 守护：校验返回的授权地址是否为 Argo 预期域名
+            try {
+                const urlObj = new URL(data.authorization_url)
+                const hostOk = /(^|\.)console\.openfrp\.net$/i.test(urlObj.hostname)
+                const hasArgo = urlObj.searchParams.has('argoaccess')
+                if (!hostOk || !hasArgo) {
+                    logArgo(`授权地址校验失败: ${data.authorization_url}`)
+                    message.error('获取到的授权地址异常，已停止打开。请稍后重试。')
+                    remoteLogging.value = false
+                    currentRequestUuid.value = ''
+                    return
+                }
+            } catch (e) {
+                logArgo('授权地址解析失败')
+                message.error('授权地址无效，已停止打开')
+                remoteLogging.value = false
+                currentRequestUuid.value = ''
+                return
+            }
             message.info('请在浏览器中完成授权')
             await openUrl(data.authorization_url)
 
