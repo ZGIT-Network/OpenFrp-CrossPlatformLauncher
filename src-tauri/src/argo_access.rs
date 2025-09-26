@@ -2,15 +2,18 @@ use once_cell::sync::Lazy;
 use base64::Engine; // for URL_SAFE_NO_PAD.encode()/decode()
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
-use sodiumoxide::crypto::scalarmult::curve25519 as x25519;
-use sodiumoxide::crypto::box_ as cbox;
-use sodiumoxide::randombytes::randombytes;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use tauri::command;
 
+// 纯 Rust：X25519 + XSalsa20-Poly1305
+use rand_core::OsRng;
+use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
+use xsalsa20poly1305::{aead::{Aead, KeyInit}, XSalsa20Poly1305, Nonce};
+use crypto_box::{SalsaBox, PublicKey as BoxPublicKey, SecretKey as BoxSecretKey};
+
 // 针对每个 request_uuid 存储一次性密钥对，避免重复使用同一公钥
-static REQ_KP_MAP: Lazy<Mutex<HashMap<String, (x25519::Scalar, x25519::GroupElement)>>> =
+static REQ_KP_MAP: Lazy<Mutex<HashMap<String, (X25519Secret, X25519Public)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 static CANCEL_SET: Lazy<Mutex<HashSet<String>>> =
     Lazy::new(|| Mutex::new(HashSet::new()));
@@ -41,25 +44,9 @@ pub struct PollLoginData {
     pub request_uuid: String,
 }
 
-fn ensure_init() {
-    // sodiumoxide 需要初始化一次
-    static INIT: Lazy<()> = Lazy::new(|| {
-        let _ = sodiumoxide::init();
-    });
-    Lazy::force(&INIT);
-}
-
-fn generate_keypair() -> (x25519::Scalar, x25519::GroupElement) {
-    ensure_init();
-    // 生成 32 字节随机标量，并进行 clamp
-    let mut sk_bytes = [0u8; 32];
-    let rnd = randombytes(32);
-    sk_bytes.copy_from_slice(&rnd);
-    sk_bytes[0] &= 248;
-    sk_bytes[31] &= 127;
-    sk_bytes[31] |= 64;
-    let sk = x25519::Scalar(sk_bytes);
-    let pk = x25519::scalarmult_base(&sk);
+fn generate_keypair() -> (X25519Secret, X25519Public) {
+    let sk = X25519Secret::new(OsRng);
+    let pk = X25519Public::from(&sk);
     (sk, pk)
 }
 
@@ -88,13 +75,13 @@ fn b64_decode_any(s: &str) -> Result<Vec<u8>, String> {
 #[command]
 pub async fn argo_generate_public_key() -> Result<String, String> {
     let (_sk, pk) = generate_keypair();
-    Ok(b64_urlsafe_padded(pk.0.as_ref()))
+    Ok(b64_urlsafe_padded(pk.as_bytes()))
 }
 
 #[command]
 pub async fn argo_request_login() -> Result<RequestLoginData, String> {
     let (sk, pk) = generate_keypair();
-    let public_key_b64 = b64_urlsafe_padded(pk.0.as_ref());
+    let public_key_b64 = b64_urlsafe_padded(pk.as_bytes());
 
     let client = reqwest::Client::new();
     let resp = client
@@ -183,37 +170,28 @@ pub async fn argo_poll_login(request_uuid: String) -> Result<String, String> {
     }
     let mut pk_arr = [0u8; 32];
     pk_arr.copy_from_slice(&server_pk_bytes);
-    let server_pk_x = x25519::GroupElement(pk_arr);
-
-    // 将我们的私钥/对方公钥转为 NaCl box 的键类型
-    let sk_box = match cbox::SecretKey::from_slice(&sk.0) {
-        Some(k) => k,
-        None => return Err("本地私钥转换失败".into()),
-    };
-    let pk_box = match cbox::PublicKey::from_slice(server_pk_x.0.as_ref()) {
-        Some(k) => k,
-        None => return Err("服务器公钥转换失败".into()),
-    };
+    let server_pk = X25519Public::from(pk_arr);
 
     // 解码 authorization_data: 前24字节为 nonce，后面为密文
     let cipher_all = b64_decode_any(&data.authorization_data)?;
-    if cipher_all.len() < 24 + cbox::MACBYTES {
+    if cipher_all.len() < 24 {
         return Err("密文长度不合法".into());
     }
-    let nonce = match cbox::Nonce::from_slice(&cipher_all[..24]) {
-        Some(n) => n,
-        None => return Err("Nonce 解析失败".into()),
-    };
+    let mut nonce_bytes = [0u8; 24];
+    nonce_bytes.copy_from_slice(&cipher_all[..24]);
     let cipher = &cipher_all[24..];
 
-    match cbox::open(cipher, &nonce, &pk_box, &sk_box) {
+    // 使用 NaCl box 兼容实现（Curve25519+XSalsa20-Poly1305）
+    let sk_box = BoxSecretKey::from(sk.to_bytes());
+    let pk_box = BoxPublicKey::from(server_pk.to_bytes());
+    let sbox = SalsaBox::new(&pk_box, &sk_box);
+    match sbox.decrypt(&nonce_bytes.into(), cipher) {
         Ok(plain) => {
             let auth = String::from_utf8_lossy(&plain).to_string();
-            // 成功后清理一次性密钥
             REQ_KP_MAP.lock().unwrap().remove(&request_uuid);
             Ok(auth)
         }
-        Err(_) => Err("解密失败".into()),
+        Err(_e) => Err("解密失败".into()),
     }
 }
 
