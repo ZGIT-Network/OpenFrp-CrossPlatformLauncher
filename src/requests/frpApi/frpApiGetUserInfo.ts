@@ -1,5 +1,6 @@
 // import axios from 'axios';
 // import Cookies from 'js-cookie';
+import Cookies from '../../utils/cookies';
 import { callApi } from '../../utils/apiClient';
 
 interface Response {
@@ -8,6 +9,11 @@ interface Response {
   msg: string;
 }
 
+
+const clearAuth = () => {
+  Cookies.remove('authorization');
+  localStorage.removeItem('userToken');
+};
 
 export default async () => {
   try {
@@ -24,6 +30,10 @@ export default async () => {
     return response;
   } catch (error) {
     console.error('获取用户信息失败:', error);
+    // 未登录时清理本地登录态
+    if (error instanceof Error && error.message === '未登录') {
+      clearAuth();
+    }
     // 返回一个默认响应，避免 null 引用错误
     return {
       data: null as unknown as Struct.UserInfo,

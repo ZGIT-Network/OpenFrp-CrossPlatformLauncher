@@ -23,6 +23,15 @@ const router = useRouter();
 const route = useRoute();
 const userInfo = ref<Struct.UserInfo>();
 
+const clearAuthAndRedirect = () => {
+  sessionStorage.setItem('redirectPath', route.fullPath);
+  Cookies.remove('authorization');
+  localStorage.removeItem('userToken');
+  if (route.path !== '/settings') {
+    router.push('/settings');
+  }
+};
+
 
 const errorMessage = ref<{
   statusCode: number;
@@ -45,12 +54,12 @@ const getUserInfo = () => {
         }, 250);
       } else {
         // 需要登录的情况
-        sessionStorage.setItem('redirectPath', route.fullPath);
-        Cookies.remove('authorization');
-        router.push('/settings');
+        clearAuthAndRedirect();
       }
     })
     .catch((res: AxiosError) => {
+      // 如果是未登录错误，也引导重新登录
+      clearAuthAndRedirect();
       errorMessage.value = {
         statusCode: Number(res.response?.status),
         title: res.response?.statusText ?? '发生了未知错误',

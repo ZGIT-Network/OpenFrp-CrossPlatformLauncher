@@ -20,6 +20,16 @@ const userInfo = ref<Struct.UserInfo>();
 const router = useRouter();
 const route = useRoute();
 
+const clearAuthAndRedirect = () => {
+  sessionStorage.setItem('redirectPath', route.fullPath);
+  Cookies.remove('authorization');
+  localStorage.removeItem('userToken');
+  // 避免重复跳转
+  if (route.path !== '/settings') {
+    router.push('/settings');
+  }
+};
+
 // 获取用户信息函数
 const getUserInfo = () => {
   frpApiGetUserInfo()
@@ -29,14 +39,12 @@ const getUserInfo = () => {
         userInfo.value = res.data;
         console.log('用户信息已更新:', userInfo.value);
       } else {
-        // 需要登录的情况
-        sessionStorage.setItem('redirectPath', route.fullPath);
-        Cookies.remove('authorization');
-        router.push('/settings');
+        clearAuthAndRedirect();
       }
     })
     .catch((error) => {
       console.error('获取用户信息失败:', error);
+      clearAuthAndRedirect();
     });
 };
 
