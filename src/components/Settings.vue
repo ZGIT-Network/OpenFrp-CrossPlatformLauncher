@@ -330,7 +330,7 @@ const checkUpdate = async () => {
                           downloadingMsg.destroy()
                           downloadingMsg = null
                         }
-                        // message.error(`更新失败: ${e}`)
+                        message.error(`更新失败: ${e}`)
                     }
                     
                 }
@@ -1131,14 +1131,14 @@ onMounted(() => {
       downloadingMsg.destroy()
       downloadingMsg = null
     }
-    // message.error(event.payload as string)
+    message.error(event.payload as string)
   })
   listen('update-success', (event) => {
     if (downloadingMsg) {
       downloadingMsg.destroy()
       downloadingMsg = null
     }
-    // message.success(event.payload as string || '更新已下载完成，重启应用后生效')
+    message.success((event.payload as string) || '更新已下载完成，重启应用后生效')
   })
 });
 </script>

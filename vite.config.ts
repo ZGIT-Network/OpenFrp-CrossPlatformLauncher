@@ -39,14 +39,17 @@ export default defineConfig(async () => ({
   clearScreen: false,
   // 2. tauri expects a fixed port, fail if that port is not available
   server: {
-    port: 3003,
+    // Windows 环境下部分端口（例如 3003）可能会被系统策略/安全软件拦截导致 EACCES
+    // 改用更常见的 Vite 默认端口段以提升兼容性
+    port: 5173,
     strictPort: true,
+    // 强制使用 IPv4，避免 localhost 解析到 ::1 触发监听问题
     host: host || false,
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 3001,
+          port: 5174,
         }
       : undefined,
     watch: {
