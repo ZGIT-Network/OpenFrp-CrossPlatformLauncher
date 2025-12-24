@@ -101,7 +101,7 @@ const serviceChecks = ref<ServiceCheck[]>([
     {
         id: 'nykid',
         name: 'Natayark OpenID 用户中心',
-        url: 'https://account.naids.com/api/api/',
+        url: 'https://account.naids.com/api/',
         status: null,
         checking: false,
         error: null,
@@ -155,6 +155,9 @@ const showFullIP = ref(false)
 
 // 代理网络检测相关
 const proxyBypassStatus = ref<boolean | null>(null)
+const useDoHStatus = ref<boolean | null>(null)
+const dohAddr = ref<string | null>(null)
+const frpcForceTlsEnabled = ref<boolean | null>(null)
 const proxyNetworkTestResults = ref<any>(null)
 const testingProxyNetwork = ref<boolean>(false)
 
@@ -215,6 +218,34 @@ const checkProxyBypassStatus = async () => {
     } catch (e) {
         console.error('检查代理状态失败:', e)
         proxyBypassStatus.value = null
+    }
+}   
+
+const checkDoHStatus = async () => {
+    try {
+        const useDohEnv = await invoke('get_env', { key: 'USE_DOH' }) as (string | null)
+        useDoHStatus.value = (useDohEnv === 'true')
+        if (useDoHStatus.value) {
+            // 获取自定义 DoH 地址（若未设置则保持默认）
+            const addr = await invoke('get_env', { key: 'DOH_ADDR' }) as (string | null)
+            dohAddr.value = addr && addr.length > 0 ? addr : '223.5.5.5'
+        } else {
+            dohAddr.value = null
+        }
+    } catch (e) {
+        console.error('检查 DoH 状态失败:', e)
+        useDoHStatus.value = null
+        dohAddr.value = null
+    }
+}
+
+const checkForceTlsStatus = async () => {
+    try {
+        const forceTlsEnv = await invoke('get_env', { key: 'FRPC_FORCE_TLS' }) as (string | null)
+        frpcForceTlsEnabled.value = (forceTlsEnv === 'true')
+    } catch (e) {
+        console.error('检查 Force TLS 状态失败:', e)
+        frpcForceTlsEnabled.value = null
     }
 }
 
@@ -343,13 +374,15 @@ const performAllChecks = async () => {
     checking.value = true
     try {
         await checkNetworkConnectivity()
+        await checkProxyBypassStatus()
+        await checkDoHStatus()
+        await checkForceTlsStatus()
         // 增加延迟，使检查过程更明显
         await new Promise(resolve => setTimeout(resolve, 300))
         await checkAllServicesSequentially()
-        // 检查代理状态
-        await checkProxyBypassStatus()
         // 获取节点列表
         await getNodeList()
+
     } finally {
         checking.value = false
     }
@@ -509,7 +542,7 @@ const maskHostname = (hostname: string): string => {
         <n-h2 style="margin-bottom: 3px;">网络</n-h2>
 
         <n-space vertical>
-            <n-alert type="info" closable>这是一个正在开发的功能，他可能暂时无法使用或是存在许多问题。</n-alert>
+
 
             <n-card>
                 <n-space vertical>
@@ -647,8 +680,22 @@ const maskHostname = (hostname: string): string => {
                             <td>
                                
                                 <span >
-                                    <span :style="{ color: proxyBypassStatus ? '#266e48' : '#2080f0' }">
-                                        {{ proxyBypassStatus ? '已绕过系统代理' : '使用系统代理' }}
+                                    <span :style="{ color: proxyBypassStatus ? '#266e48' : '' }">
+                                        {{ proxyBypassStatus ? '已绕过系统代理' : '正在使用系统代理' }}
+                                    </span>
+                                </span>
+                            </td>
+                        </tr>
+                        <tr>
+                            <td>网络配置</td>
+                            <td>
+                               
+                                <span >
+                                    <span :style="{ color: useDoHStatus ? '#2080f0' : '', marginRight: '10px' }">
+                                        {{ useDoHStatus ? '已启用 DoH (' + dohAddr + ')' : '未启用 DoH' }}
+                                    </span>
+                                    <span :style="{ color: frpcForceTlsEnabled ? '#2080f0' : '' }">
+                                        {{ frpcForceTlsEnabled ? '已启用 Force TLS' : '未启用 Force TLS' }}
                                     </span>
                                 </span>
                             </td>

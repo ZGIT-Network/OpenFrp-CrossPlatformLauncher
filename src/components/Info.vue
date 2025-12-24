@@ -84,8 +84,8 @@ onMounted(async () => {
                 得益于 Tauri2 的强大能力，本项目可以跨平台使用，支持 Windows、MacOS、Linux 等操作系统。<br /><br />
 
                 <div v-external>
-                    开源地址：<a href="https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher">https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher</a><br />
-                    本项目以 Apache-2.0 WITH Commons-Clause 协议开源，有关附加条款请参考代码库。<br />
+                    源代码地址：<a href="https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher">https://github.com/ZGIT-Network/OpenFrp-CrossPlatformLauncher</a><br />
+                    本项目以 Apache-2.0 WITH Commons-Clause 协议开放源代码，有关附加条款请参考代码库。<br />
                     <br />
                     作者&软件著作权所有人：云默安 @至远光辉信息技术（天津）有限公司 <br />
                     特别鸣谢：Kent Ye<br/>

@@ -77,6 +77,7 @@
     "core:window:allow-center",
     "core:window:allow-set-always-on-top",
     "core:webview:allow-create-webview-window",
+    "core:window:allow-set-effects",
     {
       "identifier": "http:default",
       "allow": [

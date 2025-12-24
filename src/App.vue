@@ -191,12 +191,12 @@ const shouldWatermark = !__DEV_MODE__;
           <n-message-provider>
             <n-layout style="height: 100vh;">
               <!-- 头部 -->
-              <n-layout-header bordered style="height: 55px; padding: 0">
+              <n-layout-header bordered style="height: 48px; padding: 0">
                 <Header />
               </n-layout-header>
               
               <!-- 主体布局 -->
-              <n-layout has-sider position="absolute" style="top: 55px; bottom: 0">
+              <n-layout has-sider position="absolute" style="top: 48px; bottom: 0">
                 <!-- 侧边栏组件 -->
                 <Sidebar v-model:collapsed="collapsed" style="background-color: transparent !important;"/>
                 
@@ -244,7 +244,7 @@ body {
   -webkit-backdrop-filter: blur(10px);
 }
 
-/* .n-layout {
+.n-layout {
   background-color: rgba(255, 255, 255, 0.25) !important; 
 }
 
@@ -256,14 +256,13 @@ body {
   background-color: rgba(30, 30, 30, 0.3) !important; 
   height: 100%;
   /* 暗色主题下内容区域背景 */
-/* } */
+}
 
 
-/* .actual-dark .n-layout-header  {
+.actual-dark .n-layout-header  {
   background-color: rgba(30, 30, 30, 0.2) !important; 
   height: 100%;
-  /* 暗色主题下内容区域背景 */
-/* }  */
+} 
 
 /* .n-layout-content {
   display: flex;

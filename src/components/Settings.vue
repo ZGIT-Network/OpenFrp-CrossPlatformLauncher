@@ -92,7 +92,7 @@ const autoRestoreTunnels = ref(true)  // 默认设为 true
 const deepLinkEnabled = ref(false)
 const helpDrawerVisible = ref(false)
 
-const activeNames = ref<string[]>(['2']); // 控制展开的项
+const activeNames = ref<string[]>(['2', '3', '4']); // 控制展开的项
 
 // 添加路由守卫
 onBeforeRouteLeave((_to, _from, next) => {
@@ -113,7 +113,7 @@ onBeforeRouteLeave((_to, _from, next) => {
             negativeText: '离开并取消',
             onPositiveClick: () => { next(false) },
             onNegativeClick: async () => {
-                try { if (currentRequestUuid.value) await argoCancelWait(currentRequestUuid.value) } catch {}
+                try { if (currentRequestUuid.value) await argoCancelWait(currentRequestUuid.value) } catch { }
                 remoteLogging.value = false
                 currentRequestUuid.value = ''
                 next()
@@ -169,6 +169,8 @@ onMounted(() => {
 watch(autoStart, (newValue) => {
     localStorage.setItem('autoStart', newValue.toString())
 })
+
+
 // 保存设置
 const saveSettings = () => {
     userToken.value = tempToken.value
@@ -203,13 +205,13 @@ onMounted(async () => {
     // 启动时检查 frpc
     try {
         const checkResult = await invoke('check_and_download')
-        
+
         // 如果需要下载，添加明确的日志
         if (checkResult === '需要下载 frpc') {
             logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测结果：未找到Frpc可执行文件\n`
         } else {
             logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测结果：Frpc可执行文件已存在\n`
-            
+
             // 尝试获取版本信息
             try {
                 const result = await invoke('get_frpc_cli_version') as string
@@ -225,7 +227,7 @@ onMounted(async () => {
         logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检查Frpc失败: ${e}\n`
         message.error(`检查失败: ${e}`)
     }
-    
+
     // 从localStorage读取token，从configs.json获取自启动等设置
     await getAppDataDir();
 });
@@ -256,13 +258,13 @@ const getFrpcVersion = async () => {
     try {
         const result = await invoke('get_frpc_cli_version');
         const frpcInfo = JSON.parse(result as string);
-        
+
         if (frpcInfo.version === "未知") {
             logs.value += `[${new Date().toLocaleTimeString()}] [系统] 未找到Frpc\n`;
             message.warning('Frpc可执行文件不存在，请配置或下载');
             return;
         }
-        
+
         logs.value += `[${new Date().toLocaleTimeString()}] [系统] 检测到Frpc版本: ${frpcInfo.version}\n`;
         message.success(`当前版本: ${frpcInfo.version}`);
     } catch (e) {
@@ -315,24 +317,24 @@ const checkUpdate = async () => {
                         if (downloadingMsg) downloadingMsg.destroy()
                         downloadingPercent.value = 0
                         downloadingMsg = message.loading(
-                          `正在下载更新...`,
-                          { duration: 0 }
+                            `正在下载更新...`,
+                            { duration: 0 }
                         )
-                        
+
                         await invoke('download_and_install_update')
                         if (downloadingMsg) {
-                          downloadingMsg.destroy()
-                          downloadingMsg = null
+                            downloadingMsg.destroy()
+                            downloadingMsg = null
                         }
                         message.success('更新已下载完成，重启应用后生效')
                     } catch (e) {
                         if (downloadingMsg) {
-                          downloadingMsg.destroy()
-                          downloadingMsg = null
+                            downloadingMsg.destroy()
+                            downloadingMsg = null
                         }
                         message.error(`更新失败: ${e}`)
                     }
-                    
+
                 }
             })
         } else {
@@ -365,14 +367,14 @@ const toggleAutoStart = async () => {
         // 切换后重新检查状态
         await checkAutoStartSettings()
         message.success(`${autoStart.value ? '启用' : '禁用'}开机自启动成功`)
-        
+
         // 如果启用自启动但未启用恢复隧道，提示用户可能需要开启
         if (autoStart.value && !autoRestoreTunnels.value) {
             setTimeout(() => {
                 message.info('提示：如需开机自动启动隧道，请同时开启"开机时恢复上次运行的隧道"选项')
             }, 500)
         }
-        
+
         if (autoStart.value && deepLinkEnabled.value) {
             setTimeout(() => {
                 message.warning('注意，通过"快速启动"功能启动的隧道无法开机自启动')
@@ -385,37 +387,37 @@ const toggleAutoStart = async () => {
     }
 }
 
-    // 调试自启动状态
-    const debugAutoStart = async () => {
-        try {
-            const debugInfo = await invoke('debug_auto_start') as any
-            console.log('自启动调试信息:', debugInfo)
-            
-            // 在日志中显示调试信息
-            logs.value += `[${new Date().toLocaleTimeString()}] [调试] 自启动状态调试信息:\n`
-            logs.value += `平台: ${debugInfo.platform}\n`
-            logs.value += `时间戳: ${debugInfo.timestamp}\n`
-            logs.value += `一致性: ${debugInfo.consistent ? '是' : '否'}\n`
-            logs.value += `最终状态: ${debugInfo.final_state !== null ? (debugInfo.final_state ? '启用' : '禁用') : '未知'}\n`
-            
-            debugInfo.checks.forEach((check: any, index: number) => {
-                logs.value += `检查 ${check.attempt}: ${check.success ? (check.enabled ? '启用' : '禁用') : `失败 - ${check.error}`}\n`
-            })
-            logs.value += '\n'
-            
-            message.success('自启动调试信息已记录到日志中')
-        } catch (e) {
-            message.error(`获取自启动调试信息失败: ${e}`)
-            console.error('自启动调试失败:', e)
-        }
+// 调试自启动状态
+const debugAutoStart = async () => {
+    try {
+        const debugInfo = await invoke('debug_auto_start') as any
+        console.log('自启动调试信息:', debugInfo)
+
+        // 在日志中显示调试信息
+        logs.value += `[${new Date().toLocaleTimeString()}] [调试] 自启动状态调试信息:\n`
+        logs.value += `平台: ${debugInfo.platform}\n`
+        logs.value += `时间戳: ${debugInfo.timestamp}\n`
+        logs.value += `一致性: ${debugInfo.consistent ? '是' : '否'}\n`
+        logs.value += `最终状态: ${debugInfo.final_state !== null ? (debugInfo.final_state ? '启用' : '禁用') : '未知'}\n`
+
+        debugInfo.checks.forEach((check: any, index: number) => {
+            logs.value += `检查 ${check.attempt}: ${check.success ? (check.enabled ? '启用' : '禁用') : `失败 - ${check.error}`}\n`
+        })
+        logs.value += '\n'
+
+        message.success('自启动调试信息已记录到日志中')
+    } catch (e) {
+        message.error(`获取自启动调试信息失败: ${e}`)
+        console.error('自启动调试失败:', e)
     }
+}
 
 // 切换恢复隧道设置
 const toggleAutoRestoreTunnels = (value: boolean) => {
     autoRestoreTunnels.value = value
     localStorage.setItem('autoRestoreTunnels', value.toString())
     message.success(`${value ? '启用' : '禁用'}开机恢复隧道成功`)
-    
+
     // 如果禁用了隧道恢复但启用了自启动，提示用户
     if (!value && autoStart.value) {
         setTimeout(() => {
@@ -470,10 +472,10 @@ const oauthLogin = async () => {
         // 用内置 login.html 作为回调展示页，通过本地 HTTP 服务回调
         const callbackPage = `${localBase}/oauth_callback`;
         const res = await getLoginUrl(callbackPage);
-            if (!res.data.flag) {
-                message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
-                return;
-            }
+        if (!res.data.flag) {
+            message.error('无法获取登录URL: ' + (res.data.msg || '未知错误'));
+            return;
+        }
 
         // API 已返回带有我们指定 redirect 的登录地址
         const url = res.data.data as string;
@@ -514,9 +516,9 @@ const oauthLogin = async () => {
                     if (!code) return;
 
                     // 取消所有监听，防止重复
-                    try { const un = await unlistenUrlChanged; if (typeof un === 'function') un(); } catch {}
-                    try { const un = await unlistenNavigation; if (typeof un === 'function') un(); } catch {}
-                    try { const un = await unlistenLocationChanged; if (typeof un === 'function') un(); } catch {}
+                    try { const un = await unlistenUrlChanged; if (typeof un === 'function') un(); } catch { }
+                    try { const un = await unlistenNavigation; if (typeof un === 'function') un(); } catch { }
+                    try { const un = await unlistenLocationChanged; if (typeof un === 'function') un(); } catch { }
 
                     message.loading('正在完成授权...', { duration: 1500 });
                     try {
@@ -530,13 +532,13 @@ const oauthLogin = async () => {
                             localStorage.setItem('userToken', auth);
                             tempToken.value = auth;
                             message.success('登录成功');
-                            try { await win.close(); } catch {}
+                            try { await win.close(); } catch { }
                             router.go(0);
                         }
                     } catch (err) {
                         console.error('完成 OAuth 回调失败:', err);
                         message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch {}
+                        try { await win.close(); } catch { }
                     }
                 }
             };
@@ -574,10 +576,10 @@ const oauthLogin = async () => {
                     const code = (appEv && appEv.payload && (appEv.payload as any).code) || '';
                     if (!code) return;
                     // 取消两个监听，防止重复
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch {}
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch {}
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch {}
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch {}
+                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
+                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
+                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
+                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
 
                     message.loading('正在完成授权...', { duration: 1500 });
                     try {
@@ -591,13 +593,13 @@ const oauthLogin = async () => {
                             localStorage.setItem('userToken', auth);
                             tempToken.value = auth;
                             message.success('登录成功');
-                            try { await win.close(); } catch {}
+                            try { await win.close(); } catch { }
                             router.go(0);
                         }
                     } catch (err) {
                         console.error('完成 OAuth 回调失败:', err);
                         message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch {}
+                        try { await win.close(); } catch { }
                     }
                 } catch (e) {
                     console.error('处理全局回调事件出错:', e);
@@ -616,10 +618,10 @@ const oauthLogin = async () => {
                                 const code = u.searchParams.get('code') || '';
                                 if (!code) continue;
                                 // 取消其它监听
-                                try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch {}
-                                try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch {}
-                                try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch {}
-                                try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch {}
+                                try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
+                                try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
+                                try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
+                                try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
 
                                 message.loading('正在完成授权...', { duration: 1500 });
                                 try {
@@ -633,13 +635,13 @@ const oauthLogin = async () => {
                                         localStorage.setItem('userToken', auth);
                                         tempToken.value = auth;
                                         message.success('登录成功');
-                                        try { await win.close(); } catch {}
+                                        try { await win.close(); } catch { }
                                         router.go(0);
                                     }
                                 } catch (err) {
                                     console.error('完成 OAuth 回调失败:', err);
                                     message.error('登录失败，请稍后重试');
-                                    try { await win.close(); } catch {}
+                                    try { await win.close(); } catch { }
                                 }
                             }
                         }
@@ -661,11 +663,11 @@ const oauthLogin = async () => {
                     const code = codeFromEvent || u.searchParams.get('code') || '';
                     if (!code) return;
                     // 取消其它监听
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch {}
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch {}
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch {}
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch {}
-                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch {}
+                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
+                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
+                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
+                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
+                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch { }
 
                     message.loading('正在完成授权...', { duration: 1500 });
                     try {
@@ -679,13 +681,13 @@ const oauthLogin = async () => {
                             localStorage.setItem('userToken', auth);
                             tempToken.value = auth;
                             message.success('登录成功');
-                            try { await win.close(); } catch {}
+                            try { await win.close(); } catch { }
                             router.go(0);
                         }
                     } catch (err) {
                         console.error('完成 OAuth 回调失败:', err);
                         message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch {}
+                        try { await win.close(); } catch { }
                     }
                 } catch (e) { console.error('处理本地回调事件出错:', e); }
             });
@@ -696,12 +698,12 @@ const oauthLogin = async () => {
                     const ok = !!(ev && (ev.payload as any)?.flag);
                     if (!ok) return;
                     // 取消其它监听
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch {}
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch {}
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch {}
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch {}
-                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch {}
-                    try { if (typeof unlistenAuth === 'function') unlistenAuth(); } catch {}
+                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
+                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
+                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
+                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
+                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch { }
+                    try { if (typeof unlistenAuth === 'function') unlistenAuth(); } catch { }
 
                     const auth = (ev.payload as any)?.authorization || '';
                     if (!auth) return;
@@ -710,7 +712,7 @@ const oauthLogin = async () => {
                     localStorage.setItem('userToken', auth);
                     tempToken.value = auth;
                     message.success('登录成功');
-                    try { await win.close(); } catch {}
+                    try { await win.close(); } catch { }
                     router.go(0);
                 } catch (e) { console.error('处理 oauth-auth 事件失败:', e); }
             });
@@ -720,22 +722,22 @@ const oauthLogin = async () => {
             openUrl(url).catch((err) => {
                 console.error('回退到外部浏览器失败:', err);
                 message.error('无法打开登录页面，请手动复制链接进行登录');
-                            dialog.info({
-                                title: '手动登录',
-                                content: '请复制以下链接在浏览器中打开完成登录:',
-                                action: () => h(NInput, {
+                dialog.info({
+                    title: '手动登录',
+                    content: '请复制以下链接在浏览器中打开完成登录:',
+                    action: () => h(NInput, {
                         value: url,
-                                    readonly: true,
-                                    onFocus: (e: FocusEvent) => {
-                                        const target = e.target as HTMLInputElement;
-                                        target?.select();
-                                    }
-                                })
-                            });
-                        });
-            }
+                        readonly: true,
+                        onFocus: (e: FocusEvent) => {
+                            const target = e.target as HTMLInputElement;
+                            target?.select();
+                        }
+                    })
+                });
+            });
+        }
     } catch (err: any) {
-            console.error('获取登录URL失败:', err);
+        console.error('获取登录URL失败:', err);
         message.error('请求登录URL时发生错误: ' + (err?.message || '未知错误'));
     }
 }
@@ -754,207 +756,312 @@ const helpDrawer = (type: string) => {
 // 添加退出登录函数
 const logout = () => {
 
-        dialog.warning({
-            title: '确认退出',
-            content: '确定要退出登录吗？',
-            positiveText: '确定',
-            negativeText: '取消',
-            onPositiveClick: () => {
-                // 清除用户token
-                logoutCurr()
-                userToken.value = ''
-                tempToken.value = ''
-                Cookies.remove('authorization');
-                localStorage.removeItem('userToken')
-                message.success('已成功退出登录')
-                router.go(0);
-            }
-        })
-    }
-
-    const Authlogout = () => {
-
-        dialog.warning({
-            title: '确认退出',
-            content: '确定要退出登录吗？',
-            positiveText: '确定',
-            negativeText: '取消',
-            onPositiveClick: () => {
-                // 清除用户token
-                logoutCurr()
-                Cookies.remove('authorization');
-                userToken.value = ''
-                tempToken.value = ''
-                localStorage.removeItem('userToken')
-                message.success('已成功退出登录')
-                router.go(0);
-            }
-        })
-    }
-    
-    // 绕过代理设置
-    const bypassProxy = ref<boolean>(false);
-    const proxyStatus = ref<string>('检查中...');
-    
-    // 检查代理绕过状态
-    const checkProxyBypassStatus = async () => {
-        try {
-            const isBypassed = await invoke('check_proxy_bypass') as boolean;
-            bypassProxy.value = isBypassed;
-            proxyStatus.value = isBypassed ? '已绕过系统代理' : '使用系统代理';
-            
-            // 同步到 localStorage
-            localStorage.setItem('bypassProxy', isBypassed.toString());
-        } catch (e) {
-            console.error('检查代理状态失败:', e);
-            proxyStatus.value = '检查失败';
+    dialog.warning({
+        title: '确认退出',
+        content: '确定要退出登录吗？',
+        positiveText: '确定',
+        negativeText: '取消',
+        onPositiveClick: () => {
+            // 清除用户token
+            logoutCurr()
+            userToken.value = ''
+            tempToken.value = ''
+            Cookies.remove('authorization');
+            localStorage.removeItem('userToken')
+            message.success('已成功退出登录')
+            router.go(0);
         }
-    };
-    
-    // 监听绕过代理设置变化
-    watch(bypassProxy, async (value) => {
-        try {
-            localStorage.setItem('bypassProxy', value.toString());
-            
-            // 设置环境变量
-            await invoke('set_env', { 
-                key: 'BYPASS_PROXY', 
-                value: value ? 'true' : 'false' 
-            });
-            
-            // 更新状态显示
-            proxyStatus.value = value ? '已绕过系统代理' : '使用系统代理';
-            
-            // 记录日志
-            logs.value += `[${new Date().toLocaleTimeString()}] [网络] ${value ? '启用' : '禁用'}绕过系统代理\n`;
-            
-            message.success(`${value ? '启用' : '禁用'}绕过系统代理成功`);
-        } catch (e) {
-            console.error('设置代理绕过失败:', e);
-            message.error(`设置代理绕过失败: ${e}`);
-        }
-    });
+    })
+}
 
-    const remoteLogging = ref(false)
-    const currentRequestUuid = ref('')
-    let remoteTimer: any = null
-    const logArgo = (msg: string) => {
-        logs.value += `[${new Date().toLocaleTimeString()}] [Argo] ${msg}\n`
+const Authlogout = () => {
+
+    dialog.warning({
+        title: '确认退出',
+        content: '确定要退出登录吗？',
+        positiveText: '确定',
+        negativeText: '取消',
+        onPositiveClick: () => {
+            // 清除用户token
+            logoutCurr()
+            Cookies.remove('authorization');
+            userToken.value = ''
+            tempToken.value = ''
+            localStorage.removeItem('userToken')
+            message.success('已成功退出登录')
+            router.go(0);
+        }
+    })
+}
+
+// 绕过代理设置
+const bypassProxy = ref<boolean>(false);
+const bypassReady = ref(false);
+const proxyStatus = ref<string>('检查中...');
+
+// 检查 DoH 状态
+const checkDoHStatus = async () => {
+    try {
+        const isEnabled = (await invoke('get_env', { key: 'USE_DOH' })) as (string | null);
+        useDoH.value = (isEnabled === 'true');
+        dohStatus.value = useDoH.value ? '已启用 DoH' : '未启用 DoH';
+        localStorage.setItem('useDoH', useDoH.value.toString());
+    } catch (e) {
+        console.error('检查 DoH 状态失败:', e);
+        dohStatus.value = '检查失败';
     }
-    const remoteLogin = async () => {
-        if (remoteLogging.value) return
+};
+
+// DoH 开关
+const useDoH = ref<boolean>(false);
+const dohReady = ref(false);
+const dohStatus = ref<string>('检查中...');
+
+// === Debug 日志开关 ===
+const frpcForceTlsEnabled = ref(localStorage.getItem('frpcForceTls') === 'true');
+watch(frpcForceTlsEnabled, async (val) => {
+    localStorage.setItem('frpcForceTls', val ? 'true' : 'false');
+    await invoke('set_env', { key: 'FRPC_FORCE_TLS', value: val ? 'true' : 'false' });
+});
+const frpcDebugEnabled = ref(localStorage.getItem('frpcDebug') === 'true');
+watch(frpcDebugEnabled, async (val) => {
+    localStorage.setItem('frpcDebug', val ? 'true' : 'false');
+    await invoke('set_env', { key: 'FRPC_DEBUG', value: val ? 'true' : 'false' });
+});
+
+// ==== DoH 地址选择 ====
+const dohOptions = [
+    { label: '默认 Ali (223.5.5.5)', value: '' },
+    { label: 'DNSPod Public DNS (doh.pub)', value: 'doh.pub' },
+    { label: 'Cloudflare (1.1.1.1)', value: '1.1.1.1' },
+    { label: 'Ali (223.6.6.6) ', value: '223.6.6.6' },
+    { label: 'Google (8.8.8.8)', value: '8.8.8.8' },
+    { label: '114DNS (114.114.114.114)', value: '114.114.114.114' },
+    { label: 'Quad9 (9.9.9.9)', value: '9.9.9.9' }
+];
+const dohAddr = ref<string>(localStorage.getItem('dohAddr') || '');
+
+// 监听 DoH 地址变化
+watch(dohAddr, async (addr) => {
+    try {
+        localStorage.setItem('dohAddr', addr);
+        await invoke('set_env', { key: 'DOH_ADDR', value: addr });
+        if (addr) {
+            // 选中了地址则强制开启 DoH
+            if (!useDoH.value) useDoH.value = true;
+            logs.value += `[${new Date().toLocaleTimeString()}] [网络] 设置 DoH 地址为 ${addr}\n`;
+            message.success(`已切换 DoH 服务器至 ${addr}`);
+        } else {
+            // 清除地址
+            logs.value += `[${new Date().toLocaleTimeString()}] [网络] 已关闭自定义 DoH 服务器\n`;
+            message.success('已关闭自定义 DoH');
+        }
+    } catch (e) {
+        console.error('设置 DoH 地址失败:', e);
+        message.error(`设置 DoH 地址失败: ${e}`);
+    }
+});
+
+watch(useDoH, async (value) => {
+    try {
+        localStorage.setItem('useDoH', value.toString());
+        await invoke('set_env', { key: 'USE_DOH', value: value ? 'true' : 'false' });
+        dohStatus.value = value ? '已启用 DoH' : '未启用 DoH';
+        logs.value += `[${new Date().toLocaleTimeString()}] [网络] ${value ? '启用' : '禁用'} DoH 解析\n`;
+        // message.success(`${value ? '启用' : '禁用'} DoH 成功`);
+    } catch (e) {
+        console.error('设置 DoH 失败:', e);
+        message.error(`设置 DoH 失败: ${e}`);
+    }
+});
+
+// 检查代理绕过状态
+const checkProxyBypassStatus = async () => {
+    try {
+        const isBypassed = await invoke('check_proxy_bypass') as boolean;
+        bypassProxy.value = isBypassed;
+        proxyStatus.value = isBypassed ? '已绕过系统代理' : '使用系统代理';
+
+        // 同步到 localStorage
+        localStorage.setItem('bypassProxy', isBypassed.toString());
+    } catch (e) {
+        console.error('检查代理状态失败:', e);
+        proxyStatus.value = '检查失败';
+    } finally {
+        // 标记已完成初始化，后续切换开关才会触发 watch
+        bypassReady.value = true;
+    }
+};
+
+// 监听绕过代理设置变化
+// 目标行为：
+// - 用户手动“启用绕过系统代理”时弹出提示
+// - 用户手动“关闭”时不弹提示（仅写日志）
+// - 页面初始化/路由切换造成的赋值不触发任何提示
+watch(bypassProxy, async (value) => {
+    // 初始化阶段不处理
+    if (!bypassReady.value) return;
+
+    // 如果与当前 env 中的值一致，说明是初始化/同步导致的赋值，直接跳过
+    // 这样可避免每次进入设置页都会弹出提示
+    try {
+        const envVal = (await invoke('get_env', { key: 'BYPASS_PROXY' })) as (string | null);
+        const envBool = envVal === 'true';
+        if (envBool === value) return;
+    } catch {
+        // ignore：无法读取 env 时继续走后续设置逻辑
+    }
+
+    try {
+        localStorage.setItem('bypassProxy', value.toString());
+
+        // 设置环境变量
+        await invoke('set_env', {
+            key: 'BYPASS_PROXY',
+            value: value ? 'true' : 'false'
+        });
+
+        // 更新状态显示
+        proxyStatus.value = value ? '已绕过系统代理' : '使用系统代理';
+
+        // 记录日志
+        logs.value += `[${new Date().toLocaleTimeString()}] [网络] ${value ? '启用' : '禁用'}绕过系统代理\n`;
+
+        // 仅在“启用”时弹提示，“禁用”不弹
+        if (value) {
+            message.success('启用绕过系统代理成功');
+        }
+    } catch (e) {
+        console.error('设置代理绕过失败:', e);
+        message.error(`设置代理绕过失败: ${e}`);
+    }
+});
+
+const remoteLogging = ref(false)
+const currentRequestUuid = ref('')
+let remoteTimer: any = null
+const logArgo = (msg: string) => {
+    logs.value += `[${new Date().toLocaleTimeString()}] [Argo] ${msg}\n`
+}
+const remoteLogin = async () => {
+    if (remoteLogging.value) return
+    try {
+        remoteLogging.value = true
+        logArgo('开始发起远程登录请求')
+        const data = await argoRequestLogin()
+        logArgo(`获取到 request_uuid=${data.request_uuid}`)
+        currentRequestUuid.value = data.request_uuid
+        // 守护：校验返回的授权地址是否为 Argo 预期域名
         try {
-            remoteLogging.value = true
-            logArgo('开始发起远程登录请求')
-            const data = await argoRequestLogin()
-            logArgo(`获取到 request_uuid=${data.request_uuid}`)
-            currentRequestUuid.value = data.request_uuid
-            // 守护：校验返回的授权地址是否为 Argo 预期域名
-            try {
-                const urlObj = new URL(data.authorization_url)
-                const hostOk = /(^|\.)console\.openfrp\.net$/i.test(urlObj.hostname)
-                const hasArgo = urlObj.searchParams.has('argoaccess')
-                if (!hostOk || !hasArgo) {
-                    logArgo(`授权地址校验失败: ${data.authorization_url}`)
-                    message.error('获取到的授权地址异常，已停止打开。请稍后重试。')
-                    remoteLogging.value = false
-                    currentRequestUuid.value = ''
-                    return
-                }
-            } catch (e) {
-                logArgo('授权地址解析失败')
-                message.error('授权地址无效，已停止打开')
+            const urlObj = new URL(data.authorization_url)
+            const hostOk = /(^|\.)console\.openfrp\.net$/i.test(urlObj.hostname)
+            const hasArgo = urlObj.searchParams.has('argoaccess')
+            if (!hostOk || !hasArgo) {
+                logArgo(`授权地址校验失败: ${data.authorization_url}`)
+                message.error('获取到的授权地址异常，已停止打开。请稍后重试。')
                 remoteLogging.value = false
                 currentRequestUuid.value = ''
                 return
             }
-            message.info('请在浏览器中完成授权')
-            await openUrl(data.authorization_url)
-
-            logArgo('切换为后端轮询，等待后端返回授权结果')
-            const auth = await argoWaitAuthorization(data.request_uuid)
-            logArgo('收到授权明文，准备保存登录状态')
-            Cookies.set('authorization', auth, { expires: 7 })
-            localStorage.setItem('userToken', auth)
-            userToken.value = auth
-            message.success('登录成功')
-            try {
-                const appWindow = await getCurrentWindow()
-                await appWindow.show()
-                await appWindow.setFocus()
-            } catch (e) { console.error('置顶窗口失败:', e) }
-            logArgo('登录成功，刷新页面以生效')
-            remoteLogging.value = false
-            currentRequestUuid.value = ''
-            router.go(0)
         } catch (e) {
-            console.error(e)
-            logArgo(`发起登录失败: ${String(e || '')}`)
+            logArgo('授权地址解析失败')
+            message.error('授权地址无效，已停止打开')
             remoteLogging.value = false
             currentRequestUuid.value = ''
-            message.error('远程登录发起失败')
+            return
         }
-    }
-    const cancelRemoteLogin = async () => {
+        message.info('请在浏览器中完成授权')
+        await openUrl(data.authorization_url)
+
+        logArgo('切换为后端轮询，等待后端返回授权结果')
+        const auth = await argoWaitAuthorization(data.request_uuid)
+        logArgo('收到授权明文，准备保存登录状态')
+        Cookies.set('authorization', auth, { expires: 7 })
+        localStorage.setItem('userToken', auth)
+        userToken.value = auth
+        message.success('登录成功')
         try {
-            logArgo('用户请求取消远程登录')
-            // request_uuid 在日志或本地无法直接取回，简化：提示用户重新发起
-            // 若需严格取消，可在状态中缓存最近一次 request_uuid
-            if (currentRequestUuid.value) {
-                await argoCancelWait(currentRequestUuid.value)
-            }
-        } catch {}
+            const appWindow = await getCurrentWindow()
+            await appWindow.show()
+            await appWindow.setFocus()
+        } catch (e) { console.error('置顶窗口失败:', e) }
+        logArgo('登录成功，刷新页面以生效')
         remoteLogging.value = false
         currentRequestUuid.value = ''
-        message.info('已取消远程登录')
+        router.go(0)
+    } catch (e) {
+        console.error(e)
+        logArgo(`发起登录失败: ${String(e || '')}`)
+        remoteLogging.value = false
+        currentRequestUuid.value = ''
+        message.error('远程登录发起失败')
     }
-    onUnmounted(() => {
-        if (remoteTimer) clearTimeout(remoteTimer)
-    })
-    
-    const AuthLogin = async () => {
-        if (!Authorization.value) {
-            message.error('请输入 Authorization');
+}
+const cancelRemoteLogin = async () => {
+    try {
+        logArgo('用户请求取消远程登录')
+        // request_uuid 在日志或本地无法直接取回，简化：提示用户重新发起
+        // 若需严格取消，可在状态中缓存最近一次 request_uuid
+        if (currentRequestUuid.value) {
+            await argoCancelWait(currentRequestUuid.value)
+        }
+    } catch { }
+    remoteLogging.value = false
+    currentRequestUuid.value = ''
+    message.info('已取消远程登录')
+}
+onUnmounted(() => {
+    if (remoteTimer) clearTimeout(remoteTimer)
+})
+
+const AuthLogin = async () => {
+    if (!Authorization.value) {
+        message.error('请输入 Authorization');
+        return;
+    }
+    message.loading('正在登录...', { duration: 2000 });
+
+    try {
+        // 直接使用 invoke 而不是 callApi，避免循环检查
+        const testResponse = await invoke('proxy_api', {
+            url: 'getUserInfo',
+            method: 'POST',
+            headers: {
+                Authorization: Authorization.value
+            },
+            body: {},
+        });
+        console.log(testResponse);
+
+        if (!testResponse || !(testResponse as any).flag) {
+            message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
             return;
         }
-        message.loading('正在登录...', { duration: 2000 });
 
-        try {
-            // 直接使用 invoke 而不是 callApi，避免循环检查
-            const testResponse = await invoke('proxy_api', {
-                url: 'getUserInfo',
-                method: 'POST',
-                headers: {
-                    Authorization: Authorization.value
-                },
-                body: {},
-            });
-            console.log(testResponse);
-
-            if (!testResponse || !(testResponse as any).flag) {
-                message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
-                return;
-            }
-
-            // Authorization 有效，保存登录状态
-            Cookies.set('authorization', Authorization.value, {
-                expires: 7,
-            });
-            userToken.value = Authorization.value;
-            localStorage.setItem('userToken', Authorization.value);
-            tempToken.value = Authorization.value;
-            message.success('登录成功');
-            router.go(0);
-        } catch (error) {
-            console.error('登录过程中出错:', error);
-            message.error('登录失败，请稍后重试');
-        }
+        // Authorization 有效，保存登录状态
+        Cookies.set('authorization', Authorization.value, {
+            expires: 7,
+        });
+        userToken.value = Authorization.value;
+        localStorage.setItem('userToken', Authorization.value);
+        tempToken.value = Authorization.value;
+        message.success('登录成功');
+        router.go(0);
+    } catch (error) {
+        console.error('登录过程中出错:', error);
+        message.error('登录失败，请稍后重试');
     }
-    
-    // 页面加载时初始化绕过代理设置
-    onMounted(async () => {
-        await checkProxyBypassStatus();
-    });
+}
+
+// 页面加载时初始化 DoH 设置
+onMounted(async () => {
+    await checkDoHStatus();
+});
+
+// 页面加载时初始化绕过代理设置
+onMounted(async () => {
+    await checkProxyBypassStatus();
+});
 // 添加手动放置frpc的相关功能
 const appDataDir = ref('');
 const manualModeVisible = ref(false);
@@ -981,7 +1088,7 @@ const getExpectedFrpcInfo = async () => {
         console.error('获取frpc信息失败:', e);
         // 忽略错误，继续执行以下代码以设置默认值
     }
-        
+
     // 如果没有现有文件或发生错误，使用简单逻辑确定期望的文件名
     // 这与后端逻辑保持一致
     const isWindows = navigator.platform.toLowerCase().includes('win');
@@ -1064,12 +1171,12 @@ const showManualMode = async () => {
     try {
         await getAppDataDir();
         manualModeVisible.value = true;
-        
+
         // 检查frpc是否存在
         try {
             const result = await invoke('get_frpc_cli_version') as string;
             const frpcInfo = JSON.parse(result);
-            
+
             if (frpcInfo.version === "未知") {
                 logs.value += `[${new Date().toLocaleTimeString()}] [系统] 正在配置Frpc，当前未找到可执行文件\n`;
             }
@@ -1089,57 +1196,57 @@ onMounted(async () => {
 const enableBlur = ref(localStorage.getItem('enableBlur') !== 'false'); // 默认开启毛玻璃
 
 watch(enableBlur, (val) => {
-  localStorage.setItem('enableBlur', val ? 'true' : 'false');
-  // 触发全局样式切换
-  document.body.classList.toggle('blur-enabled', val);
+    localStorage.setItem('enableBlur', val ? 'true' : 'false');
+    // 触发全局样式切换
+    document.body.classList.toggle('blur-enabled', val);
 });
 
 // 高斯模糊特效开关
 const enableGaussianBlur = ref(localStorage.getItem('enableGaussianBlur') !== 'false'); // 默认开启
 
 watch(enableGaussianBlur, (val) => {
-  localStorage.setItem('enableGaussianBlur', val ? 'true' : 'false');
-  if (val) {
-    document.body.classList.add('gaussian-blur-enabled');
-  } else {
-    document.body.classList.remove('gaussian-blur-enabled');
-  }
+    localStorage.setItem('enableGaussianBlur', val ? 'true' : 'false');
+    if (val) {
+        document.body.classList.add('gaussian-blur-enabled');
+    } else {
+        document.body.classList.remove('gaussian-blur-enabled');
+    }
 });
 
 onMounted(() => {
-  // 初始化高斯模糊特效
-  if (enableGaussianBlur.value) {
-    document.body.classList.add('gaussian-blur-enabled');
-  } else {
-    document.body.classList.remove('gaussian-blur-enabled');
-  }
+    // 初始化高斯模糊特效
+    if (enableGaussianBlur.value) {
+        document.body.classList.add('gaussian-blur-enabled');
+    } else {
+        document.body.classList.remove('gaussian-blur-enabled');
+    }
 });
 
 // 监听自动更新进度与结果
 onMounted(() => {
-  listen('update-progress', (event) => {
-    const percent = parseFloat(String(event.payload).replace('%', ''))
-    if (!isNaN(percent)) {
-      downloadingPercent.value = Math.round(percent)
-      if (downloadingMsg) {
-        downloadingMsg.content = () => `正在下载更新... ${downloadingPercent.value}%`
-      }
-    }
-  })
-  listen('update-error', (event) => {
-    if (downloadingMsg) {
-      downloadingMsg.destroy()
-      downloadingMsg = null
-    }
-    message.error(event.payload as string)
-  })
-  listen('update-success', (event) => {
-    if (downloadingMsg) {
-      downloadingMsg.destroy()
-      downloadingMsg = null
-    }
-    message.success((event.payload as string) || '更新已下载完成，重启应用后生效')
-  })
+    listen('update-progress', (event) => {
+        const percent = parseFloat(String(event.payload).replace('%', ''))
+        if (!isNaN(percent)) {
+            downloadingPercent.value = Math.round(percent)
+            if (downloadingMsg) {
+                downloadingMsg.content = () => `正在下载更新... ${downloadingPercent.value}%`
+            }
+        }
+    })
+    listen('update-error', (event) => {
+        if (downloadingMsg) {
+            downloadingMsg.destroy()
+            downloadingMsg = null
+        }
+        message.error(event.payload as string)
+    })
+    listen('update-success', (event) => {
+        if (downloadingMsg) {
+            downloadingMsg.destroy()
+            downloadingMsg = null
+        }
+        message.success((event.payload as string) || '更新已下载完成，重启应用后生效')
+    })
 });
 </script>
 
@@ -1154,20 +1261,22 @@ onMounted(() => {
                 <template #header-extra>
                     <n-button type="tertiary" @click="logout">退出登录</n-button>
                 </template>
+
+
                 <n-thing style="width: 100%">
                     <template #avatar>
                         <n-tooltip :show-arrow="false" trigger="hover" placement="bottom">
                             <template #trigger>
                                 <n-avatar :size="48"
                                     :src="'https://api.zyghit.cn/avatar/?email=' + userInfo?.email + '&s=256'"
-                                    fallback-src="https://07akioni.oss-cn-beijing.aliyuncs.com/07akioni.jpeg" />
+                                    fallback-src="https://api.zyghit.cn/avatar/?email=example@example.com&s=256" />
                             </template>
                             更换头像？请前往 Weavatar !
                         </n-tooltip>
                     </template>
                     <template #header>
                         #{{ userInfo?.id }} {{ userInfo?.username }} <n-tag type="info">{{ userInfo?.friendlyGroup
-                            }}</n-tag>
+                        }}</n-tag>
                     </template>
                     <template #description>
                         {{ userInfo?.email }}
@@ -1230,19 +1339,21 @@ onMounted(() => {
                                             <n-space vertical>
                                                 <n-text depth="3">将生成一次性密钥并请求授权，需在浏览器完成确认。</n-text>
                                                 <n-space>
-                                                    <n-button type="primary" @click="remoteLogin" :loading="remoteLogging">开始远程登录</n-button>
-                                                    <n-button @click="cancelRemoteLogin" :disabled="!remoteLogging">取消</n-button>
+                                                    <n-button type="primary" @click="remoteLogin"
+                                                        :loading="remoteLogging">开始远程登录</n-button>
+                                                    <n-button @click="cancelRemoteLogin"
+                                                        :disabled="!remoteLogging">取消</n-button>
                                                 </n-space>
                                                 <n-text v-if="remoteLogging">已发起登录请求，正在等待授权（最长5分钟）...</n-text>
                                             </n-space>
                                         </n-tab-pane>
-                                        
+
                                         <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
                                             <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
 
 
                                         </n-tab-pane>
-                                       
+
                                         <n-tab-pane name="authorization" tab="通过 Authorization 登录">
                                             <n-form-item-row label="请输入在面板获取的 Authorization">
                                                 <n-input v-model:value="Authorization" type="password"
@@ -1264,11 +1375,11 @@ onMounted(() => {
                                 </n-space>
                             </n-form-item>
 
-                                <!-- <n-text>主题切换已移至窗口右上角</n-text> -->
+                            <!-- <n-text>主题切换已移至窗口右上角</n-text> -->
                         </n-space>
                     </n-form>
 
-                    <n-collapse v-model:expanded-names="activeNames" accordion>
+                    <n-collapse v-model:expanded-names="activeNames">
                         <n-collapse-item title="版本信息" name="2">
                             <n-space vertical>
                                 <n-text>当前版本：Beta v{{ currentVersion }}</n-text>
@@ -1286,32 +1397,39 @@ onMounted(() => {
                         </n-collapse-item>
                         <n-collapse-item title="Frpc 管理" name="1">
                             <template #header-extra>
-                                首次使用请在这里下载或配置 Frpc
+                                <span class="dynamic-highlight">首次使用请在这里下载或配置 Frpc</span>
                             </template>
-                            <n-space>
-                                <n-button @click="downloadFrpc" :loading="downloading" :disabled="downloading">
-                                    {{ downloading ? '正在进行操作...' : '自动下载/更新 Frpc' }}
-                                </n-button>
-                                <n-button @click="getFrpcVersion" :disabled="downloading">获取本地 Frpc 版本</n-button>
+                            <n-space vertical>
+                                <n-space>
 
-                                <!-- 添加新按钮：手动放置按钮 -->
-                                <n-button @click="showManualMode" :disabled="downloading">
-                                    手动配置 Frpc 可执行文件
-                                </n-button>
+                                    <n-switch v-model:value="frpcDebugEnabled" />
+                                    <span>启用 Frpc Debug 模式</span>
+                                </n-space>
+                                <n-space>
+                                    <n-button @click="downloadFrpc" :loading="downloading" :disabled="downloading">
+                                        {{ downloading ? '正在进行操作...' : '自动下载/更新 Frpc' }}
+                                    </n-button>
+                                    <n-button @click="getFrpcVersion" :disabled="downloading">获取本地 Frpc 版本</n-button>
+
+                                    <!-- 添加新按钮：手动放置按钮 -->
+                                    <n-button @click="showManualMode" :disabled="downloading">
+                                        手动配置 Frpc 可执行文件
+                                    </n-button>
+                                    <n-popconfirm @positive-click="killAllProcesses" :disabled="downloading">
+                                        <template #trigger>
+                                            <n-button type="warning" :disabled="downloading">终止所有 Frpc 进程</n-button>
+                                        </template>
+                                        确认终止所有 Frpc 进程？这将会断开所有连接
+                                    </n-popconfirm>
+                                </n-space>
 
 
 
-                                <n-popconfirm @positive-click="killAllProcesses" :disabled="downloading">
-                                    <template #trigger>
-                                        <n-button type="warning" :disabled="downloading">终止所有 Frpc 进程</n-button>
-                                    </template>
-                                    确认终止所有 Frpc 进程？这将会断开所有连接
-                                </n-popconfirm>
+
+                                <n-card title="运行日志" class="mt-4">
+                                    <n-log :rows="10" :log="logs" :loading="false" trim />
+                                </n-card>
                             </n-space>
-                            <br />
-                            <n-card title="运行日志" class="mt-4">
-                                <n-log :rows="10" :log="logs" :loading="false" trim />
-                            </n-card>
                         </n-collapse-item>
                         <n-collapse-item title="启动器设置" name="3">
                             <n-space vertical>
@@ -1347,45 +1465,58 @@ onMounted(() => {
                                 </n-space>
                                 <!-- 高斯模糊特效开关 -->
                                 <n-space align="center">
-                                    <n-switch v-model:value="enableGaussianBlur"/>
-                                    <span>高斯模糊视觉特效（窗口需支持透明）</span>
+                                    <n-switch v-model:value="enableGaussianBlur" />
+                                    <span>高斯模糊视觉特效（窗口需支持透明）*TODO</span>
                                 </n-space>
                             </n-space>
                         </n-collapse-item>
                         <n-collapse-item title="网络设置" name="4">
                             <n-space vertical>
-                                <n-card title="代理设置" size="small">
-                                    <n-space vertical>
-                                        <n-space align="center">
-                                            <n-switch v-model:value="bypassProxy" />
-                                            <span>绕过系统代理</span>
-                                            <n-tooltip trigger="hover">
-                                                <template #trigger>
-                                                    <n-icon>
-                                                        <HelpCircleOutline />
-                                                    </n-icon>
-                                                </template>
-                                                启用后将不使用系统代理直接连接网络，适用于内网环境或需要直连的场景
-                                            </n-tooltip>
-                                        </n-space>
-                                        <n-space align="center">
-                                            <n-text :type="bypassProxy ? 'success' : 'info'">
-                                                当前状态: {{ proxyStatus }}
-                                            </n-text>
-                                        </n-space>
-                                        <n-alert type="info" show-icon>
-                                            <template #header>
-                                                代理设置说明
+
+
+                                <n-space vertical>
+                                    <n-space align="center">
+                                        <n-switch v-model:value="useDoH" />
+                                        <span>启用 DoH 解析</span>
+                                        <n-tooltip trigger="hover">
+                                            <template #trigger>
+                                                <n-icon>
+                                                    <HelpCircleOutline />
+                                                </n-icon>
                                             </template>
-                                            <ul>
-                                                <li>绕过系统代理：程序将直接连接网络，不使用系统代理设置</li>
-                                                <li>使用系统代理：程序将遵循系统的代理配置</li>
-                                                <li>建议在网络环境复杂或需要直连时启用绕过代理</li>
-                                                <li>设置更改后立即生效，无需重启程序</li>
-                                            </ul>
-                                        </n-alert>
+                                            启用后，frpc 将使用基于 HTTPS 的 DNS 解析方案，可在部分网络环境下提升解析成功率
+                                        </n-tooltip>
                                     </n-space>
-                                </n-card>
+                                    <n-space align="center">
+                                        选择 DoH 服务器: <n-select v-model:value="dohAddr" :options="dohOptions"
+                                            placeholder="选择 DoH DNS 服务器 " style="min-width: 260px;" />
+                                    </n-space>
+                                    <n-space>
+                                        <n-switch v-model:value="frpcForceTlsEnabled" />
+                                        <span>启用 Force TLS</span>
+                                        <n-tooltip trigger="hover">
+                                            <template #trigger>
+                                                <n-icon>
+                                                    <HelpCircleOutline />
+                                                </n-icon>
+                                            </template>
+                                            强制启用与节点服务器的通信加密，可能缓解部分网络环境的连接问题。会增加 CPU 占用
+                                        </n-tooltip>
+                                    </n-space>
+
+                                    <n-space align="center">
+                                        <n-switch v-model:value="bypassProxy" />
+                                        <span>绕过系统代理</span>
+                                        <n-tooltip trigger="hover">
+                                            <template #trigger>
+                                                <n-icon>
+                                                    <HelpCircleOutline />
+                                                </n-icon>
+                                            </template>
+                                            用于直接访问 API 并绕过系统代理
+                                        </n-tooltip>
+                                    </n-space>
+                                </n-space>
                             </n-space>
                         </n-collapse-item>
                     </n-collapse>
@@ -1442,7 +1573,7 @@ onMounted(() => {
                         下载后的文件一般为压缩格式，请解压后复制到数据目录，目录结构如下：
                         <br /> <br />
                         <n-code>
-                        com.of-cpl.app/  <br />
+                            com.of-cpl.app/ <br />
                             - /frpc <br />
                             - /config <br />
                             - config.json <br />
@@ -1458,14 +1589,14 @@ onMounted(() => {
                             打开数据目录
                         </n-button>
                     </n-form-item>
-                    
+
 
                     <n-form-item label="Frpc 可执行文件名称">
                         <n-input v-model:value="expectedFrpcFilename" readonly />
 
                     </n-form-item>
 
-                    
+
 
 
                 </n-space>
@@ -1481,3 +1612,31 @@ onMounted(() => {
         </n-drawer>
     </n-scrollbar>
 </template>
+<style scoped>
+    .dynamic-highlight {
+      font-weight: bold;
+      animation: colorCycle 3s linear infinite;
+    }
+    @keyframes colorCycle {
+      0% {
+        color: #ff2222;
+        text-shadow: 0 0 2px #ff2222;
+      }
+      25% {
+        color: #ff9922;
+        text-shadow: 0 0 2px #ff9922;
+      }
+      50% {
+        color: #22cc22;
+        text-shadow: 0 0 2px #22cc22;
+      }
+      75% {
+        color: #2222ff;
+        text-shadow: 0 0 2px #2222ff;
+      }
+      100% {
+        color: #cc22ff;
+        text-shadow: 0 0 2px #cc22ff;
+      }
+    }
+    </style>

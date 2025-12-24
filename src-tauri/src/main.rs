@@ -96,7 +96,7 @@ impl Config {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.7.1".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.8.0".to_string()));
         }
 
         // 更新版本号
@@ -523,12 +523,48 @@ async fn start_frpc_instance<R: Runtime>(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    cmd.args(&["-u", &token, "-p", &tunnel_id])
-        .stdout(Stdio::piped())
+    cmd.args(&["-u", &token, "-p", &tunnel_id]);
+    // 如果启用了 DoH，则添加启动参数
+    let use_doh = std::env::var("USE_DOH").unwrap_or_else(|_| "false".to_string());
+    if use_doh == "true" {
+        cmd.arg("--use-doh");
+    }
+
+    // 如果需要输出 debug 日志
+    let debug_enabled = std::env::var("FRPC_DEBUG").unwrap_or_else(|_| "false".to_string());
+    if debug_enabled == "true" {
+        cmd.arg("--debug");
+    }
+
+    // 强制 TLS
+    let force_tls = std::env::var("FRPC_FORCE_TLS").unwrap_or_else(|_| "false".to_string());
+    if force_tls == "true" {
+        cmd.arg("--force-tls");
+    }
+
+    // 如果指定了自定义 DoH 地址
+    // 如果需要输出 debug 日志
+    let debug_enabled = std::env::var("FRPC_DEBUG").unwrap_or_else(|_| "false".to_string());
+    let force_tls = std::env::var("FRPC_FORCE_TLS").unwrap_or_else(|_| "false".to_string());
+    if debug_enabled == "true" {
+        cmd.arg("--debug");
+    }
+
+    if let Ok(doh_addr) = std::env::var("DOH_ADDR") {
+        if !doh_addr.is_empty() {
+            // 确保也启用了 DoH
+            if use_doh != "true" {
+                cmd.arg("--use-doh");
+            }
+            cmd.args(&["--doh-addr", &doh_addr]);
+        }
+    }
+
+    cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped());
     println!("{:?}", cmd);
 
-    // 添加绕过系统代理的环境变量
+    // 添加绕过系统代理和 DoH 使用的环境变量
     let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
     if bypass_proxy == "true" {
         // 清除所有代理环境变量
@@ -1430,7 +1466,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.7.1".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.8.0".to_string()))
 }
 
 #[tauri::command]
@@ -1657,6 +1693,8 @@ async fn test_network_connection() -> Result<serde_json::Value, String> {
     // 测试多个端点
     let test_urls = vec![
         ("OpenFrp API", "https://of-dev-api.bfsea.com/frp/api/getUserInfo"),
+        ("Baidu", "https://www.baidu.com"),
+        ("ZGIT API", "https://api.zyghit.cn"),
         ("GitHub", "https://api.github.com"),
         ("Google DNS", "https://8.8.8.8"),
     ];

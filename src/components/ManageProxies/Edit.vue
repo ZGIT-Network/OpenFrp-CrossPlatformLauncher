@@ -423,6 +423,22 @@
               :class="isEditMode ? '' : 'ovf'"
               :style="isEditMode ? 'max-height: calc(90vh - 130px);' : ''"
             >
+            <n-alert
+              :show-icon="false"
+              title="对广大 Minecraft 玩家的温馨提示"
+              type="warning"
+              :style="{ 'margin-bottom': '1rem' }"
+              v-if="proxyData?.local_port === 25565 || proxyData?.local_port === 19132"
+            >
+              <!-- <n-marquee :speed="80">
+                <div style="margin-right: 64px">
+                  近期有未知组织正在不间断以恶意目的扫描 OpenFrp 穿透节点，为了保障您的资产安全，穿透Minecraft服务时，启用正版验证、安装登录插件或启用白名单是非常必要的行为。穿透服务的安全性由您自行负责。感谢您的支持与理解。
+                </div>
+              </n-marquee> -->
+              近期有未知组织正不间断以恶意目的扫描 OPENFRP
+              穿透节点，因此，为了保障您的资产安全，穿透 Minecraft
+              服务时，启用正版验证、安装登录插件或启用白名单是非常必要的安全措施。<br />根据我们的服务条款，您所穿透服务的安全性由您自行负责。感谢您的支持与理解。
+            </n-alert>
               <n-form-item v-if="!isEditMode" path="node" label="已选择节点">
                 <n-input
                   :value="
@@ -438,6 +454,7 @@
               <n-grid cols="1 350:2" x-gap="16" y-gap="16">
                 <n-gi>
                   <n-grid y-gap="16" x-gap="16" cols="1">
+                    
                     <n-form-item-gi path="name" label="隧道名称" span="1">
                       <n-input
                         show-count

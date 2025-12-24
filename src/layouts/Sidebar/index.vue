@@ -162,7 +162,8 @@ watch(() => route.name, (newRouteName) => {
 }
 
 .n-layout-sider {
-  background-color: rgba(250, 250, 250, 0.3) !important; /* 增加透明度 */
+  /* background-color: rgba(250, 250, 250, 0.3) !important;  */
+  /* 增加透明度 */
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
 }
