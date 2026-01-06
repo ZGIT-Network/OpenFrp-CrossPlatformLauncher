@@ -78,10 +78,12 @@ struct LogPayload {
 }
 
 // 配置文件版本号，用于管理配置文件升级
-const CONFIG_VERSION: u32 = 1;
+const CONFIG_VERSION: u32 = 2;
 
 #[derive(Serialize, Deserialize, Default)]
 struct Config {
+    // 环境变量持久化
+    env_vars: Option<HashMap<String, String>>,
     config_version: Option<u32>, // 配置文件版本号
     frpc_version: Option<String>,
     frpc_filename: Option<String>,
@@ -90,13 +92,17 @@ struct Config {
 
 impl Config {
     fn upgrade(mut self) -> Self {
+        // 自动补全新字段
+        if self.env_vars.is_none() {
+            self.env_vars = Some(HashMap::new());
+        }
         let current_version = self.config_version.unwrap_or(0);
 
         if current_version < 1 {
             // 版本0到版本1的升级
             self.frpc_version = self.frpc_version.or_else(|| Some(String::new()));
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
-            self.cpl_version = self.cpl_version.or_else(|| Some("0.8.0".to_string()));
+            self.cpl_version = self.cpl_version.or_else(|| Some("0.8.1".to_string()));
         }
 
         // 更新版本号
@@ -1466,7 +1472,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 #[command]
 fn get_cpl_version() -> Result<String, String> {
     let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.8.0".to_string()))
+    Ok(config.cpl_version.unwrap_or_else(|| "0.8.1".to_string()))
 }
 
 #[tauri::command]
@@ -1651,14 +1657,39 @@ async fn debug_auto_start(app: tauri::AppHandle) -> Result<serde_json::Value, St
 // 设置环境变量命令
 #[tauri::command]
 fn set_env(key: String, value: String) -> Result<(), String> {
+    // 设置进程环境变量
     std::env::set_var(&key, &value);
+
+    // 同步到配置文件
+    let mut cfg = load_config()?;
+    let mut map = cfg.env_vars.unwrap_or_default();
+    if value.is_empty() {
+        map.remove(&key);
+    } else {
+        map.insert(key.clone(), value.clone());
+    }
+    cfg.env_vars = Some(map);
+    save_config(&cfg)?;
+
     Ok(())
 }
 
 // 获取环境变量命令
 #[tauri::command]
 fn get_env(key: String) -> Result<Option<String>, String> {
-    Ok(std::env::var(&key).ok())
+    // 先检查进程环境变量
+    if let Ok(val) = std::env::var(&key) {
+        return Ok(Some(val));
+    }
+    // 再检查配置文件中的持久化变量
+    let cfg = load_config()?;
+    if let Some(map) = cfg.env_vars {
+        if let Some(v) = map.get(&key) {
+            return Ok(Some(v.clone()));
+        }
+    }
+    Ok(None)
+
 }
 
 // 检查代理绕过状态
@@ -2020,6 +2051,16 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
             let app_dir = init_app_directory(app)?;
+            // 加载持久化环境变量并注入当前进程
+            if let Ok(cfg) = load_config() {
+                if let Some(map) = cfg.env_vars {
+                    for (k, v) in map {
+                        if !v.is_empty() {
+                            std::env::set_var(k, v);
+                        }
+                    }
+                }
+            }
             println!("应用程序目录: {:?}", app_dir);
 
             #[cfg(any(windows, target_os = "linux"))]

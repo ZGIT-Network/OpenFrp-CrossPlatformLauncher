@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, h, computed, nextTick, watch, inject, Ref } from 'vue'
-import { NCard, NSpace, NSwitch, NButton, NTooltip, useMessage, useNotification, useLoadingBar, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider } from 'naive-ui'
+import { NCard, NSpace, NSwitch, NButton, NButtonGroup, NTooltip, useMessage, useNotification, useLoadingBar, NGrid, NGridItem, NText, NTag, NSkeleton, NScrollbar, NIcon, NDropdown, useDialog, NMessageProvider, NInput, NStatistic, NList, NListItem } from 'naive-ui'
 import { invoke } from '@tauri-apps/api/core'
 import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
 import axios from 'axios'
@@ -35,6 +35,41 @@ const message = useMessage();
 const notification = useNotification();
 const dialog = useDialog()
 const tunnels = ref<any[]>([])
+const searchQuery = ref('')
+const filterType = ref<'all' | 'tcp' | 'udp'>('all')
+
+const filteredTunnels = computed(() => {
+  // 根据类型过滤
+  let list = filterType.value === 'all' ? tunnels.value : tunnels.value.filter(t => t.type.toLowerCase() === filterType.value)
+
+  // 文本搜索
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return list
+
+  return tunnels.value.filter(t => {
+    const idStr = String(t.id)
+    const name = (t.name || '').toLowerCase()
+    const local = (t.local || '').toLowerCase()
+    const remote = (t.remote || '').toLowerCase()
+
+    if (idStr.includes(q) || name.includes(q) || local.includes(q) || remote.includes(q)) {
+      return true
+    }
+
+    // 端口号匹配（本地或远程）
+    const num = Number(q)
+    if (!isNaN(num)) {
+      const localPort = parseInt(t.local.split(':').pop())
+      let remotePort = t.remotePort || -1
+      if (remotePort === -1 && t.remote.includes(':')) {
+        remotePort = parseInt(t.remote.split(':').pop())
+      }
+      return localPort === num || remotePort === num
+    }
+
+    return false
+  })
+})
 const loading = ref(false)
 const loadingTunnels = ref<Set<string>>(new Set())
 const loadingBar = useLoadingBar();
@@ -945,48 +980,55 @@ onMounted(async () => {
 
 <template>
   <n-scrollbar>
-    <n-space vertical style="margin-left: 8px;margin-right: 8px; height: 100%;margin-bottom: 8px;">
+    <n-space vertical style="height: 100%;margin-bottom: 8px;">
       <n-h2 style="margin-bottom: 3px;">隧道管理</n-h2>
       <n-skeleton v-if="loading" :height="3" />
       <n-card v-else-if="getLinkOnlyTunnels.size > 0" title="外部快速启动隧道">
-        <n-space vertical>
-          <n-space v-for="tunnelId in getLinkOnlyTunnels" :key="tunnelId" justify="space-between">
-            <n-space>
-              <n-text>外部隧道 #{{ tunnelId }}</n-text>
-              <n-tag type="warning" size="small">不属于当前用户</n-tag>
-              <n-tag type="info" size="small">
-                快速启动
-              </n-tag>
+        <n-list bordered hoverable>
+          <n-list-item v-for="tunnelId in getLinkOnlyTunnels" :key="tunnelId">
+            <n-space justify="space-between" align="center" style="width: 100%;">
+              <n-space vertical :size="2">
+                <n-text strong>外部隧道 #{{ tunnelId }}</n-text>
+                <n-text depth="3" style="font-size: 12px;">快速启动 · 非本账号</n-text>
+              </n-space>
+              <n-button type="error" size="small" @click="stopExternalTunnel(tunnelId)">停止</n-button>
             </n-space>
-            <n-button type="error" size="small" @click="stopExternalTunnel(tunnelId)">
-              停止
-            </n-button>
-          </n-space>
-        </n-space>
+          </n-list-item>
+        </n-list>
       </n-card>
 
       <n-card>
-        <n-space>
-          <n-button @click="fetchProxyList" :loading="loading">
-            <n-icon v-if="!loading" size="large">
-              <Refresh />
-            </n-icon>
-            刷新隧道列表
-          </n-button>
-          
-        </n-space>
-        <n-space justify="end">
-             <n-statistic label="隧道数(已使用/全部)" :value="userInfo?.used || 0" :loading="loading">
-        <template #suffix>
-          / {{ userInfo?.proxies || 0 }}
-        </template>
-      </n-statistic>
+        <n-space justify="space-between" align="center" wrap>
+          <!-- 左侧：搜索 + 类型按钮 -->
+          <n-space align="center" :size="8">
+            <n-input v-model:value="searchQuery" placeholder="输入ID/名称/端口筛选" clearable style="max-width: 240px;" />
+            <n-button-group>
+              <n-button :type="filterType==='all' ? 'primary' : 'default'" @click="filterType='all'">全部</n-button>
+              <n-button :type="filterType==='tcp' ? 'primary' : 'default'" @click="filterType='tcp'">TCP</n-button>
+              <n-button :type="filterType==='udp' ? 'primary' : 'default'" @click="filterType='udp'">UDP</n-button>
+            </n-button-group>
+            <n-button @click="fetchProxyList" :loading="loading" type="secondary">
+              <template #icon>
+                <n-icon v-if="!loading" size="18">
+                  <Refresh />
+                </n-icon>
+              </template>
+              刷新
+            </n-button>
           </n-space>
+          <!-- 右侧：刷新按钮 + 统计 -->
+          <n-space align="center" :size="12">
+            
+            <n-statistic label="隧道(已用/总计)" :value="userInfo?.used || 0" :loading="loading">
+              <template #suffix>/ {{ userInfo?.proxies || 0 }}</template>
+            </n-statistic>
+          </n-space>
+        </n-space>
       </n-card>
 
       <n-skeleton v-if="loading" :height="3" />
       <n-grid v-else :cols="2" :x-gap="12" :y-gap="12">
-        <n-grid-item v-for="tunnel in tunnels" :key="tunnel.id" style="display: flex;">
+        <n-grid-item v-for="tunnel in filteredTunnels" :key="tunnel.id" style="display: flex;">
           <n-card :title="'隧道 #' + tunnel.id + ' ' + tunnel.name" :bordered="false" size="small"
             :class="{ 'disabled-card': !canStartTunnel(tunnel) }" style="flex: 1; height: 100%;">
             <template #header-extra>

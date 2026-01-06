@@ -1056,6 +1056,17 @@ const AuthLogin = async () => {
 // 页面加载时初始化 DoH 设置
 onMounted(async () => {
     await checkDoHStatus();
+    // 同步 FRPC_DEBUG 和 FRPC_FORCE_TLS 状态
+    try {
+        const debugVal = await invoke('get_env', { key: 'FRPC_DEBUG' }) as (string | null);
+        frpcDebugEnabled.value = debugVal === 'true';
+        localStorage.setItem('frpcDebug', frpcDebugEnabled.value ? 'true' : 'false');
+    } catch { /* ignore */ }
+    try {
+        const tlsVal = await invoke('get_env', { key: 'FRPC_FORCE_TLS' }) as (string | null);
+        frpcForceTlsEnabled.value = tlsVal === 'true';
+        localStorage.setItem('frpcForceTls', frpcForceTlsEnabled.value ? 'true' : 'false');
+    } catch { /* ignore */ }
 });
 
 // 页面加载时初始化绕过代理设置
@@ -1252,12 +1263,12 @@ onMounted(() => {
 
 <template>
     <n-scrollbar>
-        <n-space vertical style="margin-left: 8px;margin-right: 8px; height: 100%;margin-bottom: 8px;">
+        <n-space vertical style=" height: 100%;margin-bottom: 8px;">
             <n-h2 style="margin-bottom: 0px;">设置</n-h2>
 
             <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert>
 
-            <n-card title="已通过 NatayarkID 登录" v-if="userToken" hoverable style="height: 100%">
+            <n-card title="已通过 Natayark OpenID 登录" v-if="userToken" hoverable style="height: 100%">
                 <template #header-extra>
                     <n-button type="tertiary" @click="logout">退出登录</n-button>
                 </template>
