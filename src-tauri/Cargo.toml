@@ -19,7 +19,7 @@ tauri-build = { version = "2", features = [] }
 chrono = "0.4"
 
 [dependencies]
-tauri = { version = "2", features = [ "tray-icon" ] }
+tauri = { version = "2", features = [ "protocol-asset", "tray-icon" ] }
 tauri-plugin-single-instance = { version = "2.0.0", features = ["deep-link"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
@@ -47,6 +47,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 xsalsa20poly1305 = "0.9"
 rand_core = "0.6"
 crypto_box = "0.9"
+tauri-plugin-fs = "2"
 
 # 将 winreg 移动到 Windows 特定依赖中
 [target.'cfg(windows)'.dependencies]

@@ -214,7 +214,7 @@ const refreshEntireWindow = () => {
   Object.assign(spinner.style, {
     width: '40px',
     height: '40px',
-    border: '4px solid rgba(255,255,255,.1)',
+    // border: '4px solid rgba(255,255,255,.1)',
     borderRadius: '50%',
     borderTopColor: '#18a058',
     position: 'absolute',

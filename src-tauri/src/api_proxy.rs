@@ -11,7 +11,7 @@ pub async fn proxy_api(
     body: Option<Value>,
 ) -> Result<Value, String> {
     let client_builder = reqwest::Client::builder();
-    
+
     // 获取绕过代理设置
     let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
     let client = if bypass_proxy == "true" {
@@ -83,12 +83,7 @@ pub async fn proxy_api(
     let response_headers: std::collections::HashMap<String, String> = response
         .headers()
         .iter()
-        .map(|(name, value)| {
-            (
-                name.to_string(),
-                value.to_str().unwrap_or("").to_string(),
-            )
-        })
+        .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
         .collect();
 
     // 解析响应

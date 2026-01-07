@@ -11,6 +11,8 @@ const host = process.env.TAURI_DEV_HOST;
 
 // https://vitejs.dev/config/
 export default defineConfig(async () => ({
+  // Tauri 载入资源走 app:// 协议，构建时建议使用相对路径，避免生产环境静态资源路径解析异常
+  base: './',
   plugins: [vue(),
     AutoImport({
       imports: [
@@ -29,6 +31,12 @@ export default defineConfig(async () => ({
       resolvers: [NaiveUiResolver()]
     })
   ],
+
+  // macOS (WKWebView) 下偶发出现依赖未被预构建/分包导致的组件为 undefined，
+  // 将 vicons 显式加入 optimizeDeps 可显著降低图标缺失概率
+  optimizeDeps: {
+    include: ['@vicons/ionicons5', '@vicons/tabler']
+  },
   define: {
     __DEV_MODE__: JSON.stringify(process.env.NODE_ENV === 'production'),
   },

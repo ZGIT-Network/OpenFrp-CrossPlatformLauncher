@@ -27,15 +27,15 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tauri_plugin_deep_link;
 // use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use tauri_plugin_updater;
-use crate::update::UpdateInfo;
 use crate::update::download_and_install_update;
+use crate::update::UpdateInfo;
 use tauri::Listener;
+use tauri_plugin_updater;
 mod api_proxy;
-mod update; 
-use std::thread;
-use tiny_http::{Server, Response, Header};
+mod update;
 use std::net::TcpListener;
+use std::thread;
+use tiny_http::{Header, Response, Server};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -223,7 +223,7 @@ fn save_config(config: &Config) -> Result<(), String> {
 #[command]
 async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
     let os = std::env::consts::OS;
-    
+
     let os_name = os;
     let version = env!("CARGO_PKG_VERSION");
     let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
@@ -262,7 +262,8 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = client.get("https://of-dev-api.bfsea.com/commonQuery/get?key=software")
+    let response = client
+        .get("https://of-dev-api.bfsea.com/commonQuery/get?key=software")
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -339,7 +340,8 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = client.get(&download_url)
+    let response = client
+        .get(&download_url)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -566,8 +568,7 @@ async fn start_frpc_instance<R: Runtime>(
         }
     }
 
-    cmd.stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     println!("{:?}", cmd);
 
     // 添加绕过系统代理和 DoH 使用的环境变量
@@ -582,7 +583,7 @@ async fn start_frpc_instance<R: Runtime>(
         cmd.env("no_proxy", "");
         cmd.env("ALL_PROXY", "");
         cmd.env("all_proxy", "");
-        
+
         // 在 Windows 上还需要清除系统代理设置
         #[cfg(target_os = "windows")]
         {
@@ -655,7 +656,7 @@ fn get_system_info() -> String {
 #[command]
 fn get_detailed_system_info() -> String {
     let os = std::env::consts::OS;
-    
+
     match os {
         "windows" => get_windows_build_info(), // 使用改进的Windows版本信息函数
         "linux" => get_linux_version(),
@@ -668,13 +669,13 @@ fn get_windows_version() -> String {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        
+
         // 尝试通过systeminfo命令获取Windows版本
         let output = Command::new("cmd")
             .args(&["/C", "systeminfo"])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output();
-            
+
         if let Ok(output) = output {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -682,7 +683,9 @@ fn get_windows_version() -> String {
                     if line.starts_with("OS Name:") {
                         let os_name = line.split(":").nth(1).unwrap_or("").trim();
                         // 尝试获取OS Version
-                        if let Some(version_line) = output_str.lines().find(|l| l.starts_with("OS Version:")) {
+                        if let Some(version_line) =
+                            output_str.lines().find(|l| l.starts_with("OS Version:"))
+                        {
                             let version = version_line.split(":").nth(1).unwrap_or("").trim();
                             return format!("{} ({})", os_name, version);
                         }
@@ -691,20 +694,20 @@ fn get_windows_version() -> String {
                 }
             }
         }
-        
+
         // 备用方法：通过 wmic 获取更详细的信息
         let output = Command::new("wmic")
             .args(&["os", "get", "Name,Caption,Version,OSArchitecture", "/value"])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output();
-            
+
         if let Ok(output) = output {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
                 let mut caption = "";
                 let mut version = "";
                 let mut architecture = "";
-                
+
                 for line in output_str.lines() {
                     let line = line.trim();
                     if line.starts_with("Caption=") {
@@ -715,7 +718,7 @@ fn get_windows_version() -> String {
                         architecture = line.split("=").nth(1).unwrap_or("");
                     }
                 }
-                
+
                 if !caption.is_empty() && !version.is_empty() && !architecture.is_empty() {
                     return format!("{} ({}) {}", caption, version, architecture);
                 } else if !caption.is_empty() {
@@ -723,26 +726,31 @@ fn get_windows_version() -> String {
                 }
             }
         }
-        
+
         // 再次备用方法：通过 ver 命令
         let output = Command::new("cmd")
             .args(&["/C", "ver"])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output();
-            
+
         if let Ok(output) = output {
             if output.status.success() {
                 let version_string = String::from_utf8_lossy(&output.stdout);
                 return version_string.trim().to_string();
             }
         }
-        
+
         // 最后的备用方法：读取注册表信息
         let output = Command::new("reg")
-            .args(&["query", "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "/v", "ProductName"])
+            .args(&[
+                "query",
+                "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                "/v",
+                "ProductName",
+            ])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output();
-            
+
         if let Ok(output) = output {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -756,10 +764,10 @@ fn get_windows_version() -> String {
                 }
             }
         }
-        
+
         "Windows (unknown version)".to_string()
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         "Windows (not available on this platform)".to_string()
@@ -770,13 +778,18 @@ fn get_windows_build_info() -> String {
     #[cfg(target_os = "windows")]
     {
         use std::process::Command;
-        
+
         // 获取详细的 Windows 版本信息
         let output = Command::new("wmic")
-            .args(&["os", "get", "BuildNumber,Version,OSArchitecture,Locale,CurrentBuild", "/value"])
+            .args(&[
+                "os",
+                "get",
+                "BuildNumber,Version,OSArchitecture,Locale,CurrentBuild",
+                "/value",
+            ])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .output();
-            
+
         if let Ok(output) = output {
             if output.status.success() {
                 let output_str = String::from_utf8_lossy(&output.stdout);
@@ -784,7 +797,7 @@ fn get_windows_build_info() -> String {
                 let mut build_number = "";
                 let mut architecture = "";
                 let mut locale = "";
-                
+
                 for line in output_str.lines() {
                     let line = line.trim();
                     if line.starts_with("Version=") {
@@ -797,7 +810,7 @@ fn get_windows_build_info() -> String {
                         locale = line.split("=").nth(1).unwrap_or("");
                     }
                 }
-                
+
                 // 尝试获取本地化信息
                 let locale_str = match locale {
                     "0409" => "en-US",
@@ -805,44 +818,49 @@ fn get_windows_build_info() -> String {
                     "0404" => "zh-TW",
                     _ => locale,
                 };
-                
+
                 if !version.is_empty() && !build_number.is_empty() && !architecture.is_empty() {
-                    return format!("Microsoft Windows [Version {}.{}]_{}fre_{}", 
-                                 version, build_number, 
-                                 architecture.to_lowercase().replace("bit", ""),
-                                 locale_str);
+                    return format!(
+                        "Microsoft Windows [Version {}.{}]_{}fre_{}",
+                        version,
+                        build_number,
+                        architecture.to_lowercase().replace("bit", ""),
+                        locale_str
+                    );
                 }
             }
         }
-        
+
         // 备用方案：通过注册表获取
         let current_version = "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion";
-        
+
         // 获取主要版本信息
         let product_name = get_registry_value(current_version, "ProductName");
         let current_build = get_registry_value(current_version, "CurrentBuild");
         let ubr = get_registry_value(current_version, "UBR");
         let arch = std::env::consts::ARCH;
-        
+
         if !product_name.is_empty() && !current_build.is_empty() {
-            let ubr_val = if !ubr.is_empty() { 
-                format!(".{}", ubr) 
-            } else { 
-                "".to_string() 
+            let ubr_val = if !ubr.is_empty() {
+                format!(".{}", ubr)
+            } else {
+                "".to_string()
             };
-            
-            return format!("{} [Version {}.{}{}]_{}fre_{}", 
-                          product_name,
-                          current_build,
-                          current_build,
-                          ubr_val,
-                          arch,
-                          get_windows_locale());
+
+            return format!(
+                "{} [Version {}.{}{}]_{}fre_{}",
+                product_name,
+                current_build,
+                current_build,
+                ubr_val,
+                arch,
+                get_windows_locale()
+            );
         }
-        
+
         "Windows (unknown build)".to_string()
     }
-    
+
     #[cfg(not(target_os = "windows"))]
     {
         "Windows build info (not available on this platform)".to_string()
@@ -852,17 +870,19 @@ fn get_windows_build_info() -> String {
 #[cfg(target_os = "windows")]
 fn get_registry_value(key: &str, value_name: &str) -> String {
     use std::process::Command;
-    
+
     let output = Command::new("reg")
         .args(&["query", key, "/v", value_name])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .output();
-        
+
     if let Ok(output) = output {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
             for line in output_str.lines() {
-                if line.contains(value_name) && (line.contains("REG_SZ") || line.contains("REG_DWORD")) {
+                if line.contains(value_name)
+                    && (line.contains("REG_SZ") || line.contains("REG_DWORD"))
+                {
                     // 根据值类型处理
                     if line.contains("REG_SZ") {
                         let parts: Vec<&str> = line.split("REG_SZ").collect();
@@ -879,19 +899,19 @@ fn get_registry_value(key: &str, value_name: &str) -> String {
             }
         }
     }
-    
+
     String::new()
 }
 
 #[cfg(target_os = "windows")]
 fn get_windows_locale() -> String {
     use std::process::Command;
-    
+
     let output = Command::new("wmic")
         .args(&["os", "get", "Locale", "/value"])
         .creation_flags(0x08000000) // CREATE_NO_WINDOW
         .output();
-        
+
     if let Ok(output) = output {
         if output.status.success() {
             let output_str = String::from_utf8_lossy(&output.stdout);
@@ -909,7 +929,7 @@ fn get_windows_locale() -> String {
             }
         }
     }
-    
+
     "unknown".to_string()
 }
 
@@ -917,7 +937,7 @@ fn get_linux_version() -> String {
     #[cfg(target_os = "linux")]
     {
         use std::fs;
-        
+
         // 尝试读取 /etc/os-release 文件
         if let Ok(content) = fs::read_to_string("/etc/os-release") {
             for line in content.lines() {
@@ -928,16 +948,16 @@ fn get_linux_version() -> String {
                 }
             }
         }
-        
+
         // 尝试读取 /proc/version 文件
         if let Ok(content) = fs::read_to_string("/proc/version") {
             let parts: Vec<&str> = content.split_whitespace().take(3).collect();
             return parts.join(" ");
         }
-        
+
         "Linux (unknown distribution)".to_string()
     }
-    
+
     #[cfg(not(target_os = "linux"))]
     {
         "Linux (not available on this platform)".to_string()
@@ -948,17 +968,16 @@ fn get_macos_version() -> String {
     #[cfg(target_os = "macos")]
     {
         use std::process::Command;
-        
+
         // 使用 system_profiler 获取 macOS 版本
-        let output = Command::new("sw_vers")
-            .output();
-            
+        let output = Command::new("sw_vers").output();
+
         if let Ok(output) = output {
             if output.status.success() {
                 let content = String::from_utf8_lossy(&output.stdout);
                 let mut product_name = "macOS";
                 let mut version = "";
-                
+
                 for line in content.lines() {
                     if line.starts_with("ProductName:") {
                         product_name = line.split(':').nth(1).unwrap_or("macOS").trim();
@@ -966,14 +985,14 @@ fn get_macos_version() -> String {
                         version = line.split(':').nth(1).unwrap_or("").trim();
                     }
                 }
-                
+
                 return format!("{} {}", product_name, version);
             }
         }
-        
+
         "macOS (unknown version)".to_string()
     }
-    
+
     #[cfg(not(target_os = "macos"))]
     {
         "macOS (not available on this platform)".to_string()
@@ -992,10 +1011,9 @@ fn get_build_info() -> String {
 #[command]
 async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> {
     use std::net::{TcpStream, ToSocketAddrs};
-    use std::time::{Instant, Duration};
+    use std::time::{Duration, Instant};
     println!("tcp_ping called with host: {}, port: {}", host, port);
 
-    
     // 解析主机名和端口为SocketAddr
     let addrs = match (host.as_str(), port).to_socket_addrs() {
         Ok(addrs) => addrs,
@@ -1007,14 +1025,13 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
             }));
         }
     };
-    
-    
+
     // 取第一个地址进行连接测试
-   let addr = match addrs.into_iter().next() {
+    let addr = match addrs.into_iter().next() {
         Some(addr) => {
             println!("Using address: {:?}", addr);
             addr
-        },
+        }
         None => {
             println!("No valid address found");
             return Ok(serde_json::json!({
@@ -1024,11 +1041,11 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
             }));
         }
     };
-    
+
     let mut latencies: Vec<u128> = Vec::new();
     let start_time = Instant::now();
     let max_duration = Duration::from_secs(2); // 最多测试2秒钟
-    
+
     // 在1秒钟内进行多次测试
     while start_time.elapsed() < max_duration {
         let start = Instant::now();
@@ -1038,7 +1055,7 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
                 latencies.push(duration.as_millis());
                 // 短暂休眠以避免过于频繁的连接尝试
                 tokio::time::sleep(Duration::from_millis(100)).await;
-            },
+            }
             Err(e) => {
                 println!("Connection failed: {}", e);
                 // 即使连接失败也记录时间，但用0表示失败
@@ -1048,7 +1065,7 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
             }
         }
     }
-    
+
     // 计算统计数据
     if latencies.is_empty() {
         return Ok(serde_json::json!({
@@ -1057,10 +1074,10 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
             "message": "未能执行任何测试"
         }));
     }
-    
+
     // 过滤掉失败的连接(延迟为0的)
     let successful_latencies: Vec<u128> = latencies.iter().filter(|&&x| x > 0).cloned().collect();
-    
+
     if successful_latencies.is_empty() {
         return Ok(serde_json::json!({
             "success": false,
@@ -1070,15 +1087,15 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
             "successful_tests": 0
         }));
     }
-    
+
     let total_tests = latencies.len();
     let successful_tests = successful_latencies.len();
     let avg_latency = successful_latencies.iter().sum::<u128>() / successful_tests as u128;
-    
+
     // 计算最小和最大延迟
     let min_latency = *successful_latencies.iter().min().unwrap();
     let max_latency = *successful_latencies.iter().max().unwrap();
-    
+
     println!("Connection successful, average latency: {}ms", avg_latency);
     Ok(serde_json::json!({
         "success": true,
@@ -1160,31 +1177,52 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
         // 设置默认文件名
         let os = std::env::consts::OS;
         let arch = std::env::consts::ARCH;
-        
+
         let filename = if os == "windows" {
-            format!("frpc_windows_{}.exe", if arch == "x86_64" { "amd64" } else { arch })
+            format!(
+                "frpc_windows_{}.exe",
+                if arch == "x86_64" { "amd64" } else { arch }
+            )
         } else if os == "macos" || os == "darwin" {
-            format!("frpc_darwin_{}", if arch == "x86_64" { "amd64" } else if arch == "aarch64" { "arm64" } else { arch })
+            format!(
+                "frpc_darwin_{}",
+                if arch == "x86_64" {
+                    "amd64"
+                } else if arch == "aarch64" {
+                    "arm64"
+                } else {
+                    arch
+                }
+            )
         } else {
-            format!("frpc_linux_{}", if arch == "x86_64" { "amd64" } else if arch == "aarch64" { "arm64" } else { arch })
+            format!(
+                "frpc_linux_{}",
+                if arch == "x86_64" {
+                    "amd64"
+                } else if arch == "aarch64" {
+                    "arm64"
+                } else {
+                    arch
+                }
+            )
         };
-        
+
         config.frpc_filename = Some(filename.clone());
         // 保存更新后的配置
         if let Err(e) = save_config(&config) {
             return Err(format!("无法保存配置: {}", e));
         }
-        
+
         // 返回包含路径和文件名信息的JSON对象
         let result = serde_json::json!({
             "version": "未知",
             "path": app_dir.join(&filename).to_string_lossy().to_string(),
             "filename": filename
         });
-        
+
         return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
     }
-    
+
     let filename = config.frpc_filename.as_ref().unwrap();
     let frpc_path = app_dir.join(filename);
 
@@ -1195,7 +1233,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
             "path": frpc_path.to_string_lossy().to_string(),
             "filename": filename
         });
-        
+
         return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
     }
 
@@ -1214,7 +1252,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
                 "path": frpc_path.to_string_lossy().to_string(),
                 "filename": filename
             });
-            
+
             return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
         }
     };
@@ -1228,7 +1266,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
                 "path": frpc_path.to_string_lossy().to_string(),
                 "filename": filename
             });
-            
+
             return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
         }
     };
@@ -1243,7 +1281,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
                     "path": frpc_path.to_string_lossy().to_string(),
                     "filename": filename
                 });
-                
+
                 return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
             }
         };
@@ -1274,7 +1312,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
             "path": frpc_path.to_string_lossy().to_string(),
             "filename": filename
         });
-        
+
         Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
     } else {
         // 返回包含路径和文件名信息的JSON对象，但标记为错误
@@ -1284,7 +1322,7 @@ async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<St
             "path": frpc_path.to_string_lossy().to_string(),
             "filename": filename
         });
-        
+
         Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
     }
 }
@@ -1478,7 +1516,7 @@ fn get_cpl_version() -> Result<String, String> {
 #[tauri::command]
 async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), String> {
     let autostart_manager = app.autolaunch();
-    
+
     // 添加重试机制
     let mut retries = 3;
     while retries > 0 {
@@ -1511,7 +1549,8 @@ async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), St
                             if new_state != enable {
                                 retries -= 1;
                                 if retries > 0 {
-                                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(500))
+                                        .await;
                                     continue;
                                 }
                                 return Err(format!(
@@ -1542,15 +1581,14 @@ async fn toggle_auto_start(app: tauri::AppHandle, enable: bool) -> Result<(), St
             }
         }
     }
-    
+
     Err("操作失败，已达到最大重试次数".to_string())
 }
-
 
 #[tauri::command]
 async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
     let autostart_manager = app.autolaunch();
-    
+
     // 多次检查以确保状态稳定，增加重试机制
     let mut retries = 3;
     while retries > 0 {
@@ -1590,7 +1628,7 @@ async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
             }
         }
     }
-    
+
     Err("检查自启动状态失败，已达到最大重试次数".to_string())
 }
 
@@ -1598,51 +1636,57 @@ async fn check_auto_start(app: tauri::AppHandle) -> Result<bool, String> {
 #[tauri::command]
 async fn debug_auto_start(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
     let autostart_manager = app.autolaunch();
-    
+
     let mut debug_info = serde_json::json!({
         "platform": std::env::consts::OS,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "checks": []
     });
-    
+
     // 进行多次检查以获取详细信息
     for i in 1..=5 {
         match autostart_manager.is_enabled() {
             Ok(enabled) => {
-                debug_info["checks"].as_array_mut().unwrap().push(
-                    serde_json::json!({
+                debug_info["checks"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
                         "attempt": i,
                         "enabled": enabled,
                         "success": true
-                    })
-                );
+                    }));
             }
             Err(e) => {
-                debug_info["checks"].as_array_mut().unwrap().push(
-                    serde_json::json!({
+                debug_info["checks"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
                         "attempt": i,
                         "enabled": null,
                         "success": false,
                         "error": e.to_string()
-                    })
-                );
+                    }));
             }
         }
-        
+
         if i < 5 {
             tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
-    
+
     // 计算一致性
     let checks = debug_info["checks"].as_array().unwrap();
-    let successful_checks: Vec<_> = checks.iter().filter(|c| c["success"].as_bool().unwrap_or(false)).collect();
-    
+    let successful_checks: Vec<_> = checks
+        .iter()
+        .filter(|c| c["success"].as_bool().unwrap_or(false))
+        .collect();
+
     if successful_checks.len() >= 3 {
-        let enabled_values: Vec<bool> = successful_checks.iter()
+        let enabled_values: Vec<bool> = successful_checks
+            .iter()
             .map(|c| c["enabled"].as_bool().unwrap_or(false))
             .collect();
-        
+
         let all_same = enabled_values.windows(2).all(|w| w[0] == w[1]);
         debug_info["consistent"] = serde_json::Value::Bool(all_same);
         debug_info["final_state"] = serde_json::Value::Bool(enabled_values[0]);
@@ -1650,7 +1694,7 @@ async fn debug_auto_start(app: tauri::AppHandle) -> Result<serde_json::Value, St
         debug_info["consistent"] = serde_json::Value::Bool(false);
         debug_info["final_state"] = serde_json::Value::Null;
     }
-    
+
     Ok(debug_info)
 }
 
@@ -1689,7 +1733,6 @@ fn get_env(key: String) -> Result<Option<String>, String> {
         }
     }
     Ok(None)
-
 }
 
 // 检查代理绕过状态
@@ -1703,10 +1746,9 @@ fn check_proxy_bypass() -> Result<bool, String> {
 #[tauri::command]
 async fn test_network_connection() -> Result<serde_json::Value, String> {
     let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
-    
-    let client_builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10));
-    
+
+    let client_builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
+
     let client = if bypass_proxy == "true" {
         client_builder
             .no_proxy()
@@ -1715,51 +1757,56 @@ async fn test_network_connection() -> Result<serde_json::Value, String> {
     } else {
         client_builder.build().map_err(|e| e.to_string())?
     };
-    
+
     let mut results = serde_json::json!({
         "bypass_proxy": bypass_proxy == "true",
         "tests": []
     });
-    
+
     // 测试多个端点
     let test_urls = vec![
-        ("OpenFrp API", "https://of-dev-api.bfsea.com/frp/api/getUserInfo"),
+        (
+            "OpenFrp API",
+            "https://of-dev-api.bfsea.com/frp/api/getUserInfo",
+        ),
         ("Baidu", "https://www.baidu.com"),
         ("ZGIT API", "https://api.zyghit.cn"),
         ("GitHub", "https://api.github.com"),
         ("Google DNS", "https://8.8.8.8"),
     ];
-    
+
     for (name, url) in test_urls {
         let start = std::time::Instant::now();
         match client.get(url).send().await {
             Ok(response) => {
                 let duration = start.elapsed();
-                results["tests"].as_array_mut().unwrap().push(
-                    serde_json::json!({
+                results["tests"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
                         "name": name,
                         "url": url,
                         "success": true,
                         "status": response.status().as_u16(),
                         "latency_ms": duration.as_millis()
-                    })
-                );
+                    }));
             }
             Err(e) => {
                 let duration = start.elapsed();
-                results["tests"].as_array_mut().unwrap().push(
-                    serde_json::json!({
+                results["tests"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(serde_json::json!({
                         "name": name,
                         "url": url,
                         "success": false,
                         "error": e.to_string(),
                         "latency_ms": duration.as_millis()
-                    })
-                );
+                    }));
             }
         }
     }
-    
+
     Ok(results)
 }
 
@@ -1776,7 +1823,10 @@ struct OAuthResponse {
 }
 
 #[command]
-async fn oauth_callback(code: String, redirect_url: Option<String>) -> Result<OAuthResponse, String> {
+async fn oauth_callback(
+    code: String,
+    redirect_url: Option<String>,
+) -> Result<OAuthResponse, String> {
     let client = reqwest::Client::new();
     let mut form = std::collections::HashMap::new();
     form.insert("code", code);
@@ -1834,8 +1884,8 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                     .nth(1)
                     .and_then(|qs| {
                         qs.split('&')
-                          .find(|kv| kv.starts_with("code="))
-                          .and_then(|kv| kv.split('=').nth(1))
+                            .find(|kv| kv.starts_with("code="))
+                            .and_then(|kv| kv.split('=').nth(1))
                     })
                     .map(|c| c.to_string())
                     .unwrap_or_default();
@@ -1848,7 +1898,12 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                     let app_for_emit = app_handle.clone();
                     let code_clone = code.clone();
                     tauri::async_runtime::spawn(async move {
-                        match oauth_callback(code_clone, Some(format!("http://127.0.0.1:{}/oauth_callback", port))).await {
+                        match oauth_callback(
+                            code_clone,
+                            Some(format!("http://127.0.0.1:{}/oauth_callback", port)),
+                        )
+                        .await
+                        {
                             Ok(resp) => {
                                 let _ = app_for_emit.emit(
                                     "oauth-auth",
@@ -1857,7 +1912,7 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                                         "msg": resp.msg,
                                         "authorization": resp.authorization,
                                         "data": resp.data,
-                                    })
+                                    }),
                                 );
                             }
                             Err(e) => {
@@ -1866,7 +1921,7 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                                     serde_json::json!({
                                         "flag": false,
                                         "msg": format!("{}", e),
-                                    })
+                                    }),
                                 );
                             }
                         }
@@ -1876,8 +1931,14 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                 let html = include_str!("../../src/login.html");
                 let _ = req.respond(
                     Response::from_string(html)
-                        .with_header(Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap())
-                        .with_status_code(200)
+                        .with_header(
+                            Header::from_bytes(
+                                &b"Content-Type"[..],
+                                &b"text/html; charset=utf-8"[..],
+                            )
+                            .unwrap(),
+                        )
+                        .with_status_code(200),
                 );
                 break;
             } else {
@@ -1898,12 +1959,12 @@ fn get_app_data_dir() -> Result<String, String> {
 #[command]
 fn open_app_data_dir() -> Result<(), String> {
     let app_dir = get_app_dir();
-    
+
     // 确保目录存在
     if !app_dir.exists() {
         fs::create_dir_all(&app_dir).map_err(|e| format!("创建目录失败: {}", e))?;
     }
-    
+
     #[cfg(target_os = "windows")]
     {
         Command::new("explorer")
@@ -1911,7 +1972,7 @@ fn open_app_data_dir() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("打开目录失败: {}", e))?;
     }
-    
+
     #[cfg(target_os = "macos")]
     {
         Command::new("open")
@@ -1919,7 +1980,7 @@ fn open_app_data_dir() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("打开目录失败: {}", e))?;
     }
-    
+
     #[cfg(target_os = "linux")]
     {
         Command::new("xdg-open")
@@ -1927,23 +1988,29 @@ fn open_app_data_dir() -> Result<(), String> {
             .spawn()
             .map_err(|e| format!("打开目录失败: {}", e))?;
     }
-    
+
     Ok(())
 }
-
 
 #[tauri::command]
 async fn get_local_ports() -> Result<serde_json::Value, String> {
     #[cfg(target_os = "windows")]
     {
         use std::collections::HashMap;
-        let output = std::process::Command::new("netstat").args(["-ano"]).creation_flags(CREATE_NO_WINDOW).output().map_err(|e| e.to_string())?;
+        let output = std::process::Command::new("netstat")
+            .args(["-ano"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tcp_ports = Vec::new();
         let mut udp_ports = Vec::new();
         let mut pid_map: HashMap<u32, String> = HashMap::new();
         // 获取进程名
-        if let Ok(tasklist) = std::process::Command::new("tasklist").creation_flags(CREATE_NO_WINDOW).output() {
+        if let Ok(tasklist) = std::process::Command::new("tasklist")
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
             let taskout = String::from_utf8_lossy(&tasklist.stdout);
             for line in taskout.lines().skip(3) {
                 let parts: Vec<_> = line.split_whitespace().collect();
@@ -1962,7 +2029,7 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
                 let addr = parts[1];
                 let pid = parts.last().and_then(|s| s.parse::<u32>().ok());
                 if let Some(idx) = addr.rfind(':') {
-                    if let Ok(port) = addr[idx+1..].parse::<u16>() {
+                    if let Ok(port) = addr[idx + 1..].parse::<u16>() {
                         let process = pid.and_then(|p| pid_map.get(&p)).cloned();
                         let entry = serde_json::json!({
                             "port": port,
@@ -1983,7 +2050,10 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
     #[cfg(not(target_os = "windows"))]
     {
         use std::collections::HashMap;
-        let output = std::process::Command::new("netstat").args(["-tunlp"]).output().map_err(|e| e.to_string())?;
+        let output = std::process::Command::new("netstat")
+            .args(["-tunlp"])
+            .output()
+            .map_err(|e| e.to_string())?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let mut tcp_ports = Vec::new();
         let mut udp_ports = Vec::new();
@@ -1993,7 +2063,14 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
             for entry in entries.flatten() {
                 if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
                     if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
-                        let name = cmdline.split('\0').next().unwrap_or("").split('/').last().unwrap_or("").to_string();
+                        let name = cmdline
+                            .split('\0')
+                            .next()
+                            .unwrap_or("")
+                            .split('/')
+                            .last()
+                            .unwrap_or("")
+                            .to_string();
                         pid_map.insert(pid, name);
                     }
                 }
@@ -2006,9 +2083,12 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
                 let proto = parts[0].to_lowercase();
                 let addr = parts[3];
                 let pid_info = parts[6];
-                let pid = pid_info.split('/').next().and_then(|s| s.parse::<u32>().ok());
+                let pid = pid_info
+                    .split('/')
+                    .next()
+                    .and_then(|s| s.parse::<u32>().ok());
                 if let Some(idx) = addr.rfind(':') {
-                    if let Ok(port) = addr[idx+1..].parse::<u16>() {
+                    if let Ok(port) = addr[idx + 1..].parse::<u16>() {
                         let process = pid.and_then(|p| pid_map.get(&p)).cloned();
                         let entry = serde_json::json!({
                             "port": port,
@@ -2033,13 +2113,13 @@ async fn get_local_ports() -> Result<serde_json::Value, String> {
 // 修改 main 函数
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec!["--autostart".into()]),

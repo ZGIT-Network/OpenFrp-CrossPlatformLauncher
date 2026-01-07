@@ -1007,7 +1007,7 @@ onMounted(async () => {
               <n-button :type="filterType==='tcp' ? 'primary' : 'default'" @click="filterType='tcp'">TCP</n-button>
               <n-button :type="filterType==='udp' ? 'primary' : 'default'" @click="filterType='udp'">UDP</n-button>
             </n-button-group>
-            <n-button @click="fetchProxyList" :loading="loading" type="secondary">
+            <n-button @click="fetchProxyList" :loading="loading" >
               <template #icon>
                 <n-icon v-if="!loading" size="18">
                   <Refresh />

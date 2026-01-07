@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use base64::Engine; // for URL_SAFE_NO_PAD.encode()/decode()
+use once_cell::sync::Lazy;
 use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -7,16 +7,18 @@ use std::sync::Mutex;
 use tauri::command;
 
 // 纯 Rust：X25519 + XSalsa20-Poly1305
+use crypto_box::{PublicKey as BoxPublicKey, SalsaBox, SecretKey as BoxSecretKey};
 use rand_core::OsRng;
 use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
-use xsalsa20poly1305::{aead::{Aead, KeyInit}, XSalsa20Poly1305, Nonce};
-use crypto_box::{SalsaBox, PublicKey as BoxPublicKey, SecretKey as BoxSecretKey};
+use xsalsa20poly1305::{
+    aead::{Aead, KeyInit},
+    Nonce, XSalsa20Poly1305,
+};
 
 // 针对每个 request_uuid 存储一次性密钥对，避免重复使用同一公钥
 static REQ_KP_MAP: Lazy<Mutex<HashMap<String, (X25519Secret, X25519Public)>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static CANCEL_SET: Lazy<Mutex<HashSet<String>>> =
-    Lazy::new(|| Mutex::new(HashSet::new()));
+static CANCEL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Serialize, Deserialize)]
 pub struct RequestLoginResp {
@@ -62,13 +64,23 @@ fn b64_urlsafe_padded_decode(s: &str) -> Result<Vec<u8>, String> {
 
 fn b64_decode_any(s: &str) -> Result<Vec<u8>, String> {
     // 依次尝试 URL_SAFE(padded), STANDARD(padded), URL_SAFE(no pad), STANDARD(no pad)
-    if let Ok(v) = base64::engine::general_purpose::URL_SAFE.decode(s) { return Ok(v); }
-    if let Ok(v) = base64::engine::general_purpose::STANDARD.decode(s) { return Ok(v); }
+    if let Ok(v) = base64::engine::general_purpose::URL_SAFE.decode(s) {
+        return Ok(v);
+    }
+    if let Ok(v) = base64::engine::general_purpose::STANDARD.decode(s) {
+        return Ok(v);
+    }
     // 手动补齐 padding
     let mut with_pad = s.to_string();
-    while with_pad.len() % 4 != 0 { with_pad.push('='); }
-    if let Ok(v) = base64::engine::general_purpose::URL_SAFE.decode(&with_pad) { return Ok(v); }
-    if let Ok(v) = base64::engine::general_purpose::STANDARD.decode(&with_pad) { return Ok(v); }
+    while with_pad.len() % 4 != 0 {
+        with_pad.push('=');
+    }
+    if let Ok(v) = base64::engine::general_purpose::URL_SAFE.decode(&with_pad) {
+        return Ok(v);
+    }
+    if let Ok(v) = base64::engine::general_purpose::STANDARD.decode(&with_pad) {
+        return Ok(v);
+    }
     Err("base64 解码失败".into())
 }
 
@@ -245,5 +257,3 @@ pub async fn argo_cancel_wait(request_uuid: String) -> Result<(), String> {
     CANCEL_SET.lock().unwrap().insert(request_uuid);
     Ok(())
 }
-
-

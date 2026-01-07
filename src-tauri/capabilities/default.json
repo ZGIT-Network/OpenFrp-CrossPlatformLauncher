@@ -78,6 +78,11 @@
     "core:window:allow-set-always-on-top",
     "core:webview:allow-create-webview-window",
     "core:window:allow-set-effects",
+    "fs:allow-write-file",
+    "fs:allow-appdata-write",
+    "fs:allow-app-read",
+    "fs:allow-app-write",
+    "fs:allow-appdata-read-recursive",
     {
       "identifier": "http:default",
       "allow": [
@@ -91,7 +96,8 @@
           "url": "https://of-dev-api.bfsea.com"
         }
       ]
-    }
+    },
+    "fs:default"
   ],
   "deepLinks": [
     "openfrp"

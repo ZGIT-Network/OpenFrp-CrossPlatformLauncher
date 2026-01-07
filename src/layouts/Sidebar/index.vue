@@ -4,7 +4,7 @@ import { h } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
 import { NMenu, NLayoutSider } from 'naive-ui';
 import type { MenuOption } from 'naive-ui';
-import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, LogoWebComponent, EnterOutline, AddOutline, InformationOutline,ServerOutline } from '@vicons/ionicons5';
+import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, LogoWebComponent, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5';
 import { invoke } from '@tauri-apps/api/core';
 import  Coockies  from '@/utils/cookies';
 
@@ -162,7 +162,7 @@ watch(() => route.name, (newRouteName) => {
 }
 
 .n-layout-sider {
-  /* background-color: rgba(250, 250, 250, 0.3) !important;  */
+  background-color: rgba(250, 250, 250, 0.388) !important; 
   /* 增加透明度 */
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
@@ -170,7 +170,7 @@ watch(() => route.name, (newRouteName) => {
 
 /* 暗色主题下的样式 */
 .actual-dark .n-layout-sider {
-  background-color: rgba(30, 30, 30, 0.3) !important;
+  background-color: rgba(30, 30, 30, 0.4) !important;
 }
 
 /* 收起状态下的样式 */

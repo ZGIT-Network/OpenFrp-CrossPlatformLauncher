@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
-import { darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
+import { lightTheme ,darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
 import { GlobalThemeOverrides } from 'naive-ui';
 import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutHeader, NLayoutContent, NText, NScrollbar } from 'naive-ui';
 
@@ -60,6 +60,134 @@ const colorScheme = ref<'dark' | 'light'>(osThemeRef.value === 'dark' ? 'dark' :
 const collapsed = ref(false);
 provide('collapsed', collapsed);
 
+// 背景图片相关
+// 背景图片、模糊与覆盖色控制
+const backgroundImage = ref<string>(localStorage.getItem('backgroundImage') || '');
+const backgroundBlur = ref<number>(parseInt(localStorage.getItem('backgroundBlur') || '40')); // 百分比 20-100
+const backgroundOpacity = ref<number>(parseInt(localStorage.getItem('backgroundOpacity') || '100')); // 0-100
+const setBackgroundImage = (url: string) => {
+  backgroundImage.value = url;
+  localStorage.setItem('backgroundImage', url);
+};
+
+const applyBackgroundImage = () => {
+  if (backgroundImage.value) {
+    // 在 body 前插入单独层，避免影响布局
+    let layer = document.getElementById('background-image-layer');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'background-image-layer';
+      Object.assign(layer.style, {
+        position: 'fixed',
+        top: '0',
+        left: '0',
+        right: '0',
+        bottom: '0',
+        zIndex: '-1',
+        backgroundSize: 'cover',
+        backgroundPosition: 'center center',
+        backgroundRepeat: 'no-repeat'
+      });
+      document.body.prepend(layer);
+    }
+    layer.style.backgroundImage = `url('${backgroundImage.value}')`;
+    document.body.style.backgroundSize = 'cover';
+    document.body.style.backgroundPosition = 'center center';
+    document.body.style.backgroundRepeat = 'no-repeat';
+  } else {
+    const layer = document.getElementById('background-image-layer');
+    if (layer) layer.remove();
+  }
+};
+
+// 同步背景
+onMounted(applyBackgroundImage);
+watch(backgroundImage, applyBackgroundImage);
+
+const setBackgroundBlur = (percent: number) => {
+  const val = Math.max(20, Math.min(100, percent));
+  backgroundBlur.value = val;
+  localStorage.setItem('backgroundBlur', String(val));
+};
+
+const applyBackgroundBlur = () => {
+  const elem = document.getElementById('background-image-layer');
+  if (elem) {
+    const px = (backgroundBlur.value / 5).toFixed(1); // 20%->4px,100%->20px
+    elem.style.filter = `blur(${px}px)`;
+  }
+};
+
+watch(backgroundBlur, applyBackgroundBlur);
+onMounted(applyBackgroundBlur);
+
+const setBackgroundOpacity = (percent: number) => {
+  const val = Math.max(0, Math.min(100, percent));
+  backgroundOpacity.value = val;
+  localStorage.setItem('backgroundOpacity', String(val));
+};
+
+const applyBackgroundOpacity = () => {
+  const layer = document.getElementById('background-image-layer');
+  if (layer) {
+    layer.style.opacity = (backgroundOpacity.value / 100).toString();
+  }
+};
+
+watch(backgroundOpacity, applyBackgroundOpacity);
+onMounted(applyBackgroundOpacity);
+
+// 覆盖色开关
+const overlayColorEnabled = ref(localStorage.getItem('overlayColorEnabled') !== 'false');
+const toggleOverlayColor = (val: boolean) => {
+  overlayColorEnabled.value = val;
+  localStorage.setItem('overlayColorEnabled', val ? 'true' : 'false');
+};
+const applyOverlayColor = () => {
+  let ol = document.getElementById('overlay-color-layer');
+  if (!overlayColorEnabled.value) {
+    if (ol) ol.remove();
+    // 关闭时清掉 inline style，恢复由 CSS 接管
+    document
+      .querySelectorAll<HTMLElement>('.n-layout-header, .n-layout-sider, .n-layout-sider__content')
+      .forEach((el) => {
+        el.style.backgroundColor = '';
+      });
+    document.body.classList.remove('overlay-color-enabled');
+    return;
+  }
+  if (!ol) {
+    ol = document.createElement('div');
+    ol.id = 'overlay-color-layer';
+    Object.assign(ol.style, {
+      position: 'fixed',
+      top: '0', left: '0', right: '0', bottom: '0',
+      pointerEvents: 'none',
+      zIndex: '-1'
+    });
+    document.body.prepend(ol);
+  }
+  const color = colorScheme.value === 'dark' ? 'rgba(30,30,30,0.30)' : 'rgba(255,255,255,0.40)';
+  ol.style.backgroundColor = color;
+
+  // 给 Header/Sidebar 统一一个标记 class，便于全局样式兜底
+  document.body.classList.add('overlay-color-enabled');
+  // 同步 Header 与 Sidebar 背景（包含 sider 内部滚动容器等）
+  document
+    .querySelectorAll<HTMLElement>('.n-layout-header, .n-layout-sider, .n-layout-sider__content')
+    .forEach((el) => {
+      el.style.backgroundColor = color;
+    });
+};
+
+watch([overlayColorEnabled, colorScheme], applyOverlayColor, { immediate: true });
+
+watch(overlayColorEnabled, (val) => {
+  document.body.classList.toggle('overlay-color-enabled', val);
+}, { immediate: true });
+
+provide('backgroundImageControl', { backgroundImage, setBackgroundImage, backgroundBlur, setBackgroundBlur, backgroundOpacity, setBackgroundOpacity, overlayColorEnabled, toggleOverlayColor });
+
 const currentVersion = ref('v0.1');
 const getCurrentVersion = async (retries = 3) => {
   for (let i = 0; i < retries; i++) {
@@ -81,7 +209,7 @@ getCurrentVersion();
 
 // 主题相关
 watch(osThemeRef, () => beAttachToggleColorScheme(osThemeRef.value === 'dark' ? 'dark' : 'light'));
-const theme = computed(() => (colorScheme.value === 'dark' ? darkTheme : null));
+const theme = computed(() => (colorScheme.value === 'dark' ? darkTheme : lightTheme));
 
 const updateBodyColorSchemeForCssColorScheme = () => {
   if (theme.value !== darkTheme) {
@@ -113,14 +241,41 @@ provide('darkMode', { colorScheme, toggleColorScheme });
 watch(theme, () => updateBodyColorSchemeForCssColorScheme());
 updateBodyColorSchemeForCssColorScheme();
 
-const themeOverrides: GlobalThemeOverrides = {
-  common: {
+const themeOverrides = computed<GlobalThemeOverrides>(() => {
+  const commonOverrides = {
     primaryColor: '#72a0c9',
     primaryColorHover: '#529bdb',
     primaryColorPressed: '#0F6FB8',
     primaryColorSuppl: '#529bdb',
-  },
-};
+    borderRadius: '5px',
+  };
+
+  if (colorScheme.value === 'dark') {
+    // Dark theme overrides
+    return {
+      common: commonOverrides,
+      Layout: {
+        headerBorderColor: 'rgba(255, 255, 255, 0.25)',
+        siderBorderColor: 'rgba(255, 255, 255, 0.25)',
+      },
+      Menu: {
+        itemColorHover: 'rgba(255, 255, 255, 0.15)',
+      },
+    };
+  } else {
+    // Light theme overrides
+    return {
+      common: commonOverrides,
+      Layout: {
+        headerBorderColor: 'rgba(0, 0, 0, 0.18)',
+        siderBorderColor: 'rgba(0, 0, 0, 0.18)',
+      },
+      Menu: {
+        itemColorHover: 'rgba(0, 0, 0, 0.09)',
+      },
+    };
+  }
+});
 
 onMounted(async () => {
   console.log('App.vue 挂载，初始化全局日志服务');
@@ -198,7 +353,7 @@ const shouldWatermark = !__DEV_MODE__;
               <!-- 主体布局 -->
               <n-layout has-sider position="absolute" style="top: 48px; bottom: 0">
                 <!-- 侧边栏组件 -->
-                <Sidebar v-model:collapsed="collapsed" style="background-color: transparent !important;"/>
+                <Sidebar v-model:collapsed="collapsed" style="/*background-color: transparent !important;*/"/>
                 
                 <!-- 内容区域 -->
                 <n-layout>
@@ -207,9 +362,9 @@ const shouldWatermark = !__DEV_MODE__;
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
                       OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划 {{ userInfo?.username }}
                     </n-text>
-                    <n-scrollbar style="max-height: calc(100vh - 64px - 40px);">
-                      <router-view></router-view>
-                    </n-scrollbar>
+                    
+                      <router-view style="max-height: calc(100vh - 40px - 40px );"></router-view>
+                    
                   </n-layout-content>
                 </n-layout>
               </n-layout>
@@ -245,12 +400,30 @@ body {
 }
 
 .n-layout {
-  background-color: rgba(255, 255, 255, 0.25) !important; 
+  background-color: rgba(255, 255, 255, 0.20) !important; 
+  height: 100%;
 }
 
 .n-layout-header {
-  background-color: rgba(255, 255, 255, 0.25) !important; 
+  background-color: rgba(255, 255, 255, 0.45) !important; 
+  height: 100%;
 }
+
+.n-layout-sider {
+  background-color: rgba(255, 255, 255, 0.45) !important; 
+  height: 100%;
+}
+
+/* 覆盖色启用后，Header/Sidebar 走同一套色值（JS 会写 inline，这里做兜底/一致性） */
+
+
+/* body.overlay-color-enabled .n-layout-sider__content {
+  background-color: rgba(255, 255, 255, 0.40) !important;
+}
+
+body.actual-dark.overlay-color-enabled .n-layout-sider__content {
+  background-color: rgba(30, 30, 30, 0.30) !important;
+} */
 
 .actual-dark .n-layout  {
   background-color: rgba(30, 30, 30, 0.3) !important; 
@@ -281,7 +454,7 @@ body {
 /* }  */
 
 .n-layout-sider {
-  background-color: transparent !important;
+  background-color: transparent;
 }
 
 a {
@@ -302,10 +475,19 @@ a:hover {
   color-scheme: dark light;
 }
 
-/* 亮色模式样式 */
-:not(.actual-dark) {
-  color-scheme: light;
+.n-card {
+  background-color: rgba(255, 255, 255, 0.4) !important;
+  backdrop-filter: blur(8px);
 }
+
+.actual-dark .n-card {
+  background-color: rgba(30, 30, 30, 0.3) !important;
+}
+
+/* 亮色模式样式 */
+/* :not(.actual-dark) {
+  color-scheme: light;
+} */
 
 /* 根样式 */
 :root {

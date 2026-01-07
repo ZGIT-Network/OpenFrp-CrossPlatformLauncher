@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, h } from 'vue'
+import { ref, onMounted, onUnmounted, h, computed } from 'vue'
 import { UpdateInfo } from '@/types/update'
 import {
     useMessage,
@@ -25,12 +25,104 @@ import {
     NIcon,
     NH3,
     NStep,
-    NSteps
+    NSteps,
+    NSlider
 } from 'naive-ui'
 import { inject, watch, Ref } from 'vue'
+import { writeFile, mkdir, remove } from '@tauri-apps/plugin-fs';
+import { join, appDataDir } from '@tauri-apps/api/path';
+import { v4 as uuidv4 } from 'uuid'
+
+
+// 背景图片控制
+const { backgroundImage, setBackgroundImage, backgroundBlur, setBackgroundBlur, backgroundOpacity, setBackgroundOpacity, overlayColorEnabled, toggleOverlayColor } = inject('backgroundImageControl') as any;
+const bgUrlInput = ref<string>(backgroundImage?.value || '');
+
+// 计算属性，用于判断当前背景是否为本地资源并格式化显示
+const isLocalAsset = computed(() => backgroundImage.value?.startsWith('http://asset.localhost/'));
+const displayBgUrl = computed(() => {
+    if (isLocalAsset.value) {
+        try {
+            return `本地文件: ${decodeURIComponent(backgroundImage.value.replace('http://asset.localhost/', ''))}`;
+        } catch (e) {
+            return '本地文件 (路径解析失败)';
+        }
+    }
+    return backgroundImage.value;
+});
+
+// 清除背景函数
+const clearBackgroundImage = async () => {
+    if (isLocalAsset.value) {
+        try {
+            // 解析真实文件路径
+            const absPath = decodeURIComponent(backgroundImage.value.replace('http://asset.localhost/', ''));
+            await remove(absPath);
+        } catch (e) {
+            console.error('删除本地背景失败', e);
+        }
+    }
+    setBackgroundImage('');
+    bgUrlInput.value = '';
+    message.success('背景已清除');
+};
+
+const fileInput = ref<HTMLInputElement | null>(null);
+
+const triggerUpload = () => {
+    fileInput.value?.click();
+};
+
+const onFileChange = async (e: Event) => {
+    const files = (e.target as HTMLInputElement).files;
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    try {
+        // 若当前背景是本地上传文件，则在设置新背景前先删除旧文件，避免堆积占用空间
+        try {
+            const old = String(backgroundImage.value || '');
+            if (old.startsWith('http://asset.localhost/')) {
+                const oldAbsPath = decodeURIComponent(old.replace('http://asset.localhost/', ''));
+                await remove(oldAbsPath);
+            }
+        } catch (e) {
+            console.warn('删除旧背景文件失败（可忽略）:', e);
+        }
+
+        const arrayBuffer = await file.arrayBuffer();
+        const bytes = new Uint8Array(arrayBuffer);
+        const filename = uuidv4() + '_' + file.name;
+       
+        const dir = await appDataDir();
+        const bgDir = await join(dir, 'backgrounds');
+        await mkdir(bgDir, { recursive: true });
+        const destPath = await join(bgDir, filename);
+        await writeFile(destPath, bytes);
+        const fileUrl = convertFileSrc(destPath)
+        setBackgroundImage(fileUrl)
+        bgUrlInput.value = fileUrl;
+        message.success('背景图片已保存');
+    } catch (err) {
+        console.error(err);
+        message.error('保存图片失败');
+    }
+};
+
+watch(backgroundImage, (val: string) => {
+    // 同步输入框内容：本地资源显示友好路径，远程则显示原始URL
+    if (val && val.startsWith('http://asset.localhost/')) {
+        try {
+            bgUrlInput.value = decodeURIComponent(val.replace('http://asset.localhost/', ''));
+        } catch {
+            bgUrlInput.value = '';
+        }
+    } else {
+        bgUrlInput.value = val;
+    }
+});
 import { onBeforeRouteLeave } from 'vue-router'
 import { HelpCircleOutline } from '@vicons/ionicons5'
-import { invoke } from '@tauri-apps/api/core'
+import { invoke, convertFileSrc } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { register, unregister, isRegistered, onOpenUrl } from '@tauri-apps/plugin-deep-link'
 import { openUrl } from '@tauri-apps/plugin-opener';
@@ -1074,7 +1166,7 @@ onMounted(async () => {
     await checkProxyBypassStatus();
 });
 // 添加手动放置frpc的相关功能
-const appDataDir = ref('');
+const appDataDirPath = ref('');
 const manualModeVisible = ref(false);
 const expectedFrpcFilename = ref('');
 const frpcFullPath = ref('');
@@ -1132,7 +1224,7 @@ const getExpectedFrpcInfo = async () => {
 // 获取应用数据目录
 const getAppDataDir = async () => {
     try {
-        appDataDir.value = await invoke('get_app_data_dir') as string;
+        appDataDirPath.value = await invoke('get_app_data_dir') as string;
         // 尝试获取frpc信息，但不阻止流程继续
         try {
             await getExpectedFrpcInfo();
@@ -1474,10 +1566,31 @@ onMounted(() => {
                                         </template>
                                     </n-button>
                                 </n-space>
-                                <!-- 高斯模糊特效开关 -->
-                                <n-space align="center">
-                                    <n-switch v-model:value="enableGaussianBlur" />
-                                    <span>高斯模糊视觉特效（窗口需支持透明）*TODO</span>
+                                <n-divider title-placement="left" dashed style="margin: 0px;">
+                                    个性化设置
+                                </n-divider>
+                                <!-- 覆盖色开关 -->
+                                <!-- <n-space align="center">
+                                    <n-switch v-model:value="overlayColorEnabled" @update:value="toggleOverlayColor" />
+                                    <span>增强覆盖色效果</span>
+                                </n-space> -->
+                                <!-- 背景模糊强度 -->
+                                <n-space align="center" style="flex-wrap: wrap; gap: 8px;">
+                                    <n-slider v-model:value="backgroundBlur" :min="20" :max="100" :step="1" style="width:200px" @update:value="setBackgroundBlur" />
+                                    <span>{{ backgroundBlur }}% 模糊</span>
+                                </n-space>
+                                <!-- 背景不透明度 -->
+                                <n-space align="center" style="flex-wrap: wrap; gap: 8px;">
+                                    <n-slider v-model:value="backgroundOpacity" :min="0" :max="100" :step="1" style="width:200px" @update:value="setBackgroundOpacity" />
+                                    <span>{{ backgroundOpacity }}% 不透明度</span>
+                                </n-space>
+                                <!-- 背景图片设置 -->
+                                <n-space align="center" style="flex-wrap: wrap; gap: 8px;">
+                                    <n-input :value="displayBgUrl" :readonly="true" v-if="displayBgUrl" placeholder="背景图片地址" style="width: 320px;" />
+                                    <!-- <n-button type="primary" @click="setBackgroundImage(bgUrlInput)">应用背景图片</n-button> -->
+                                    <n-button @click="triggerUpload">设置背景图</n-button>
+                                    <input ref="fileInput" type="file" accept="image/*" style="display:none" @change="onFileChange" />
+                                    <n-button @click="clearBackgroundImage">清除背景</n-button>
                                 </n-space>
                             </n-space>
                         </n-collapse-item>
@@ -1595,7 +1708,7 @@ onMounted(() => {
                     </n-alert>
 
                     <n-form-item label="应用数据目录">
-                        <n-input v-model:value="appDataDir" readonly />
+                        <n-input :value="appDataDirPath" readonly />
                         <n-button @click="openAppDataDir">
                             打开数据目录
                         </n-button>
