@@ -897,7 +897,6 @@ const checkDoHStatus = async () => {
         const isEnabled = (await invoke('get_env', { key: 'USE_DOH' })) as (string | null);
         useDoH.value = (isEnabled === 'true');
         dohStatus.value = useDoH.value ? '已启用 DoH' : '未启用 DoH';
-        localStorage.setItem('useDoH', useDoH.value.toString());
     } catch (e) {
         console.error('检查 DoH 状态失败:', e);
         dohStatus.value = '检查失败';
@@ -908,11 +907,12 @@ const checkDoHStatus = async () => {
 const useDoH = ref<boolean>(false);
 const dohReady = ref(false);
 const dohStatus = ref<string>('检查中...');
+const forceTlsReady = ref(false);
 
 // === Debug 日志开关 ===
-const frpcForceTlsEnabled = ref(localStorage.getItem('frpcForceTls') === 'true');
+const frpcForceTlsEnabled = ref(false);
 watch(frpcForceTlsEnabled, async (val) => {
-    localStorage.setItem('frpcForceTls', val ? 'true' : 'false');
+    if (!forceTlsReady.value) return;
     await invoke('set_env', { key: 'FRPC_FORCE_TLS', value: val ? 'true' : 'false' });
 });
 const frpcDebugEnabled = ref(localStorage.getItem('frpcDebug') === 'true');
@@ -931,12 +931,12 @@ const dohOptions = [
     { label: '114DNS (114.114.114.114)', value: '114.114.114.114' },
     { label: 'Quad9 (9.9.9.9)', value: '9.9.9.9' }
 ];
-const dohAddr = ref<string>(localStorage.getItem('dohAddr') || '');
+const dohAddr = ref<string>('');
 
 // 监听 DoH 地址变化
 watch(dohAddr, async (addr) => {
+    if (!dohReady.value) return;
     try {
-        localStorage.setItem('dohAddr', addr);
         await invoke('set_env', { key: 'DOH_ADDR', value: addr });
         if (addr) {
             // 选中了地址则强制开启 DoH
@@ -955,8 +955,8 @@ watch(dohAddr, async (addr) => {
 });
 
 watch(useDoH, async (value) => {
+    if (!dohReady.value) return;
     try {
-        localStorage.setItem('useDoH', value.toString());
         await invoke('set_env', { key: 'USE_DOH', value: value ? 'true' : 'false' });
         dohStatus.value = value ? '已启用 DoH' : '未启用 DoH';
         logs.value += `[${new Date().toLocaleTimeString()}] [网络] ${value ? '启用' : '禁用'} DoH 解析\n`;
@@ -973,9 +973,6 @@ const checkProxyBypassStatus = async () => {
         const isBypassed = await invoke('check_proxy_bypass') as boolean;
         bypassProxy.value = isBypassed;
         proxyStatus.value = isBypassed ? '已绕过系统代理' : '使用系统代理';
-
-        // 同步到 localStorage
-        localStorage.setItem('bypassProxy', isBypassed.toString());
     } catch (e) {
         console.error('检查代理状态失败:', e);
         proxyStatus.value = '检查失败';
@@ -1005,9 +1002,7 @@ watch(bypassProxy, async (value) => {
     }
 
     try {
-        localStorage.setItem('bypassProxy', value.toString());
-
-        // 设置环境变量
+        // 设置环境变量（后端会持久化到配置）
         await invoke('set_env', {
             key: 'BYPASS_PROXY',
             value: value ? 'true' : 'false'
@@ -1145,9 +1140,17 @@ const AuthLogin = async () => {
     }
 }
 
-// 页面加载时初始化 DoH 设置
+// 页面加载时初始化 DoH / Force TLS 设置
 onMounted(async () => {
     await checkDoHStatus();
+
+    // 初始化 DoH 地址
+    try {
+        const dohAddrVal = await invoke('get_env', { key: 'DOH_ADDR' }) as (string | null);
+        dohAddr.value = dohAddrVal || '';
+    } catch { /* ignore */ }
+    dohReady.value = true;
+
     // 同步 FRPC_DEBUG 和 FRPC_FORCE_TLS 状态
     try {
         const debugVal = await invoke('get_env', { key: 'FRPC_DEBUG' }) as (string | null);
@@ -1157,8 +1160,8 @@ onMounted(async () => {
     try {
         const tlsVal = await invoke('get_env', { key: 'FRPC_FORCE_TLS' }) as (string | null);
         frpcForceTlsEnabled.value = tlsVal === 'true';
-        localStorage.setItem('frpcForceTls', frpcForceTlsEnabled.value ? 'true' : 'false');
     } catch { /* ignore */ }
+    forceTlsReady.value = true;
 });
 
 // 页面加载时初始化绕过代理设置
@@ -1438,6 +1441,14 @@ onMounted(() => {
                                 <n-button type="primary" @click="saveSettings">保存设置</n-button> -->
 
                                     <n-tabs type="bar" animated>
+                                        
+
+                                        <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
+                                            <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
+
+
+                                        </n-tab-pane>
+
                                         <n-tab-pane name="remote" tab="远程安全登录 (Argo)">
                                             <n-space vertical>
                                                 <n-text depth="3">将生成一次性密钥并请求授权，需在浏览器完成确认。</n-text>
@@ -1451,13 +1462,7 @@ onMounted(() => {
                                             </n-space>
                                         </n-tab-pane>
 
-                                        <n-tab-pane name="oauth" tab="通过 NatayarkID 登录 ">
-                                            <n-button type="primary" @click="oauthLogin">OAuth 登录</n-button>
-
-
-                                        </n-tab-pane>
-
-                                        <n-tab-pane name="authorization" tab="通过 Authorization 登录">
+                                        <n-tab-pane name="authorization" tab="通过 Authorization 登录（已弃用）">
                                             <n-form-item-row label="请输入在面板获取的 Authorization">
                                                 <n-input v-model:value="Authorization" type="password"
                                                     placeholder="Authorization" />

@@ -88,6 +88,10 @@ struct Config {
     frpc_version: Option<String>,
     frpc_filename: Option<String>,
     cpl_version: Option<String>,
+    // 网络设置持久化（显式字段，避免仅依赖 env map）
+    force_tls: Option<bool>,
+    use_doh: Option<bool>,
+    doh_addr: Option<String>,
 }
 
 impl Config {
@@ -104,6 +108,52 @@ impl Config {
             self.frpc_filename = self.frpc_filename.or_else(|| Some(String::new()));
             self.cpl_version = self.cpl_version.or_else(|| Some("0.8.1".to_string()));
         }
+
+        // 与 env_vars 做双向兜底同步，兼容旧版本
+        let mut env_map = self.env_vars.take().unwrap_or_default();
+
+        // 先从 env 反填字段（若字段缺失）
+        if self.force_tls.is_none() {
+            self.force_tls = Some(
+                env_map
+                    .get("FRPC_FORCE_TLS")
+                    .map(|v| v == "true")
+                    .unwrap_or(false),
+            );
+        }
+        if self.use_doh.is_none() {
+            self.use_doh = Some(env_map.get("USE_DOH").map(|v| v == "true").unwrap_or(false));
+        }
+        if self.doh_addr.as_deref().unwrap_or("").is_empty() {
+            self.doh_addr = Some(env_map.get("DOH_ADDR").cloned().unwrap_or_default());
+        }
+
+        // 最终默认值
+        if self.force_tls.is_none() {
+            self.force_tls = Some(false);
+        }
+        if self.use_doh.is_none() {
+            self.use_doh = Some(false);
+        }
+        if self.doh_addr.is_none() {
+            self.doh_addr = Some(String::new());
+        }
+
+        // 再把字段写回 env，保证运行时仍可通过 set_env/get_env 使用
+        env_map.insert(
+            "FRPC_FORCE_TLS".to_string(),
+            if self.force_tls.unwrap_or(false) { "true" } else { "false" }.to_string(),
+        );
+        env_map.insert(
+            "USE_DOH".to_string(),
+            if self.use_doh.unwrap_or(false) { "true" } else { "false" }.to_string(),
+        );
+        env_map.insert(
+            "DOH_ADDR".to_string(),
+            self.doh_addr.clone().unwrap_or_default(),
+        );
+
+        self.env_vars = Some(env_map);
 
         // 更新版本号
         self.config_version = Some(CONFIG_VERSION);
@@ -1712,6 +1762,21 @@ fn set_env(key: String, value: String) -> Result<(), String> {
     } else {
         map.insert(key.clone(), value.clone());
     }
+
+    // 同步显式网络配置字段
+    match key.as_str() {
+        "FRPC_FORCE_TLS" => {
+            cfg.force_tls = Some(value == "true");
+        }
+        "USE_DOH" => {
+            cfg.use_doh = Some(value == "true");
+        }
+        "DOH_ADDR" => {
+            cfg.doh_addr = Some(value.clone());
+        }
+        _ => {}
+    }
+
     cfg.env_vars = Some(map);
     save_config(&cfg)?;
 
@@ -2133,11 +2198,26 @@ fn main() {
             let app_dir = init_app_directory(app)?;
             // 加载持久化环境变量并注入当前进程
             if let Ok(cfg) = load_config() {
-                if let Some(map) = cfg.env_vars {
+                if let Some(map) = cfg.env_vars.clone() {
                     for (k, v) in map {
                         if !v.is_empty() {
                             std::env::set_var(k, v);
                         }
+                    }
+                }
+
+                // 显式字段兜底（避免 env_vars 被清空或缺失）
+                std::env::set_var(
+                    "FRPC_FORCE_TLS",
+                    if cfg.force_tls.unwrap_or(false) { "true" } else { "false" },
+                );
+                std::env::set_var(
+                    "USE_DOH",
+                    if cfg.use_doh.unwrap_or(false) { "true" } else { "false" },
+                );
+                if let Some(addr) = cfg.doh_addr {
+                    if !addr.is_empty() {
+                        std::env::set_var("DOH_ADDR", addr);
                     }
                 }
             }

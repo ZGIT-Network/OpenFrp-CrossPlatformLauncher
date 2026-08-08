@@ -2,7 +2,7 @@
 import { ref, watch, inject, computed, Ref } from 'vue';
 import { h } from 'vue';
 import { RouterLink, useRoute } from 'vue-router';
-import { NMenu, NLayoutSider } from 'naive-ui';
+import { NMenu, NLayoutSider, NIcon } from 'naive-ui';
 import type { MenuOption } from 'naive-ui';
 import { SettingsOutline, TerminalOutline, HomeOutline, BuildOutline, LogoWebComponent, EnterOutline, AddOutline, InformationOutline } from '@vicons/ionicons5';
 import { invoke } from '@tauri-apps/api/core';
@@ -37,12 +37,16 @@ const emit = defineEmits(['update:collapsed']);
 const toggleCollapse = (value: boolean) => {
   emit('update:collapsed', value);
 };
+// 统一渲染菜单图标，避免部分平台下 SVG 尺寸/颜色继承异常
+const renderMenuIcon = (icon: any) => () =>
+  h(NIcon, { size: 20, class: 'sidebar-menu-icon' }, { default: () => h(icon) });
+
 // 菜单配置
 const menuOptions = computed(() => [
   {
     label: () => h(RouterLink, { to: { name: 'Home' } }, () => '主页'),
     key: 'home',
-    icon: () => h(HomeOutline)
+    icon: renderMenuIcon(HomeOutline)
   },
   {
     label: () => {
@@ -52,13 +56,13 @@ const menuOptions = computed(() => [
         : h('span', { class: 'disabled-menu-item' }, '新建隧道');
     },
     key: 'newproxy',
-    icon: () => h(AddOutline),
+    icon: renderMenuIcon(AddOutline),
     disabled: !isLoggedIn.value
   },
   {
     label: () => h(RouterLink, { to: { name: 'ProxyList' } }, () => '隧道管理'),
     key: 'proxylist',
-    icon: () => h(BuildOutline)
+    icon: renderMenuIcon(BuildOutline)
   },
   // {
   //   label: () => {
@@ -68,33 +72,33 @@ const menuOptions = computed(() => [
   //       : h('span', { class: 'disabled-menu-item' }, '节点状态');
   //   },
   //   key: 'NodeStatus',
-  //   icon: () => h(ServerOutline),
+  //   icon: renderMenuIcon(ServerOutline),
   //   disabled: !isLoggedIn.value
   // },
   {
     label: () => h(RouterLink, { to: { name: 'FrpcManager' } }, () => '日志'),
     key: 'frpc',
-    icon: () => h(TerminalOutline)
+    icon: renderMenuIcon(TerminalOutline)
   },
   {
     label: () => h(RouterLink, { to: { name: 'Network' } }, () => '网络'),
     key: 'network',
-    icon: () => h(LogoWebComponent)
+    icon: renderMenuIcon(LogoWebComponent)
   },
   {
     label: () => h(RouterLink, { to: { name: 'Settings' } }, () => '设置'),
     key: 'settings',
-    icon: () => h(SettingsOutline)
+    icon: renderMenuIcon(SettingsOutline)
   },
   {
     label: () => h(RouterLink, { to: { name: 'Info' } }, () => '关于'),
     key: 'info',
-    icon: () => h(InformationOutline)
+    icon: renderMenuIcon(InformationOutline)
   },
   {
     label: '打开网页面板',
     key: 'webpanel',
-    icon: () => h(EnterOutline)
+    icon: renderMenuIcon(EnterOutline)
   }
 ]);
 
@@ -159,6 +163,17 @@ watch(() => route.name, (newRouteName) => {
 <style scoped>
 .n-menu {
   height: 100%;
+}
+
+/* 强制图标在 macOS WebKit 下正确继承颜色与尺寸 */
+:deep(.sidebar-menu-icon),
+:deep(.sidebar-menu-icon svg) {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  color: currentColor;
+  fill: currentColor;
+  flex-shrink: 0;
 }
 
 .n-layout-sider {

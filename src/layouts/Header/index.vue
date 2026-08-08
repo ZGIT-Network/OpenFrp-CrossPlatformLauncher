@@ -127,12 +127,10 @@ async function initAutoRestoreTunnels() {
       await invoke('emit_event', {
         event: 'log',
         payload: {
-          message: `应用程序启动，自动恢复隧道功能已启用${isAutostart ? '，检测到是自启动模式' : '，但不是自启动模式'}`
+          message: `应用程序启动，自动恢复隧道功能已启用${isAutostart ? '，检测到是自启动模式' : '，非自启动模式'}`
         }
       });
-      
-      
-      
+  
       // 获取保存的隧道状态
       const savedStates = localStorage.getItem('tunnelStates');
       if (savedStates) {
@@ -742,8 +740,8 @@ const toggleDarkMode = () => {
   <div class="header" data-tauri-drag-region @dblclick="handleHeaderDoubleClick">
     <div class="header-left" data-tauri-drag-region>
       <div class="header-logo" data-tauri-drag-region>
-        <div style="margin-top: 6px">
-          <svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 361.29 51.55">
+        <div class="brand-wrap">
+          <svg fill="currentColor" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 361.29 51.55" aria-label="OpenFrp">
             <path
               d="M99.65,156.91A29,29,0,0,1,89,155a25.58,25.58,0,0,1-8.53-5.44,25,25,0,0,1-5.61-8.17,26.89,26.89,0,0,1,0-20.45,25,25,0,0,1,5.61-8.17,25.65,25.65,0,0,1,8.5-5.44,30.65,30.65,0,0,1,21.38,0,25.18,25.18,0,0,1,8.5,5.4,24.47,24.47,0,0,1,5.58,8.2,27.68,27.68,0,0,1,0,20.56,24.65,24.65,0,0,1-5.58,8.17,25.18,25.18,0,0,1-8.5,5.4A29.13,29.13,0,0,1,99.65,156.91Zm0-6.41a20.41,20.41,0,0,0,7.73-1.44,18.36,18.36,0,0,0,6.2-4.07,18.89,18.89,0,0,0,4.1-6.15,19.84,19.84,0,0,0,1.48-7.71,19.3,19.3,0,0,0-5.58-13.82,18.14,18.14,0,0,0-6.2-4.1,20.41,20.41,0,0,0-7.73-1.44,20.69,20.69,0,0,0-7.82,1.44,18.56,18.56,0,0,0-6.23,4.1A19.05,19.05,0,0,0,80,131.13a19.83,19.83,0,0,0,1.47,7.71,18.71,18.71,0,0,0,10.37,10.22A20.69,20.69,0,0,0,99.65,150.5Z"
               transform="translate(-72.79 -105.36)" />
@@ -763,7 +761,7 @@ const toggleDarkMode = () => {
               d="M393.4,156.33v-50.4h19.66a27.67,27.67,0,0,1,11.3,2.09,16,16,0,0,1,7.2,6,18.85,18.85,0,0,1,0,18.83,16.38,16.38,0,0,1-7.2,6,27.33,27.33,0,0,1-11.3,2.12h-15.7l3.24-3.38v18.64Zm7.2-17.92-3.24-3.6h15.48q6.92,0,10.48-3a11.57,11.57,0,0,0,0-16.7q-3.57-3-10.48-3H397.36l3.24-3.6Z"
               transform="translate(-72.79 -105.36)" />
           </svg>
-          &nbsp;<span>Cross Platform Launcher</span>
+          <span class="brand-text">Cross Platform Launcher</span>
         </div>
       </div>
     </div>
@@ -851,25 +849,32 @@ const toggleDarkMode = () => {
   gap: 16px;
 }
 
-.header-logo span {
+.brand-wrap {
+  margin-top: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.header-logo .brand-text {
   font-size: 17px;
   font-weight: normal;
   color: var(--n-text-color);
-  /* line-height: 28px; */
   line-height: 1;
+  white-space: nowrap;
 }
 
 .header-logo svg {
   width: 100px;
+  min-width: 100px;
   height: auto;
+  color: var(--n-text-color);
+  display: block;
+  flex-shrink: 0;
 }
 
-.header-logo svg path .actual-light {
-  color: rgb(0, 0, 0);
-}
-
-.header-logo svg path .actual-dark {
-  color: rgb(255, 255, 255);
+.header-logo svg path {
+  fill: currentColor;
 }
 
 @media screen and (max-width: 280px) {
