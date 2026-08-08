@@ -237,11 +237,11 @@ jobs:
           
           # 尝试签名DMG
           echo "签名DMG..."
-          codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
+          codesign --force --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
             echo "第一次签名尝试失败，重试使用详细模式..."
             
             # 第二次尝试，更详细的输出
-            codesign --force --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
+            codesign --force --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
               echo "签名再次失败，但会继续处理..."
             }
           }
