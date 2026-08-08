@@ -191,7 +191,7 @@ jobs:
           echo "检查entitlements文件："
           cat "${ENTITLEMENTS_PATH}"
 
-          codesign --force --deep --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Enjie Ye (W6D36R8RMG)" "${APP_PATH}"
+          codesign --force --deep --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" "${APP_PATH}"
           
           # 验证签名
           codesign -dvvv "${APP_PATH}"
