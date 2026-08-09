@@ -331,7 +331,8 @@ export class LogService {
       console.log('首次初始化日志系统，添加启动日志');
     }
 
-    // 加载已保存的日志
+    // 加载已保存的日志（先让出主线程，避免阻塞首屏渲染）
+    await new Promise(resolve => setTimeout(resolve, 0));
     this.loadLogsAndRebuildIndices();
 
     try {

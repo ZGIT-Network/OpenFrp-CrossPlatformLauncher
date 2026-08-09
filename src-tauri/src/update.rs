@@ -19,8 +19,14 @@ pub async fn check_update() -> Result<Option<UpdateInfo>, Box<dyn Error>> {
     let current_version = env!("CARGO_PKG_VERSION").to_string();
     println!("当前版本: {}", current_version);
 
-    // 使用 Tauri 配置的更新源
-    let client = reqwest::Client::new();
+    // 使用 Tauri 配置的更新源（需带 User-Agent，否则被安全组件拦截返回 403）
+    let os_name = std::env::consts::OS;
+    let version = env!("CARGO_PKG_VERSION");
+    let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
+    let client = reqwest::Client::builder()
+        .user_agent(&user_agent)
+        .timeout(std::time::Duration::from_secs(10))
+        .build()?;
     let response = client
         .get("https://api.zyghit.cn/updater/ofcpl")
         .send()
@@ -84,6 +90,53 @@ fn compare_versions(current: &str, remote: &str) -> bool {
     remote_parts.len() > current_parts.len()
 }
 
+/// 初始化更新状态监听器（应在 setup 中只调用一次，避免重复注册导致事件广播泄漏）
+pub fn init_update_listener(app: &AppHandle) {
+    let app_handle_clone = app.clone();
+    app.listen("tauri://update-status", move |event| {
+        println!("收到更新状态事件: {}", event.payload());
+
+        if let Ok(status) = serde_json::from_str::<serde_json::Value>(event.payload()) {
+            // 直接发送原始状态，便于调试
+            let _ = app_handle_clone.emit("update-raw-status", event.payload());
+
+            // 处理不同状态
+            if let Some(status_str) = status.get("status").and_then(|s| s.as_str()) {
+                match status_str {
+                    "PENDING" => {
+                        let _ = app_handle_clone.emit("update-status", "正在准备更新...");
+                    }
+                    "DOWNLOADING" => {
+                        if let Some(progress) = status.get("progress").and_then(|p| p.as_f64())
+                        {
+                            let _ = app_handle_clone
+                                .emit("update-progress", format!("{:.1}%", progress * 100.0));
+                        } else {
+                            let _ = app_handle_clone.emit("update-status", "正在下载更新...");
+                        }
+                    }
+                    "DOWNLOADED" => {
+                        let _ = app_handle_clone.emit("update-status", "下载完成，准备安装...");
+                    }
+                    _ if status_str.contains("ERROR") => {
+                        if let Some(error) = status.get("error").and_then(|e| e.as_str()) {
+                            let _ = app_handle_clone.emit("update-error", error);
+                        } else {
+                            let _ = app_handle_clone.emit("update-error", "更新过程中发生未知错误");
+                        }
+                    }
+                    _ => {
+                        let _ = app_handle_clone
+                            .emit("update-status", format!("更新状态: {}", status_str));
+                    }
+                }
+            }
+        } else {
+            println!("无法解析更新状态: {}", event.payload());
+        }
+    });
+}
+
 #[tauri::command]
 // 下载并安装更新
 pub async fn download_and_install_update(app_handle: AppHandle) -> Result<(), String> {
@@ -94,54 +147,6 @@ pub async fn download_and_install_update(app_handle: AppHandle) -> Result<(), St
     let update = updater.check().await.map_err(|e| e.to_string())?;
 
     if let Some(update) = update {
-        // 设置进度监听器
-        let app_handle_clone = app_handle.clone();
-
-        // 监听更新状态事件
-        app_handle.listen("tauri://update-status", move |event| {
-            println!("收到更新状态事件: {}", event.payload());
-
-            if let Ok(status) = serde_json::from_str::<serde_json::Value>(event.payload()) {
-                // 直接发送原始状态，便于调试
-                let _ = app_handle_clone.emit("update-raw-status", event.payload());
-
-                // 处理不同状态
-                if let Some(status_str) = status.get("status").and_then(|s| s.as_str()) {
-                    match status_str {
-                        "PENDING" => {
-                            let _ = app_handle_clone.emit("update-status", "正在准备更新...");
-                        }
-                        "DOWNLOADING" => {
-                            if let Some(progress) = status.get("progress").and_then(|p| p.as_f64())
-                            {
-                                let _ = app_handle_clone
-                                    .emit("update-progress", format!("{:.1}%", progress * 100.0));
-                            } else {
-                                let _ = app_handle_clone.emit("update-status", "正在下载更新...");
-                            }
-                        }
-                        "DOWNLOADED" => {
-                            let _ = app_handle_clone.emit("update-status", "下载完成，准备安装...");
-                        }
-                        _ if status_str.contains("ERROR") => {
-                            if let Some(error) = status.get("error").and_then(|e| e.as_str()) {
-                                let _ = app_handle_clone.emit("update-error", error);
-                            } else {
-                                let _ =
-                                    app_handle_clone.emit("update-error", "更新过程中发生未知错误");
-                            }
-                        }
-                        _ => {
-                            let _ = app_handle_clone
-                                .emit("update-status", format!("更新状态: {}", status_str));
-                        }
-                    }
-                }
-            } else {
-                println!("无法解析更新状态: {}", event.payload());
-            }
-        });
-
         // 开始下载并安装更新
         println!("开始下载更新...");
 

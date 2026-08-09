@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, h, computed } from 'vue'
+import { ref, onMounted, onUnmounted, h, computed, nextTick } from 'vue'
 import { UpdateInfo } from '@/types/update'
 import {
     useMessage,
@@ -1149,6 +1149,7 @@ onMounted(async () => {
         const dohAddrVal = await invoke('get_env', { key: 'DOH_ADDR' }) as (string | null);
         dohAddr.value = dohAddrVal || '';
     } catch { /* ignore */ }
+    await nextTick(); // 等待 watch 触发完毕（此时 dohReady 仍为 false，跳过初始化误触发）
     dohReady.value = true;
 
     // 同步 FRPC_DEBUG 和 FRPC_FORCE_TLS 状态
@@ -1161,6 +1162,7 @@ onMounted(async () => {
         const tlsVal = await invoke('get_env', { key: 'FRPC_FORCE_TLS' }) as (string | null);
         frpcForceTlsEnabled.value = tlsVal === 'true';
     } catch { /* ignore */ }
+    await nextTick(); // 同上，避免初始化时触发 watch
     forceTlsReady.value = true;
 });
 

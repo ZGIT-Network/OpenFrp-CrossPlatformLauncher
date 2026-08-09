@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { NCard, NAlert, NSpace, NH4, NH2, NList, NIcon, NThing, NTable, NScrollbar, NImage, NGradientText, NText, NConfigProvider, NButton, NTag, NResult, NSkeleton, NSelect, NFormItem, NForm, NInputNumber } from 'naive-ui';
+import { NCard, NAlert, NSpace, NH4, NH2, NList, NIcon, NThing, NTable, NScrollbar, NImage, NGradientText, NText, NConfigProvider, NButton, NTag, NResult, NSelect, NFormItem, NForm, NInputNumber } from 'naive-ui';
 import { ref, onMounted, computed, Ref, inject } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { ReloadOutline } from '@vicons/ionicons5';
+import { ReloadOutline, CheckmarkCircle, CloseCircle, AlertCircle, Ellipse } from '@vicons/ionicons5';
 
 const currentVersion = ref('v0.1')
 
@@ -64,8 +64,9 @@ const serviceChecks = ref<ServiceCheck[]>([
     {
         id: 'main-api',
         name: 'OPENFRP 基本 API  (ofapi)',
-        url: 'https://of-dev-api.bfsea.com/commonQuery/get?key=test',
+        url: 'https://api.openfrp.net/commonQuery/get?key=test',
         status: null,
+        
         checking: false,
         error: null,
         latency: null
@@ -554,25 +555,42 @@ const maskHostname = (hostname: string): string => {
                         <n-text style="margin-left: 15px; margin-bottom: 5px;">{{ onlineStatus ? "OpenFrp Cross Platform Launcher 已连接至互联网" : "OpenFrp Cross Platform Launcher 无法访问互联网" }}。</n-text>
 
                         <n-h4>服务状态</n-h4>
-                        <div v-for="service in serviceChecks" :key="service.id"
-                            style="margin-left: 15px; margin-bottom: 5px;">
-                            <n-text>{{ service.name }}：</n-text>
-                            <span v-if="service.checking">
-                                <n-skeleton text style="width: 50%;" />
+                        <div v-for="service in serviceChecks" :key="service.id" class="service-check-row">
+                            <span class="service-check-left">
+                                <n-spin v-if="service.checking" :size="16" />
+                                <n-icon v-else-if="service.status === true && service.latency !== null && service.latency > 500" :size="16" color="#cc8800">
+                                    <AlertCircle />
+                                </n-icon>
+                                <n-icon v-else-if="service.status === true" :size="16" color="#266e48">
+                                    <CheckmarkCircle />
+                                </n-icon>
+                                <n-icon v-else-if="service.status === false" :size="16" color="#d03050">
+                                    <CloseCircle />
+                                </n-icon>
+                                <n-icon v-else :size="16" color="#ccc">
+                                    <Ellipse />
+                                </n-icon>
+                                <span class="service-check-name">{{ service.name }}</span>
                             </span>
-                            <span v-else>
-                                <span
-                                    :style="{ color: service.status === true ? '#266e48' : service.status === false ? '#d03050' : '#000000' }">
-                                    {{ service.status === true ? '已连接' : service.status === false ? '无法访问' : '检查中...' }}
+                            <span class="service-check-right">
+                                <span v-if="service.checking" class="service-checking">测试中...</span>
+                                <span v-else-if="service.status === true && service.latency !== null && service.latency > 500"
+                                    :style="{ color: '#cc8800' }">
+                                    已连接，延迟 {{ service.latency }}ms
                                 </span>
-                                <span v-if="service.status === true && service.latency !== null"
-                                    :style="{ color: '#266e48', fontSize: '12px' }">
-                                    ({{ service.latency }}ms)
+                                <span v-else-if="service.status === true && service.latency !== null"
+                                    :style="{ color: '#266e48' }">
+                                    已连接，延迟 {{ service.latency }}ms
                                 </span>
-                                <span v-if="service.status === false && service.error"
-                                    :style="{ color: '#d03050', fontSize: '12px' }">
-                                    ({{ service.error }})
+                                <span v-else-if="service.status === true"
+                                    :style="{ color: '#266e48' }">
+                                    已连接
                                 </span>
+                                <span v-else-if="service.status === false"
+                                    :style="{ color: '#d03050' }">
+                                    {{ service.error || '无法访问' }}
+                                </span>
+                                <span v-else :style="{ color: '#999' }">待检测</span>
                             </span>
                         </div>
 
@@ -727,5 +745,40 @@ const maskHostname = (hostname: string): string => {
     font-size: large;
     font-weight: normal;
 
+}
+
+.service-check-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-left: 15px;
+    margin-bottom: 8px;
+    min-height: 28px;
+}
+
+.service-check-left {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.service-check-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 15px;
+}
+
+.service-checking {
+    color: #999;
+}
+
+.icon-spin {
+    animation: icon-spin 1s linear infinite;
+}
+
+@keyframes icon-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 </style>

@@ -427,7 +427,7 @@ const restoreTunnels = async () => {
   });
 
   // 检查是否是自动启动模式（仅作为日志，不阻止恢复）
-  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true';
+  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true';
   if (!isAutoStartMode) {
     console.log('当前不是自动启动模式，但仍然继续恢复隧道');
   }
@@ -915,7 +915,7 @@ onMounted(async () => {
   await fetchProxyList()
 
   // 监听自动启动模式下的隧道恢复
-  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true' || route.query.autostart === 'true'
+  const isAutoStartMode = localStorage.getItem('appStartedByAutostart') === 'true'
   const autoRestoreTunnels = localStorage.getItem('autoRestoreTunnels') === 'true'
 
   console.log('隧道组件挂载，自动恢复状态:', {

@@ -51,12 +51,27 @@ const getUserInfo = () => {
 // 在应用启动时获取用户信息
 getUserInfo();
 
+// 定时请求 getUserInfo 以刷新 authorization token
+// 仅触发 API 调用，token 更新由 apiClient 在响应头中自动捕获，不影响正常操作时的行为
+let tokenRefreshTimer: ReturnType<typeof setInterval> | undefined;
+const TOKEN_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 分钟
+
+const refreshToken = () => {
+  if (!Cookies.get('authorization')) return; // 未登录则跳过
+  frpApiGetUserInfo().catch(() => {
+    // frpApiGetUserInfo 内部已有 try/catch，这里仅兜底
+  });
+};
+
 // 提供用户信息给所有子组件
 provide('userInfo', { userInfo, getUserInfo });
 
 // 其他现有代码保持不变
 const osThemeRef = useOsTheme();
-const colorScheme = ref<'dark' | 'light'>(osThemeRef.value === 'dark' ? 'dark' : 'light');
+const savedScheme = localStorage.getItem('colorScheme') as 'dark' | 'light' | null;
+const colorScheme = ref<'dark' | 'light'>(
+  savedScheme ?? (osThemeRef.value === 'dark' ? 'dark' : 'light')
+);
 const collapsed = ref(false);
 provide('collapsed', collapsed);
 
@@ -291,29 +306,31 @@ onMounted(async () => {
   } catch (e) {
     console.error('初始化全局日志服务时出错:', e);
   }
+
+  // 启动定时刷新 authorization（保持登录态不过期）
+  tokenRefreshTimer = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
 });
 
 onUnmounted(() => {
   console.log('App.vue 卸载，清理全局日志服务');
   // 注意：这里不清理全局日志服务，因为它应该在整个应用生命周期内保持活跃
   // globalLogService.cleanup();
+  if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
   
 });
 
-// 禁止右键菜单
+// 禁止右键菜单（但放行输入框，允许复制/粘贴/全选等操作）
 document.oncontextmenu = function (event: any) {
   if (window.event) {
     event = window.event;
   }
   try {
-    var the = event.srcElement;
-    if (!(
-      (the.tagName == 'INPUT' && the.type.toLowerCase() == 'text') ||
-      the.tagName == 'TEXTAREA'
-    )) {
-      return false;
+    var the = event.target;
+    // 放行所有 input（含 password/email/number 等）和 textarea
+    if (the instanceof HTMLInputElement || the instanceof HTMLTextAreaElement) {
+      return true;
     }
-    return true;
+    return false;
   } catch (e) {
     return false;
   }

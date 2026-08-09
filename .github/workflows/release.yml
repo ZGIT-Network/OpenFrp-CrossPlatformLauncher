@@ -33,7 +33,7 @@ jobs:
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -59,11 +59,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm install
-
-      - name: Install macOS targets
-        if: matrix.platform == 'macos-latest'
-        run: |
-          rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
       - name: Setup Windows ARM64 environment
         if: matrix.platform == 'windows-latest' && matrix.arch == 'arm64'
@@ -157,7 +152,7 @@ jobs:
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
         uses: tauri-apps/tauri-action@v0
         env:
-          MACOSX_DEPLOYMENT_TARGET: 10.14
+          MACOSX_DEPLOYMENT_TARGET: 10.15
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
           releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
@@ -220,16 +215,80 @@ jobs:
           # 等待一会儿确保资源释放
           sleep 3
           
-          # 尝试直接创建DMG，跳过临时DMG步骤
-          echo "直接创建DMG..."
-          if ! hdiutil create -volname "OpenFrp-CPL" -srcfolder "${APP_PATH}" -ov -format UDZO "${DMG_PATH}"; then
-            echo "直接创建DMG失败，尝试创建ZIP包作为备选..."
+          # 创建DMG（含 Applications 快捷方式 + 背景引导图 + 图标布局）
+          echo "创建DMG（含 Applications 快捷方式与安装引导）..."
+          STAGING_DIR=$(mktemp -d)
+          cp -R "${APP_PATH}" "${STAGING_DIR}/"
+          ln -s /Applications "${STAGING_DIR}/Applications"
+
+          # 生成背景引导图（箭头 + 提示文字）
+          pip3 install Pillow --quiet 2>/dev/null || true
+          mkdir -p "${STAGING_DIR}/.background"
+          python3 -c "
+          from PIL import Image, ImageDraw, ImageFont
+          W, H = 660, 400
+          img = Image.new('RGBA', (W, H), (255, 255, 255, 0))
+          draw = ImageDraw.Draw(img)
+          for y in range(H):
+              r = int(114 + (255 - 114) * (y / H))
+              g = int(160 + (255 - 160) * (y / H))
+              b = int(201 + (255 - 201) * (y / H))
+              draw.line([(0, y), (W, y)], fill=(r, g, b, 60))
+          ay = 175; x1, x2 = 260, 400
+          draw.line([(x1, ay), (x2, ay)], fill=(120, 120, 120, 200), width=4)
+          draw.polygon([(x2+12, ay), (x2-8, ay-12), (x2-8, ay+12)], fill=(120, 120, 120, 200))
+          try:
+              font = ImageFont.truetype('/System/Library/Fonts/Helvetica.ttc', 18)
+          except:
+              font = ImageFont.load_default()
+          text = 'Drag to Applications'
+          bbox = draw.textbbox((0, 0), text, font=font)
+          draw.text(((W - (bbox[2]-bbox[0])) // 2, 230), text, fill=(90, 90, 90, 220), font=font)
+          img.save('${STAGING_DIR}/.background/background.png')
+          " 2>/dev/null || echo "背景图生成失败，将跳过背景"
+
+          # 创建可写 DMG，设置窗口布局后转为压缩只读
+          if ! hdiutil create -volname "OpenFrp-CPL" -srcfolder "${STAGING_DIR}" -ov -format UDRW "${TEMP_DMG_PATH}"; then
+            echo "创建DMG失败，尝试创建ZIP包作为备选..."
             ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
             ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
             echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
             echo "dmg_path=" >> $GITHUB_OUTPUT
+            rm -rf "${STAGING_DIR}"
             exit 0
           fi
+          rm -rf "${STAGING_DIR}"
+
+          # 挂载可写 DMG，用 AppleScript 设置图标位置、窗口大小和背景图
+          MOUNT_DIR=$(hdiutil attach -readwrite -noverify -noautoopen "${TEMP_DMG_PATH}" | grep -o '/Volumes/.*$' | head -1)
+          osascript << 'APPLESCRIPT' || echo "AppleScript 窗口设置失败，继续..."
+          tell application "Finder"
+            tell disk "OpenFrp-CPL"
+              open
+              set current view of container window to icon view
+              set toolbar visible of container window to false
+              set statusbar visible of container window to false
+              set the bounds of container window to {0, 0, 660, 400}
+              set theViewOptions to the icon view options of container window
+              set arrangement of theViewOptions to not arranged
+              set icon size of theViewOptions to 128
+              try
+                set background picture of theViewOptions to file ".background:background.png"
+              end try
+              set position of item "OpenFrp-CrossPlatformLauncher" of container window to {180, 170}
+              set position of item "Applications" of container window to {480, 170}
+              close
+              open
+              close
+            end tell
+          end tell
+          APPLESCRIPT
+          sleep 5
+          hdiutil detach "${MOUNT_DIR}" || true
+
+          # 转换为压缩只读 DMG
+          hdiutil convert "${TEMP_DMG_PATH}" -format UDZO -o "${DMG_PATH}"
+          rm -f "${TEMP_DMG_PATH}"
           
           # 显示证书信息进行调试
           echo "可用证书信息："
@@ -414,60 +473,37 @@ jobs:
           # 基础URL
           BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
           
-          # 创建update.json
-          cat > update.json << EOF
-          {
-            "version": "$VERSION",
-            "notes": "请查看CHANGELOG.md了解更新内容。",
-            "pub_date": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi"
-              },
-              "windows-aarch64": {
-                "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi"
-              },
-              "darwin-universal": {
-                "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg"
-              },
-              "linux-x86_64": {
-                "signature": "",
-                "url": "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage"
+          # 读取签名文件（不存在则为空字符串）
+          echo "查找签名文件..."
+          WIN64_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig" 2>/dev/null || echo "")
+          WINARM_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig" 2>/dev/null || echo "")
+          MAC_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig" 2>/dev/null || echo "")
+          LINUX_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig" 2>/dev/null || echo "")
+
+          # 使用 jq 构建 update.json 并注入签名（sed 多行替换不可靠，改用 jq 安全注入）
+          jq -n \
+            --arg version "$VERSION" \
+            --arg pub_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
+            --arg win64sig "$WIN64_SIG" \
+            --arg winarmsig "$WINARM_SIG" \
+            --arg macsig "$MAC_SIG" \
+            --arg linuxsig "$LINUX_SIG" \
+            --arg win64url "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi" \
+            --arg winarmurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi" \
+            --arg macurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg" \
+            --arg linuxurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage" \
+            '{
+              version: $version,
+              notes: "请查看CHANGELOG.md了解更新内容。",
+              pub_date: $pub_date,
+              platforms: {
+                "windows-x86_64": { signature: $win64sig, url: $win64url },
+                "windows-aarch64": { signature: $winarmsig, url: $winarmurl },
+                "darwin-universal": { signature: $macsig, url: $macurl },
+                "linux-x86_64": { signature: $linuxsig, url: $linuxurl }
               }
-            }
-          }
-          EOF
-          
-          # 读取签名文件并更新update.json
-          echo "查找签名文件并更新update.json..."
-          
-          # Windows x64
-          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig" ]; then
-            WIN64_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig")
-            sed -i "s|\"windows-x86_64\": {\n.*\"signature\": \"\"|\"windows-x86_64\": {\n        \"signature\": \"$WIN64_SIG\"|" update.json
-          fi
-          
-          # Windows ARM64
-          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig" ]; then
-            WINARM_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig")
-            sed -i "s|\"windows-aarch64\": {\n.*\"signature\": \"\"|\"windows-aarch64\": {\n        \"signature\": \"$WINARM_SIG\"|" update.json
-          fi
-          
-          # macOS
-          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig" ]; then
-            MAC_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig")
-            sed -i "s|\"darwin-universal\": {\n.*\"signature\": \"\"|\"darwin-universal\": {\n        \"signature\": \"$MAC_SIG\"|" update.json
-          fi
-          
-          # Linux
-          if [ -f "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig" ]; then
-            LINUX_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig")
-            sed -i "s|\"linux-x86_64\": {\n.*\"signature\": \"\"|\"linux-x86_64\": {\n        \"signature\": \"$LINUX_SIG\"|" update.json
-          fi
-          
+            }' > update.json
+
           echo "生成的update.json文件内容:"
           cat update.json
           

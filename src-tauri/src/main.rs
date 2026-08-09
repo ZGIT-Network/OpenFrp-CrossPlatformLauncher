@@ -216,6 +216,60 @@ fn get_app_dir() -> PathBuf {
         .expect("应用程序目录未初始化")
 }
 
+/// 根据当前 OS/ARCH 生成默认的 frpc 文件名（跨平台正确）
+fn default_frpc_filename() -> String {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    let os_name = match os {
+        "windows" => "windows",
+        "linux" => "linux",
+        "macos" => "darwin",
+        _ => return format!("frpc_{}_{}", os, arch),
+    };
+    let arch_name = match arch {
+        "x86" => "386",
+        "x86_64" => "amd64",
+        "arm" => "arm",
+        "aarch64" => "arm64",
+        _ => return format!("frpc_{}_{}", os_name, arch),
+    };
+    if os == "windows" {
+        format!("frpc_{}_{}.exe", os_name, arch_name)
+    } else {
+        format!("frpc_{}_{}", os_name, arch_name)
+    }
+}
+
+/// 简易 URL 解码（处理 %XX 和 +，用于 OAuth code）
+fn url_decode(s: &str) -> String {
+    let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
+    let mut iter = s.bytes();
+    while let Some(b) = iter.next() {
+        match b {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let hi = iter.next();
+                let lo = iter.next();
+                match (hi, lo) {
+                    (Some(hi), Some(lo)) => {
+                        let hex = format!("{}{}", hi as char, lo as char);
+                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
+                            bytes.push(byte);
+                        } else {
+                            bytes.push(b'%');
+                            bytes.push(hi);
+                            bytes.push(lo);
+                        }
+                    }
+                    _ => bytes.push(b'%'),
+                }
+            }
+            _ => bytes.push(b),
+        }
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 // 获取配置文件路径
 fn get_config_path() -> Result<PathBuf, String> {
     let app_dir = get_app_dir();
@@ -568,7 +622,12 @@ async fn start_frpc_instance<R: Runtime>(
 
     let app_dir = get_app_dir();
     let config = load_config()?;
-    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
+    let frpc_filename = config
+        .frpc_filename
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "frpc 文件名未配置，请先下载 frpc".to_string())?;
+    let frpc_path = app_dir.join(frpc_filename);
 
     if !frpc_path.exists() {
         return Err("frpc 程序不存在，请先下载".to_string());
@@ -601,13 +660,6 @@ async fn start_frpc_instance<R: Runtime>(
     }
 
     // 如果指定了自定义 DoH 地址
-    // 如果需要输出 debug 日志
-    let debug_enabled = std::env::var("FRPC_DEBUG").unwrap_or_else(|_| "false".to_string());
-    let force_tls = std::env::var("FRPC_FORCE_TLS").unwrap_or_else(|_| "false".to_string());
-    if debug_enabled == "true" {
-        cmd.arg("--debug");
-    }
-
     if let Ok(doh_addr) = std::env::var("DOH_ADDR") {
         if !doh_addr.is_empty() {
             // 确保也启用了 DoH
@@ -1405,7 +1457,11 @@ async fn check_frpc_status(
                     map.insert(id, process_info);
                     return Ok(true);
                 }
-                Err(_) => return Ok(false),
+                Err(_) => {
+                    // try_wait 出错时把进程放回 map，避免失控进程无法停止
+                    map.insert(id, process_info);
+                    return Ok(false);
+                }
             }
         }
     }
@@ -1465,6 +1521,12 @@ async fn emit_event<R: Runtime>(
 ) -> Result<(), String> {
     app.emit(&event, payload)
         .map_err(|e| format!("发送事件失败: {}", e))
+}
+
+/// 查询当前是否以自启动模式运行（前端通过 invoke 调用，避免修改 URL 导致页面重载）
+#[command]
+fn check_is_autostart() -> bool {
+    std::env::args().any(|arg| arg == "--autostart")
 }
 
 #[command]
@@ -1952,7 +2014,7 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                             .find(|kv| kv.starts_with("code="))
                             .and_then(|kv| kv.split('=').nth(1))
                     })
-                    .map(|c| c.to_string())
+                    .map(|c| url_decode(c))
                     .unwrap_or_default();
                 let _ = app_handle.emit(
                     "oauth-code",
@@ -2242,9 +2304,8 @@ fn main() {
                 println!("有更新可用: {}", event.payload());
             });
 
-            app.listen("tauri://update-status", |event| {
-                println!("更新状态: {}", event.payload());
-            });
+            // 更新状态监听器只注册一次（init_update_listener 内部处理状态分发）
+            crate::update::init_update_listener(app.handle());
 
             Ok(())
         })
@@ -2261,6 +2322,7 @@ fn main() {
             kill_all_processes,
             emit_event,
             exit_app,
+            check_is_autostart,
             get_cpl_version,
             toggle_auto_start,
             check_auto_start,
@@ -2304,18 +2366,20 @@ fn main() {
                 let is_autostart = args.iter().any(|arg| arg == "--autostart");
                 if let Some(window) = app_handle.get_webview_window("main") {
                     if is_autostart {
-                        let _ = window.eval("window.location.search += window.location.search ? '&autostart=true' : '?autostart=true'");
+                        // 不再修改 URL（window.location.search 变更会触发 WebView 整页重载，
+                        // 开机时小概率卡死）。前端通过 invoke('check_is_autostart') 查询。
                         let _ = window.eval("localStorage.setItem('appStartedByAutostart', 'true')");
                         println!("检测到自启动");
                         // window.hide().unwrap(); // 如需隐藏窗口可取消注释
                     }
-                    // 检查 frpc 是否存在
+                    // 检查 frpc 是否存在（使用配置中的文件名，跨平台正确）
                     let app_dir = get_app_dir();
-                    let frpc_path = app_dir.join(if cfg!(target_os = "windows") {
-                        "frpc_windows_amd64.exe"
-                    } else {
-                        "frpc_linux_amd64"
-                    });
+                    let frpc_filename = load_config()
+                        .ok()
+                        .and_then(|cfg| cfg.frpc_filename)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or_else(default_frpc_filename);
+                    let frpc_path = app_dir.join(&frpc_filename);
                     if !frpc_path.exists() {
                         let _ = window.emit("redirect_to_settings", "need_download");
                     }

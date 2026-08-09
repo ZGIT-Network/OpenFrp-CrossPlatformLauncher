@@ -107,7 +107,7 @@ const refreshWebview = async () => {
 async function initAutoRestoreTunnels() {
   try {
     // 检查是否是自启动模式 - 只信任URL参数，不再信任localStorage
-    const isAutostart = window.location.search.includes('autostart=true');
+    const isAutostart = await invoke('check_is_autostart') as boolean;
     
     // 如果有URL参数指示是自启动，则设置标志
     if (isAutostart) {
@@ -155,53 +155,35 @@ async function initAutoRestoreTunnels() {
           });
           message.info('正在自启动隧道')
           
-          // 初始化日志系统（隐式加载）
+          // 日志初始化由 App.vue 的 globalLogService 负责，此处仅导航与恢复隧道
           const initLogSystem = async () => {
             try {
-              console.log("初始化日志系统");
-              // 先确保日志系统标记为已初始化
-              window.__logSystemInitialized = true;
-              
-              // 创建一个临时的iframe来加载日志页面，但不显示
-              const iframe = document.createElement('iframe');
-              iframe.style.display = 'none';
-              iframe.src = '/logs';
-              document.body.appendChild(iframe);
-              
-              // 等待日志系统初始化
-              await new Promise(resolve => setTimeout(resolve, 600));
-              
-              // 发送事件通知
+              console.log("准备自动恢复隧道");
+
               await invoke('emit_event', {
                 event: 'log',
                 payload: {
                   message: '日志系统已在后台初始化'
                 }
               });
-              
-              // 现在导航到隧道页面并触发恢复
+
+              // 导航到隧道页面并触发恢复
               router.push('/proxylist');
-              
+
               // 等待页面加载
               setTimeout(async () => {
-                // 发送日志提示
                 await invoke('emit_event', {
                   event: 'log',
                   payload: {
                     message: '正在准备启动隧道...'
                   }
                 });
-                
-                // 发送一个自定义事件，通知ProxyList组件立即恢复隧道
+
+                // 通知 ProxyList 组件立即恢复隧道
                 window.dispatchEvent(new CustomEvent('global-restore-tunnels'));
-                
-                // 清理临时iframe
-                setTimeout(() => {
-                  document.body.removeChild(iframe);
-                }, 1000);
               }, 500);
             } catch (error) {
-              console.error("初始化日志系统失败:", error);
+              console.error("自动恢复隧道初始化失败:", error);
             }
           };
           
