@@ -3020,7 +3020,7 @@ dependencies = [
 
 [[package]]
 name = "openfrp_cpl"
-version = "0.8.1"
+version = "0.9.0"
 dependencies = [
  "base64 0.21.7",
  "chrono",
