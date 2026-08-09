@@ -26,7 +26,7 @@ pub async fn proxy_api(
     };
 
     // 构建请求
-    let base_url = "https://of-dev-api.bfsea.com/frp/api";
+    let base_url = "https://api.openfrp.net/frp/api";
     let full_url = format!("{}/{}", base_url, url);
 
     let mut request_builder = match method.to_lowercase().as_str() {

@@ -210,10 +210,16 @@ onMounted(async () => {
   const window = await getCurrentWindow()
   isMaximized.value = await window.isMaximized()
 
+  // 防抖：macOS 拖拽缩放时连续触发大量 resize 事件，
+  // 每次都发 IPC 会淹没 Rust 主线程导致卡死
+  let resizeTimer: ReturnType<typeof setTimeout> | undefined
   await window.onResized(() => {
-    window.isMaximized().then((maximized: any) => {
-      isMaximized.value = maximized
-    })
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      window.isMaximized().then((maximized: any) => {
+        isMaximized.value = maximized
+      })
+    }, 150)
   })
   
   // 初始化自动恢复隧道功能
