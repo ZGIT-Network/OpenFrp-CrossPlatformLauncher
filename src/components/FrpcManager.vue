@@ -5,9 +5,11 @@ import type { LogInst, SelectOption } from 'naive-ui'
 import hljs from 'highlight.js'
 import { globalLogService } from '../services/logService'
 import { invoke } from '@tauri-apps/api/core';
+import { useRoute } from 'vue-router'
 
 
 const message = useMessage()
+const route = useRoute()
 const logInst = ref<LogInst | null>(null) // 引用 n-log 实例
 const autoScroll = ref(true) // 添加自动滚动控制
 const logs = ref('')
@@ -90,6 +92,20 @@ onMounted(async () => {
         buildInfo.value = await invoke('get_build_info')
     } catch (e) {
         console.error('获取版本信息失败:', e)
+    }
+    // 读取路由 query 自动筛选隧道日志（从托盘菜单"查看日志"跳转）
+    updateTunnelOptions()
+    const tunnelQuery = route.query.tunnel as string | undefined
+    if (tunnelQuery) {
+        selectedTunnel.value = tunnelQuery
+    }
+})
+
+// 监听路由 query 变化（从托盘菜单"查看日志"跳转时自动筛选）
+watch(() => route.query.tunnel, (tunnel) => {
+    if (tunnel && typeof tunnel === 'string') {
+        updateTunnelOptions()
+        selectedTunnel.value = tunnel
     }
 })
 

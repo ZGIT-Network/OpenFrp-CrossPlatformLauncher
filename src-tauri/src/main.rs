@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tar::Archive;
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Manager;
 mod argo_access;
@@ -50,6 +50,8 @@ struct FrpcProcesses(Mutex<HashMap<String, ProcessInfo>>);
 
 struct ProcessInfo {
     child: Child,
+    name: String,
+    remote: String,
     #[cfg(target_os = "windows")]
     group_id: u32,
 }
@@ -613,6 +615,8 @@ async fn start_frpc_instance<R: Runtime>(
     id: String,
     token: String,
     tunnel_id: String,
+    name: String,
+    remote: String,
 ) -> Result<String, String> {
     if let Ok(map) = processes.0.lock() {
         if map.contains_key(&id) {
@@ -737,13 +741,16 @@ async fn start_frpc_instance<R: Runtime>(
         #[cfg(target_os = "windows")]
         {
             let group_id = child.id();
-            map.insert(id.clone(), ProcessInfo { child, group_id });
+            map.insert(id.clone(), ProcessInfo { child, name, remote, group_id });
         }
         #[cfg(not(target_os = "windows"))]
         {
-            map.insert(id.clone(), ProcessInfo { child });
+            map.insert(id.clone(), ProcessInfo { child, name, remote });
         }
     }
+
+    // 重建托盘菜单（显示新启动的隧道）
+    rebuild_tray_menu(&app);
 
     Ok("启动成功".to_string())
 }
@@ -1212,11 +1219,12 @@ async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> 
 
 #[command]
 async fn stop_frpc_instance<R: Runtime>(
-    _app: tauri::AppHandle<R>,
+    app: tauri::AppHandle<R>,
     processes: State<'_, FrpcProcesses>,
     id: String,
 ) -> Result<(), String> {
-    if let Ok(mut map) = processes.0.lock() {
+    {
+        let mut map = processes.0.lock().map_err(|e| format!("无法获取进程锁: {}", e))?;
         if let Some(mut process_info) = map.remove(&id) {
             #[cfg(target_os = "windows")]
             {
@@ -1231,10 +1239,13 @@ async fn stop_frpc_instance<R: Runtime>(
             {
                 let _ = process_info.child.kill();
             }
-            return Ok(());
+        } else {
+            return Err("进程不存在".to_string());
         }
     }
-    Err("进程不存在".to_string())
+    // 锁已释放，安全重建托盘菜单
+    rebuild_tray_menu(&app);
+    Ok(())
 }
 
 #[command]
@@ -1535,64 +1546,143 @@ async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// 在 main 函数前添加这个函数
+// 动态重建托盘菜单（根据运行中的隧道列表）
+fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(tray) = app.tray_by_id("main") else { return };
+
+    let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>).ok();
+    let sep1 = PredefinedMenuItem::separator(app).ok();
+    let sep2 = PredefinedMenuItem::separator(app).ok();
+    let quit_with = MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>).ok();
+    let quit_keep = MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>).ok();
+
+    let mut tunnel_submenus: Vec<Submenu<R>> = Vec::new();
+    let mut no_tunnels: Option<MenuItem<R>> = None;
+
+    if let Some(processes) = app.try_state::<FrpcProcesses>() {
+        if let Ok(map) = processes.0.lock() {
+            if map.is_empty() {
+                no_tunnels = MenuItem::with_id(app, "no_tunnels", "（无运行中的隧道）", false, None::<&str>).ok();
+            } else {
+                for (id, info) in map.iter() {
+                    let copy_item = MenuItem::with_id(app, &format!("copy_link_{}", id), "复制链接地址", true, None::<&str>).ok();
+                    let stop_item = MenuItem::with_id(app, &format!("stop_{}", id), "停止隧道", true, None::<&str>).ok();
+                    let label = if info.name.is_empty() {
+                        format!("#{}", id)
+                    } else {
+                        format!("#{} {}", id, info.name)
+                    };
+                    if let (Some(copy_item), Some(stop_item)) = (copy_item, stop_item) {
+                        if let Ok(submenu) = Submenu::with_items(app, &label, true, &[&copy_item, &stop_item]) {
+                            tunnel_submenus.push(submenu);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
+    if let Some(ref item) = show { items.push(item); }
+    if let Some(ref item) = sep1 { items.push(item); }
+    if let Some(ref item) = no_tunnels { items.push(item); }
+    for item in &tunnel_submenus { items.push(item); }
+    if let Some(ref item) = sep2 { items.push(item); }
+    if let Some(ref item) = quit_with { items.push(item); }
+    if let Some(ref item) = quit_keep { items.push(item); }
+
+    if items.is_empty() { return; }
+    if let Ok(menu) = Menu::with_items(app, &items) {
+        let _ = tray.set_menu(Some(menu));
+    }
+}
+
 fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Error>> {
     let menu = Menu::with_items(
         app,
         &[
             &MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(
-                app,
-                "quit_with_frpc",
-                "结束所有隧道并退出",
-                true,
-                None::<&str>,
-            )?,
-            &MenuItem::with_id(
-                app,
-                "quit_keep_frpc",
-                "保持隧道运行并退出",
-                true,
-                None::<&str>,
-            )?,
+            &MenuItem::with_id(app, "no_tunnels", "（无运行中的隧道）", false, None::<&str>)?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>)?,
+            &MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>)?,
         ],
     )?;
 
-    let tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .icon(app.default_window_icon().unwrap().clone())
-        .on_menu_event(move |app, event| match event.id.as_ref() {
-            "show" => {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+        .on_menu_event(move |app, event| {
+            let eid = event.id.as_ref();
+            match eid {
+                "show" => {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
-            }
-            "quit_with_frpc" => {
-                if let Some(processes) = app.try_state::<FrpcProcesses>() {
-                    if let Ok(mut map) = processes.0.lock() {
-                        for (_, mut process_info) in map.drain() {
-                            #[cfg(target_os = "windows")]
-                            {
-                                let _ = Command::new("taskkill")
-                                    .args(&["/F", "/T", "/PID"])
-                                    .arg(process_info.group_id.to_string())
-                                    .output();
-                            }
-                            #[cfg(not(target_os = "windows"))]
-                            {
-                                let _ = process_info.child.kill();
+                eid if eid.starts_with("copy_link_") => {
+                    let tunnel_id = eid.strip_prefix("copy_link_").unwrap();
+                    if let Some(processes) = app.try_state::<FrpcProcesses>() {
+                        if let Ok(map) = processes.0.lock() {
+                            if let Some(info) = map.get(tunnel_id) {
+                                let _ = app.emit("tray-copy-link", &info.remote);
                             }
                         }
                     }
                 }
-                app.exit(0);
+                eid if eid.starts_with("stop_") => {
+                    let tunnel_id = eid.strip_prefix("stop_").unwrap().to_string();
+                    {
+                        if let Some(processes) = app.try_state::<FrpcProcesses>() {
+                            if let Ok(mut map) = processes.0.lock() {
+                                if let Some(mut process_info) = map.remove(&tunnel_id) {
+                                    #[cfg(target_os = "windows")]
+                                    {
+                                        let mut cmd = Command::new("taskkill");
+                                        cmd.creation_flags(CREATE_NO_WINDOW);
+                                        let _ = cmd
+                                            .args(&["/F", "/T", "/PID"])
+                                            .arg(process_info.group_id.to_string())
+                                            .output();
+                                    }
+                                    #[cfg(not(target_os = "windows"))]
+                                    {
+                                        let _ = process_info.child.kill();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    rebuild_tray_menu(app);
+                    let _ = app.emit("tunnels-stopped", ());
+                }
+                "quit_with_frpc" => {
+                    if let Some(processes) = app.try_state::<FrpcProcesses>() {
+                        if let Ok(mut map) = processes.0.lock() {
+                            for (_, mut process_info) in map.drain() {
+                                #[cfg(target_os = "windows")]
+                                {
+                                    let _ = Command::new("taskkill")
+                                        .args(&["/F", "/T", "/PID"])
+                                        .arg(process_info.group_id.to_string())
+                                        .output();
+                                }
+                                #[cfg(not(target_os = "windows"))]
+                                {
+                                    let _ = process_info.child.kill();
+                                }
+                            }
+                        }
+                    }
+                    app.exit(0);
+                }
+                "quit_keep_frpc" => {
+                    app.exit(0);
+                }
+                _ => {}
             }
-            "quit_keep_frpc" => {
-                app.exit(0);
-            }
-            _ => {}
         })
         .on_tray_icon_event(move |tray, event| match event {
             tauri::tray::TrayIconEvent::Click {

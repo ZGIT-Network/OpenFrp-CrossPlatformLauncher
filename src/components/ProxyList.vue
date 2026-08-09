@@ -299,6 +299,8 @@ const startTunnel = async (tunnel: any) => {
         id: tunnel.id.toString(),
         token: token,
         tunnelId: tunnel.id.toString(),
+        name: tunnel.name,
+        remote: tunnel.remote,
         logColors: true,
         enableLog: true,
         logUser: userInfo?.value?.username || ''
@@ -333,7 +335,10 @@ const startTunnel = async (tunnel: any) => {
         ]),
         duration: 5000
       })
-      await sendNotification({ title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`, body: `请使用链接地址：\n${tunnel.remote}` })
+      // 系统通知：自动复制第一个链接地址到剪贴板（多个地址取第一个）
+      const firstRemote = tunnel.remote.split('\n').map((s: string) => s.trim()).filter(Boolean)[0] || tunnel.remote
+      copy(firstRemote)
+      await sendNotification({ title: `隧道 #${tunnel.id} ${tunnel.name} 启动成功`, body: `链接地址已复制到剪贴板：\n${firstRemote}` })
 
       tunnel.status = 'running'
       saveTunnelStates()
@@ -953,6 +958,11 @@ onMounted(async () => {
     window.removeEventListener('global-restore-tunnels', restoreTunnelsListener);
   });
 
+  // 监听托盘"停止所有隧道"事件
+  const unlistenTunnelsStopped = await listen('tunnels-stopped', () => {
+    checkAllTunnelsStatus()
+  })
+
   const statusCheckInterval = setInterval(checkAllTunnelsStatus, 5000)
   const listRefreshInterval = setInterval(fetchProxyList, 45000)
 
@@ -970,6 +980,7 @@ onMounted(async () => {
     clearInterval(statusCheckInterval)
     clearInterval(listRefreshInterval)
     clearInterval(checkInterval)
+    unlistenTunnelsStopped()
   })
 
   onUnmounted(() => {

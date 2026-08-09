@@ -434,6 +434,8 @@ const handleDeepLink = async (url: string) => {
               id: proxyId,
               token: user,
               tunnelId: proxyId,
+              name: proxyName,
+              remote: remoteAddress,
               logColors: true,
               enableLog: true,
               logUser: user
@@ -473,7 +475,10 @@ const handleDeepLink = async (url: string) => {
           ]),
           duration: 5000
         })
-        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `请使用链接地址：${remoteAddress}` })
+        // 系统通知：自动复制第一个链接地址到剪贴板（多个地址取第一个）
+        const firstRemote = remoteAddress.split('\n').map(s => s.trim()).filter(Boolean)[0] || remoteAddress
+        navigator.clipboard.writeText(firstRemote).catch(() => {})
+        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `链接地址已复制到剪贴板：${firstRemote}` })
         linkTunnelsStore.addLinkTunnel(proxyId)
         message.success('通过快速启动隧道成功')
         setTimeout(() => {
@@ -514,8 +519,7 @@ const handleDeepLink = async (url: string) => {
 let cleanupOpenUrl: (() => void) | null = null
 let cleanupSecondInstance: (() => void) | null = null
 
-onMounted(async () => {
-  // 检查更新
+const checkForUpdates = async () => {
   try {
     const update = await invoke('check_update') as CplUpdate
     if (update) {
@@ -548,10 +552,6 @@ onMounted(async () => {
                   downloadingMsg.destroy()
                   downloadingMsg = null
                 }
-                // notification.error({
-                //   title: '更新失败',
-                //   content: String(e)
-                // })
               }
             },
             style: 'margin-top: 8px;'
@@ -563,6 +563,17 @@ onMounted(async () => {
   } catch (e) {
     console.error('检查更新失败:', e)
   }
+}
+
+onMounted(async () => {
+  // 检查更新
+  checkForUpdates()
+
+  // 监听托盘事件
+  listen('tray-copy-link', (event) => {
+    navigator.clipboard.writeText(String(event.payload)).catch(() => {})
+    message.success('链接地址已复制到剪贴板')
+  })
 
   // 监听进度
   await listen('update-progress', (event) => {
