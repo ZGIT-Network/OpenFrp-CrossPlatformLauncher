@@ -555,12 +555,19 @@ import getLoginUrl from '@/requests/oauth/getLoginUrl'
 import oauthCallback from '@/requests/oauth/oauthCallback'
 import { argoRequestLogin, argoWaitAuthorization, argoCancelWait } from '@/requests/argoAccess/request'
 
+// 保存 OAuth 相关监听器，重复发起登录时先清理旧监听
+let oauthAuthUnlisten: (() => void) | null = null;
+let oauthDeepLinkUnlisten: (() => void) | null = null;
+
 const oauthLogin = async () => {
     message.loading('正在准备登录...', { duration: 2000 });
     try {
+        try { oauthAuthUnlisten?.(); } catch { }
+        oauthAuthUnlisten = null;
+        try { oauthDeepLinkUnlisten?.(); } catch { }
+        oauthDeepLinkUnlisten = null;
         // 启动本地 HTTP 回调服务，拿到 redirect 基址
         const localBase = await invoke('start_local_oauth_server') as string;
-        const redirectUrl = `${localBase}/oauth_callback`;
         // 用内置 login.html 作为回调展示页，通过本地 HTTP 服务回调
         const callbackPage = `${localBase}/oauth_callback`;
         const res = await getLoginUrl(callbackPage);
@@ -571,6 +578,38 @@ const oauthLogin = async () => {
 
         // API 已返回带有我们指定 redirect 的登录地址
         const url = res.data.data as string;
+        let win: WebviewWindow | null = null;
+
+        // 本地回调服务（start_local_oauth_server）会在收到 code 后直接完成后端登录，
+        // 并通过 oauth-auth 事件回传结果。这里只监听这一次结果，
+        // 不再由前端/导航事件/深链重复消费同一个 code（OAuth code 只能使用一次）。
+        // 监听器必须在创建窗口之前注册，确保回退到外部浏览器时也能收到结果。
+        oauthAuthUnlisten = await listen('oauth-auth', async (ev: any) => {
+            try {
+                const payload = (ev?.payload || {}) as any;
+                if (!payload.flag) {
+                    message.error(payload.msg || '登录失败，请稍后重试');
+                    return;
+                }
+
+                const auth = payload.authorization || '';
+                if (!auth) {
+                    message.error('登录失败：未获得授权信息');
+                    return;
+                }
+
+                try { oauthAuthUnlisten?.(); } catch { }
+                oauthAuthUnlisten = null;
+                Cookies.set('authorization', auth, { expires: 7 });
+                userToken.value = auth;
+                localStorage.setItem('userToken', auth);
+                tempToken.value = auth;
+                message.success(payload.msg || '登录成功');
+                try { await win?.close(); } catch { }
+                router.go(0);
+            } catch (e) { console.error('处理 oauth-auth 事件失败:', e); }
+        });
+
         try {
             const existed = await WebviewWindow.getByLabel('oauth-login');
             if (existed) {
@@ -578,7 +617,7 @@ const oauthLogin = async () => {
                 return;
             }
 
-            const win = new WebviewWindow('oauth-login', {
+            win = new WebviewWindow('oauth-login', {
                 url,
                 title: 'NatayarkID 登录',
                 width: 520,
@@ -596,221 +635,49 @@ const oauthLogin = async () => {
                 message.error('创建登录窗口失败');
             });
 
-            // 拦截回调地址，提取 code，完成登录并关闭窗口
-            // 主窗口监听两类事件：
-            // 1) 导航事件（多事件名兜底）
-            // 2) 子窗口注入脚本发出的全局事件（oauth-callback）
-            const handleChangedUrl = async (changedUrl: string) => {
-                if (!changedUrl) return;
-                if (changedUrl.startsWith(redirectUrl)) {
-                    const u = new URL(changedUrl);
-                    const code = u.searchParams.get('code');
-                    if (!code) return;
-
-                    // 取消所有监听，防止重复
-                    try { const un = await unlistenUrlChanged; if (typeof un === 'function') un(); } catch { }
-                    try { const un = await unlistenNavigation; if (typeof un === 'function') un(); } catch { }
-                    try { const un = await unlistenLocationChanged; if (typeof un === 'function') un(); } catch { }
-
-                    message.loading('正在完成授权...', { duration: 1500 });
-                    try {
-                        const resp = await oauthCallback(code, redirectUrl);
-                        const auth = (resp as any)?.headers?.authorization || (resp as any)?.data?.data;
-                        if (!auth) {
-                            message.error('登录失败：未获得授权信息');
-                        } else {
-                            Cookies.set('authorization', auth, { expires: 7 });
-                            userToken.value = auth;
-                            localStorage.setItem('userToken', auth);
-                            tempToken.value = auth;
-                            message.success('登录成功');
-                            try { await win.close(); } catch { }
-                            router.go(0);
-                        }
-                    } catch (err) {
-                        console.error('完成 OAuth 回调失败:', err);
-                        message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch { }
-                    }
-                }
-            };
-
-            const unlistenUrlChanged = win.listen('tauri://url-changed', async (ev: any) => {
-                try {
-                    const changedUrl: string = String(ev?.payload || '');
-                    await handleChangedUrl(changedUrl);
-                } catch (e) {
-                    console.error('处理回调地址时出错:', e);
-                }
-            });
-
-            const unlistenNavigation = win.listen('tauri://navigation', async (ev: any) => {
-                try {
-                    const changedUrl: string = String(ev?.payload || '');
-                    await handleChangedUrl(changedUrl);
-                } catch (e) {
-                    console.error('处理导航事件出错:', e);
-                }
-            });
-
-            const unlistenLocationChanged = win.listen('tauri://location-changed', async (ev: any) => {
-                try {
-                    const changedUrl: string = String(ev?.payload || '');
-                    await handleChangedUrl(changedUrl);
-                } catch (e) {
-                    console.error('处理位置变更事件出错:', e);
-                }
-            });
-
-            // 监听注入脚本回传的全局事件（保留）
-            const unlistenGlobal = await listen('oauth-callback', async (appEv: any) => {
-                try {
-                    const code = (appEv && appEv.payload && (appEv.payload as any).code) || '';
-                    if (!code) return;
-                    // 取消两个监听，防止重复
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
-
-                    message.loading('正在完成授权...', { duration: 1500 });
-                    try {
-                        const resp = await oauthCallback(code, redirectUrl);
-                        const auth = (resp as any)?.headers?.authorization || (resp as any)?.data?.data;
-                        if (!auth) {
-                            message.error('登录失败：未获得授权信息');
-                        } else {
-                            Cookies.set('authorization', auth, { expires: 7 });
-                            userToken.value = auth;
-                            localStorage.setItem('userToken', auth);
-                            tempToken.value = auth;
-                            message.success('登录成功');
-                            try { await win.close(); } catch { }
-                            router.go(0);
-                        }
-                    } catch (err) {
-                        console.error('完成 OAuth 回调失败:', err);
-                        message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch { }
-                    }
-                } catch (e) {
-                    console.error('处理全局回调事件出错:', e);
-                }
-            });
-
             // 监听 deep link 回调（保留）：openfrp://oauth_callback?code=xxx
+            // 该流程没有本地回调地址，使用默认 redirect_url 完成回调
             try {
-                const unlistenDeepLink = await onOpenUrl(async (urls: string[] | string) => {
+                oauthDeepLinkUnlisten = await onOpenUrl(async (urls: string[] | string) => {
                     try {
                         const list = Array.isArray(urls) ? urls : [urls];
-                        for (const url of list) {
-                            if (!url) continue;
-                            if (url.startsWith('openfrp://oauth_callback')) {
-                                const u = new URL(url.replace('openfrp://', 'https://'));
-                                const code = u.searchParams.get('code') || '';
-                                if (!code) continue;
-                                // 取消其它监听
-                                try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
-                                try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
-                                try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
-                                try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
+                        for (const link of list) {
+                            if (!link || !link.startsWith('openfrp://oauth_callback')) continue;
+                            const u = new URL(link.replace('openfrp://', 'https://'));
+                            const code = u.searchParams.get('code') || '';
+                            if (!code) continue;
 
-                                message.loading('正在完成授权...', { duration: 1500 });
-                                try {
-                                    const resp = await oauthCallback(code, redirectUrl);
-                                    const auth = (resp as any)?.headers?.authorization || (resp as any)?.data?.data;
-                                    if (!auth) {
-                                        message.error('登录失败：未获得授权信息');
-                                    } else {
-                                        Cookies.set('authorization', auth, { expires: 7 });
-                                        userToken.value = auth;
-                                        localStorage.setItem('userToken', auth);
-                                        tempToken.value = auth;
-                                        message.success('登录成功');
-                                        try { await win.close(); } catch { }
-                                        router.go(0);
-                                    }
-                                } catch (err) {
-                                    console.error('完成 OAuth 回调失败:', err);
-                                    message.error('登录失败，请稍后重试');
-                                    try { await win.close(); } catch { }
+                            message.loading('正在完成授权...', { duration: 1500 });
+                            try {
+                                const resp = await oauthCallback(code);
+                                const auth = (resp as any)?.headers?.authorization || '';
+                                if (!auth) {
+                                    message.error('登录失败：未获得授权信息');
+                                } else {
+                                    Cookies.set('authorization', auth, { expires: 7 });
+                                    userToken.value = auth;
+                                    localStorage.setItem('userToken', auth);
+                                    tempToken.value = auth;
+                                    message.success('登录成功');
+                                    try { await win?.close(); } catch { }
+                                    router.go(0);
                                 }
+                            } catch (err: any) {
+                                console.error('完成 OAuth 回调失败:', err);
+                                message.error(typeof err === 'string' ? err : (err?.message || '登录失败，请稍后重试'));
+                                try { await win?.close(); } catch { }
                             }
                         }
                     } catch (e) { console.error('处理 deep link 出错:', e); }
                 });
-                // 注意：无需手动取消，窗口关闭或页面刷新时会被清理
+                // 重复发起登录时会由 oauthDeepLinkUnlisten 清理
             } catch (e) {
                 console.warn('注册 deep-link 监听失败:', e);
             }
-
-            // 监听本地 HTTP 回调服务事件
-            const unlistenLocal = await listen('oauth-code', async (appEv: any) => {
-                try {
-                    const urlStr = (appEv && (appEv.payload as any)?.url) || '';
-                    const codeFromEvent = (appEv && (appEv.payload as any)?.code) || '';
-                    if (!urlStr) return;
-                    if (!urlStr.startsWith(redirectUrl)) return;
-                    const u = new URL(urlStr);
-                    const code = codeFromEvent || u.searchParams.get('code') || '';
-                    if (!code) return;
-                    // 取消其它监听
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
-                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch { }
-
-                    message.loading('正在完成授权...', { duration: 1500 });
-                    try {
-                        const resp = await oauthCallback(code, redirectUrl);
-                        const auth = (resp as any)?.headers?.authorization || (resp as any)?.data?.data;
-                        if (!auth) {
-                            message.error('登录失败：未获得授权信息');
-                        } else {
-                            Cookies.set('authorization', auth, { expires: 7 });
-                            userToken.value = auth;
-                            localStorage.setItem('userToken', auth);
-                            tempToken.value = auth;
-                            message.success('登录成功');
-                            try { await win.close(); } catch { }
-                            router.go(0);
-                        }
-                    } catch (err) {
-                        console.error('完成 OAuth 回调失败:', err);
-                        message.error('登录失败，请稍后重试');
-                        try { await win.close(); } catch { }
-                    }
-                } catch (e) { console.error('处理本地回调事件出错:', e); }
-            });
-
-            // 监听后端直接回传的登录结果（兜底/更快）：
-            const unlistenAuth = await listen('oauth-auth', async (ev: any) => {
-                try {
-                    const ok = !!(ev && (ev.payload as any)?.flag);
-                    if (!ok) return;
-                    // 取消其它监听
-                    try { const un1 = await unlistenUrlChanged; if (typeof un1 === 'function') un1(); } catch { }
-                    try { const un2 = await unlistenNavigation; if (typeof un2 === 'function') un2(); } catch { }
-                    try { const un3 = await unlistenLocationChanged; if (typeof un3 === 'function') un3(); } catch { }
-                    try { if (typeof unlistenGlobal === 'function') unlistenGlobal(); } catch { }
-                    try { if (typeof unlistenLocal === 'function') unlistenLocal(); } catch { }
-                    try { if (typeof unlistenAuth === 'function') unlistenAuth(); } catch { }
-
-                    const auth = (ev.payload as any)?.authorization || '';
-                    if (!auth) return;
-                    Cookies.set('authorization', auth, { expires: 7 });
-                    userToken.value = auth;
-                    localStorage.setItem('userToken', auth);
-                    tempToken.value = auth;
-                    message.success('登录成功');
-                    try { await win.close(); } catch { }
-                    router.go(0);
-                } catch (e) { console.error('处理 oauth-auth 事件失败:', e); }
-            });
         } catch (error) {
             console.error('打开登录窗口出错:', error);
-            // 回退到系统默认浏览器
+            // 回退到系统默认浏览器（本地回调服务仍在运行，完成后会自动登录）
+            message.info('已在浏览器中打开登录页面，完成登录后将自动返回启动器');
             openUrl(url).catch((err) => {
                 console.error('回退到外部浏览器失败:', err);
                 message.error('无法打开登录页面，请手动复制链接进行登录');
@@ -1102,7 +969,9 @@ onUnmounted(() => {
 })
 
 const AuthLogin = async () => {
-    if (!Authorization.value) {
+    // 粘贴时可能带入首尾空白/换行，去掉后否则会被判为非法 Header
+    const token = Authorization.value.trim();
+    if (!token) {
         message.error('请输入 Authorization');
         return;
     }
@@ -1110,28 +979,30 @@ const AuthLogin = async () => {
 
     try {
         // 直接使用 invoke 而不是 callApi，避免循环检查
-        const testResponse = await invoke('proxy_api', {
+        // 注意：proxy_api 返回 { data: <接口响应>, headers: <响应头> }，需要先解包
+        const testResponse = await invoke<{ data?: any; headers?: Record<string, string> }>('proxy_api', {
             url: 'getUserInfo',
             method: 'POST',
             headers: {
-                Authorization: Authorization.value
+                Authorization: token
             },
             body: {},
         });
         console.log(testResponse);
 
-        if (!testResponse || !(testResponse as any).flag) {
-            message.error((testResponse as any)?.msg || '登录失败：无效的 Authorization');
+        const apiResult = (testResponse as any)?.data;
+        if (!apiResult || !apiResult.flag) {
+            message.error(apiResult?.msg || '登录失败：无效的 Authorization');
             return;
         }
 
         // Authorization 有效，保存登录状态
-        Cookies.set('authorization', Authorization.value, {
+        Cookies.set('authorization', token, {
             expires: 7,
         });
-        userToken.value = Authorization.value;
-        localStorage.setItem('userToken', Authorization.value);
-        tempToken.value = Authorization.value;
+        userToken.value = token;
+        localStorage.setItem('userToken', token);
+        tempToken.value = token;
         message.success('登录成功');
         router.go(0);
     } catch (error) {

@@ -20,8 +20,8 @@ interface ApiResponse<T> {
 export async function callApi<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
   // 自动处理登录失效的统一逻辑
   const handleAuthInvalid = (msg?: string) => {
-    // 判断信息是否包含未登录、登录失效等关键词
-    const invalid = msg && /未登录|登录失效|token 失效|凭证失效|unauthorized/i.test(msg);
+    // 判断信息是否包含未登录、登录失效等关键词（兼容服务端的“登入凭证无效”措辞）
+    const invalid = msg && /未登录|未登入|登录失效|登入凭证|凭证无效|token\s*失效|凭证失效|unauthorized/i.test(msg);
     if (invalid) {
       console.warn('检测到登录凭证失效，正在清理本地登录状态');
       Cookies.remove('authorization');
@@ -45,7 +45,7 @@ export async function callApi<T>(endpoint: string, options: ApiOptions = {}): Pr
   
   const authHeaders = {
     ...headers,
-    Authorization: Cookies.get('authorization') || '',
+    Authorization: (Cookies.get('authorization') || '').trim(),
   };
   
   try {

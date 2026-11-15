@@ -25,6 +25,7 @@ import { openUrl } from '@tauri-apps/plugin-opener';
 
 // utils & api
 import Cookies from '@/utils/cookies';
+import { OPENFRP_API_BASES } from '@/utils/apiBase';
 import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
 import frpApiGetSignInfo from '@/requests/frpApi/frpApiGetSignInfo';
 
@@ -94,18 +95,24 @@ const userSign = () => {
  * ------------------------------------------------------------------
  */
 const fetchAnnouncement = async () => {
-  try {
-    const { data } = await axios.get(
-      'https://of-dev-api.bfsea.com/commonQuery/get',
-      {
-        params: { key: 'help_info' },
-      }
-    );
-    headAlert.value = data.data.headalert;
-    announcement.value = data.data.cpl_announce;
-  } catch (e) {
-    message.error(`获取公告失败: ${e}`);
+  let lastError: unknown;
+  for (const base of OPENFRP_API_BASES) {
+    try {
+      const { data } = await axios.get(
+        `${base}/commonQuery/get`,
+        {
+          params: { key: 'help_info' },
+          timeout: 15000,
+        }
+      );
+      headAlert.value = data.data.headalert;
+      announcement.value = data.data.cpl_announce;
+      return;
+    } catch (e) {
+      lastError = e;
+    }
   }
+  message.error(`获取公告失败: ${lastError}`);
 };
 
 const fetchUserInfo = async (retry = 2) => {

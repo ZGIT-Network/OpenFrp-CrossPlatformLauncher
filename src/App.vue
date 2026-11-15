@@ -379,9 +379,11 @@ const shouldWatermark = !__DEV_MODE__;
                       style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
                       OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划 {{ userInfo?.username }}
                     </n-text>
-                    
-                      <router-view style="max-height: calc(100vh - 40px - 40px );"></router-view>
-                    
+
+                      <!-- 不要给 router-view 设置 max-height：
+                           它会让滚动内容少算一段高度，导致滚动到底部时最后一行/底部边距被裁掉 -->
+                      <router-view></router-view>
+
                   </n-layout-content>
                 </n-layout>
               </n-layout>
@@ -499,6 +501,41 @@ a:hover {
 
 .actual-dark .n-card {
   background-color: rgba(30, 30, 30, 0.3) !important;
+}
+
+/* ---------- 原生滚动条兜底样式（代码块等仍会使用原生滚动条） ---------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.18);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.actual-dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.actual-dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.36);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* 亮色模式样式 */

@@ -16,8 +16,9 @@ export default async (code: string, redirectUrl?: string) => {
         authorization: resp.authorization
       }
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error('OAuth 请求失败:', error);
-    throw error;
+    // Tauri 命令返回的 Err(String) 会被包装成字符串，统一转换成 Error 便于上层展示
+    throw new Error(typeof error === 'string' ? error : (error?.message || 'OAuth 请求失败'));
   }
 };

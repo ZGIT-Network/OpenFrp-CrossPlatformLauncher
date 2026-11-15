@@ -3,6 +3,12 @@ use serde_json::Value;
 use std::str::FromStr;
 use tauri::command;
 
+/// 当前可用的 OpenFrp API 地址（主地址 + 备用地址）
+pub const OPENFRP_API_BASES: [&str; 2] = [
+    "https://api.openfrp.net",
+    "https://ofapi.naids.com",
+];
+
 #[command]
 pub async fn proxy_api(
     url: String,
@@ -25,75 +31,92 @@ pub async fn proxy_api(
         client_builder.build().map_err(|e| e.to_string())?
     };
 
-    // 构建请求
-    let base_url = "https://api.openfrp.net/frp/api";
-    let full_url = format!("{}/{}", base_url, url);
-
-    let mut request_builder = match method.to_lowercase().as_str() {
-        "get" => client.get(&full_url),
-        "post" => client.post(&full_url),
-        "put" => client.put(&full_url),
-        "delete" => client.delete(&full_url),
-        _ => return Err("不支持的HTTP方法".into()),
-    };
-
     // 添加统一的 User-Agent
     let os_name = std::env::consts::OS;
     let version = env!("CARGO_PKG_VERSION");
     let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
-    request_builder = request_builder.header("User-Agent", &user_agent);
 
-    // 添加请求头
-    if let Some(headers_value) = headers {
-        // 创建一个新的 HeaderMap
-        let mut header_map = HeaderMap::new();
-
+    // 构建请求头
+    let mut header_map = HeaderMap::new();
+    if let Some(Value::Object(obj)) = &headers {
         // 直接处理 JSON 对象，避免生命周期问题
-        if let Value::Object(obj) = headers_value {
-            for (key, value) in obj {
-                if let Value::String(value_str) = value {
-                    // 将 key 转换为 HeaderName
-                    if let Ok(header_name) = HeaderName::from_str(&key) {
-                        if let Ok(header_value) = HeaderValue::from_str(&value_str) {
-                            header_map.insert(header_name, header_value);
-                        }
+        for (key, value) in obj {
+            if let Value::String(value_str) = value {
+                // 将 key 转换为 HeaderName（值去掉首尾空白，避免粘贴带入换行导致请求头被丢弃）
+                let trimmed = value_str.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if let Ok(header_name) = HeaderName::from_str(key) {
+                    if let Ok(header_value) = HeaderValue::from_str(trimmed) {
+                        header_map.insert(header_name, header_value);
                     }
                 }
             }
         }
-
-        request_builder = request_builder.headers(header_map);
     }
 
-    // // 添加平台特定的请求头
-    // #[cfg(target_os = "macos")]
-    // {
-    //     request_builder = request_builder.header("User-Agent", "OpenFrp-Launcher/macOS");
-    // }
+    let path = url.trim_start_matches('/');
+    let is_get = method.eq_ignore_ascii_case("get");
+    let mut last_error = String::from("请求 OpenFrp API 失败");
 
-    // 添加请求体
-    if let Some(body_value) = body {
-        request_builder = request_builder.json(&body_value);
+    // 依次尝试主地址与备用地址，仅在网络/解析失败时回退。
+    // 非 GET 请求只在“连接未建立”时回退，避免请求已到达服务端后重试造成重复操作。
+    for base in OPENFRP_API_BASES {
+        let full_url = format!("{}/frp/api/{}", base, path);
+
+        let mut request_builder = match method.to_lowercase().as_str() {
+            "get" => client.get(&full_url),
+            "post" => client.post(&full_url),
+            "put" => client.put(&full_url),
+            "delete" => client.delete(&full_url),
+            _ => return Err("不支持的HTTP方法".into()),
+        };
+
+        request_builder = request_builder.header("User-Agent", &user_agent);
+        request_builder = request_builder.headers(header_map.clone());
+
+        // 添加请求体
+        if let Some(body_value) = &body {
+            request_builder = request_builder.json(body_value);
+        }
+
+        // 发送请求
+        let response = match request_builder.send().await {
+            Ok(response) => response,
+            Err(e) => {
+                last_error = format!("请求 {} 失败: {}", base, e);
+                if !is_get && !e.is_connect() {
+                    return Err(last_error);
+                }
+                continue;
+            }
+        };
+
+        // 获取响应头
+        let response_headers: std::collections::HashMap<String, String> = response
+            .headers()
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
+            .collect();
+
+        // 解析响应
+        match response.json::<Value>().await {
+            Ok(response_body) => {
+                // 返回包含响应头和响应体的对象
+                return Ok(serde_json::json!({
+                    "data": response_body,
+                    "headers": response_headers
+                }));
+            }
+            Err(e) => {
+                last_error = format!("解析 {} 的响应失败: {}", base, e);
+                if !is_get {
+                    return Err(last_error);
+                }
+            }
+        }
     }
 
-    // 发送请求
-    let response = request_builder.send().await.map_err(|e| e.to_string())?;
-
-    // 获取响应头
-    let response_headers: std::collections::HashMap<String, String> = response
-        .headers()
-        .iter()
-        .map(|(name, value)| (name.to_string(), value.to_str().unwrap_or("").to_string()))
-        .collect();
-
-    // 解析响应
-    let response_body = response.json::<Value>().await.map_err(|e| e.to_string())?;
-
-    // 返回包含响应头和响应体的对象
-    let result = serde_json::json!({
-        "data": response_body,
-        "headers": response_headers
-    });
-
-    Ok(result)
+    Err(last_error)
 }

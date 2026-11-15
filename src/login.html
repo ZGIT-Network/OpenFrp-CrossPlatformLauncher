@@ -5,43 +5,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>正在登录至启动器</title>
     <script>
-        var redriect = function (){
-            // 构造openfrp协议链接
-            const frpUrl = `openfrp://login?code=${encodeURIComponent(authCode)}`;
-                
-                
-                    // 尝试跳转
-            window.location.href = frpUrl;
-        
-        
-                
-        }
         // 页面加载完成后立即执行
         window.onload = function() {
             // 解析URL参数
             const urlParams = new URLSearchParams(window.location.search);
             const authCode = urlParams.get('code');
+            const error = urlParams.get('error');
+            const errorDesc = urlParams.get('error_description');
+            const title = document.getElementById("title");
+            const tips = document.getElementById("tips");
 
             if (authCode) {
-            setTimeout(redriect, 1000);
-        
-                
+                // 回调已由启动器后端接收并处理，这里不再跳转 openfrp:// 深链，
+                // 避免同一个 code 被前端/深链重复消费导致登录失败。
+                title.textContent = "授权信息已收到";
+                tips.innerHTML = "授权信息已发送至 OpenFrp Cross Platform Launcher。<br/>请返回启动器查看登录结果，之后可安全关闭本窗口。";
             } else {
-                // 缺少code参数的处理
-                document.getElementById("status").innerHTML = `
-                     <div class="card">
-                        <h1 class="title">登录失败：参数缺失</h1>
-                        <p class="tips">URL中未找到code参数，请检查访问链接是否正确</p>
-                        <p class="tips"> 
-                            请确保已安装最新版 OpenFrp Cross Platform Launcher<br/>
-                            检查浏览器是否阻止了打开客户端的操作
-                        
-                        </p>
-                    </div>
-                `;
+                const reason = error
+                    ? `授权失败：${error}${errorDesc ? "（" + errorDesc + "）" : ""}`
+                    : "登录失败：URL 中未找到 code 参数";
+                title.textContent = reason;
+                tips.innerHTML = "请关闭本窗口并在启动器中重新发起登录。<br/>若问题持续出现，请检查网络连接或稍后重试。";
             }
         };
-        
+
     </script>
     <style>
         :root {
@@ -266,9 +253,8 @@
                         d="M107.332 72.938c-1.798 5.557 4.564 15.334 1.21 19.96-3.387 4.674-14.646 1.605-19.298 5.003-4.61 3.368-5.163 15.074-10.695 16.878-5.344 1.743-12.628-7.35-18.545-7.35-5.922 0-13.206 9.088-18.543 7.345-5.538-1.804-6.09-13.515-10.696-16.877-4.657-3.398-15.91-.334-19.297-5.002-3.356-4.627 3.006-14.404 1.208-19.962C10.93 67.576 0 63.442 0 57.5c0-5.943 10.93-10.076 12.668-15.438 1.798-5.557-4.564-15.334-1.21-19.96 3.387-4.674 14.646-1.605 19.298-5.003C35.366 13.73 35.92 2.025 41.45.22c5.344-1.743 12.628 7.35 18.545 7.35 5.922 0 13.206-9.088 18.543-7.345 5.538 1.804 6.09 13.515 10.696 16.877 4.657 3.398 15.91.334 19.297 5.002 3.356 4.627-3.006 14.404-1.208 19.962C109.07 47.424 120 51.562 120 57.5c0 5.943-10.93 10.076-12.668 15.438z">
                     </path>
                 </svg></div>
-            <h1 class="title">登录已授权</h1>
-            <p class="tips">请点击浏览器提示中的“打开”操作，将自动拉起启动器。<br/>之后，您可以安全关闭本窗口。</p>
-            <p class="tips">请回到 OpenFrp Cross Platform Launcher 以继续</p>
+            <h1 class="title" id="title">授权信息已收到</h1>
+            <p class="tips" id="tips">授权信息已发送至 OpenFrp Cross Platform Launcher。<br/>请返回启动器查看登录结果，之后可安全关闭本窗口。</p>
         </div>
     </div>
 </body>

@@ -8,6 +8,7 @@ const currentVersion = ref('v0.1')
 
 import frpApiGetNodeStatus from '@/requests/frpApi/frpApiGetNodeStatus';
 import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
+import { OPENFRP_API_BASES } from '@/utils/apiBase';
 
 const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
 
@@ -63,18 +64,18 @@ interface ServiceCheck {
 const serviceChecks = ref<ServiceCheck[]>([
     {
         id: 'main-api',
-        name: 'OPENFRP 基本 API  (ofapi)',
-        url: 'https://api.openfrp.net/commonQuery/get?key=test',
+        name: 'OPENFRP 基本 API (api.openfrp.net)',
+        url: `${OPENFRP_API_BASES[0]}/commonQuery/get?key=test`,
         status: null,
-        
+
         checking: false,
         error: null,
         latency: null
     },
     {
         id: 'backup-api',
-        name: 'OPENFRP 备用 API  (bfsea)',
-        url: 'https://of-dev-api.bfsea.com/commonQuery/get?key=test',
+        name: 'OPENFRP 备用 API (ofapi.naids.com)',
+        url: `${OPENFRP_API_BASES[1]}/commonQuery/get?key=test`,
         status: null,
         checking: false,
         error: null,
@@ -111,7 +112,7 @@ const serviceChecks = ref<ServiceCheck[]>([
     {
         id: 'collect-api',
         name: 'Natayark 人机验证服务',
-        url: 'https://captcha.naids.com/gen',
+        url: 'https://cv.naids.com/gen',
         status: null,
         checking: false,
         error: null,
@@ -185,27 +186,31 @@ const getNodeStatus = () => {
 getNodeStatus();
 
 
-// 检查网络连接状态
+interface ProbeResult {
+    success: boolean
+    status: number | null
+    latency_ms: number
+    body?: string | null
+    error?: string | null
+}
+
+// 检查网络连接状态（走 Rust 后端，避免 WebView 的 CORS 限制）
 const checkNetworkConnectivity = async () => {
     checkingNetwork.value = true
     networkError.value = null
     try {
-        // 使用 fetch 检查网络连接 (检查是否能访问百度)
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
-
-        const response = await fetch('https://www.baidu.com', {
-            mode: 'no-cors',
-            signal: controller.signal
+        const result = await invoke<ProbeResult>('probe_url', {
+            url: 'https://www.baidu.com',
+            timeoutMs: 5000
         })
-
-        // 如果请求没有抛出错误，则认为网络连接正常
-        onlineStatus.value = true
-        clearTimeout(timeoutId)
+        onlineStatus.value = result.success
+        if (!result.success) {
+            networkError.value = result.error || '网络连接异常'
+        }
     } catch (e: any) {
         console.error('网络连接检查失败:', e)
         onlineStatus.value = false
-        networkError.value = e.message || '网络连接异常'
+        networkError.value = e?.message || '网络连接异常'
     } finally {
         checkingNetwork.value = false
     }
@@ -251,43 +256,34 @@ const checkForceTlsStatus = async () => {
 }
 
 
-// 检查单个服务状态
+// 检查单个服务状态（走 Rust 后端，避免 WebView 的 CORS 限制）
 const checkServiceStatus = async (service: ServiceCheck) => {
     service.checking = true
     service.error = null
     service.latency = null
 
     try {
-        const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 5000) // 5秒超时
-
-        // 记录开始时间
-        const startTime = Date.now()
-
-        const response = await fetch(service.url, {
-            signal: controller.signal
+        const result = await invoke<ProbeResult>('probe_url', {
+            url: service.url,
+            timeoutMs: 5000
         })
 
-        // 计算延迟
-        const endTime = Date.now()
-        service.latency = endTime - startTime
-
-        // 只有响应成功或者403/404状态码视为正常连接
-        service.status = response.ok || response.status === 403 || response.status === 404
-        if (!response.ok && response.status !== 403 && response.status !== 404) {
-            service.error = `HTTP ${response.status}: ${response.statusText}`
-        }
-        clearTimeout(timeoutId)
-    } catch (e: any) {
-        console.error(`${service.name}检查失败:`, e)
-        // 检查是否为CORS错误
-        if (e.name === 'TypeError' && (e.message.includes('CORS') || e.message.includes('Failed to fetch'))) {
-            service.status = false  // CORS错误应视为连接失败
-            service.error = 'CORS限制或网络问题'
+        service.latency = result.latency_ms
+        if (result.success) {
+            const status = result.status ?? 0
+            // 只要能拿到 HTTP 响应（且非 5xx）就视为服务可达
+            service.status = status < 500
+            if (!service.status) {
+                service.error = `HTTP ${status}`
+            }
         } else {
             service.status = false
-            service.error = e.message || '网络连接异常'
+            service.error = result.error || '网络连接异常'
         }
+    } catch (e: any) {
+        console.error(`${service.name}检查失败:`, e)
+        service.status = false
+        service.error = e?.message || '网络连接异常'
     } finally {
         service.checking = false
     }
@@ -296,16 +292,15 @@ const checkServiceStatus = async (service: ServiceCheck) => {
 
 const getIpInfo = async () => {
     try {
-        const response = await fetch('https://myip.ipip.net/json', {
-            mode: 'cors',
-            headers: {
-                'Accept': 'application/json'
-            }
+        const result = await invoke<ProbeResult>('probe_url', {
+            url: 'https://myip.ipip.net/json',
+            timeoutMs: 8000,
+            readBody: true
         })
-        if (response.ok) {
-            const data = await response.json()
-            ipInfo.value = JSON.stringify(data)
+        if (result.success && result.body) {
+            ipInfo.value = result.body.trim()
         } else {
+            console.error('获取IP信息失败:', result.error)
             ipInfo.value = '获取失败'
         }
     } catch (e) {

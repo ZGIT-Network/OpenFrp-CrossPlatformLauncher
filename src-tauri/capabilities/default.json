@@ -5,7 +5,7 @@
   "remote": {
     "urls": [
       "https://*.openfrp.net",
-      "https://of-dev-api.bfsea.com"
+      "https://ofapi.naids.com"
     ]
   },
   "systemTray": {
@@ -93,7 +93,7 @@
           "url": "https://api.openfrp.net"
         },
         {
-          "url": "https://of-dev-api.bfsea.com"
+          "url": "https://ofapi.naids.com"
         }
       ]
     },

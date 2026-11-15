@@ -272,6 +272,22 @@ fn url_decode(s: &str) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
+/// 解析 URL 查询参数（用于本地 OAuth 回调）
+fn parse_query_params(url: &str) -> HashMap<String, String> {
+    let mut params = HashMap::new();
+    let Some(query) = url.split_once('?').map(|(_, q)| q) else {
+        return params;
+    };
+    for pair in query.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        params.insert(url_decode(key), url_decode(value));
+    }
+    params
+}
+
 // 获取配置文件路径
 fn get_config_path() -> Result<PathBuf, String> {
     let app_dir = get_app_dir();
@@ -368,13 +384,22 @@ async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, S
     )
     .map_err(|e| e.to_string())?;
 
-    let response = client
-        .get("https://of-dev-api.bfsea.com/commonQuery/get?key=software")
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let software_info: SoftwareInfo = response.json().await.map_err(|e| e.to_string())?;
+    let mut last_error = String::from("获取软件信息失败");
+    let mut software_info: Option<SoftwareInfo> = None;
+    for base in api_proxy::OPENFRP_API_BASES {
+        let url = format!("{}/commonQuery/get?key=software", base);
+        match client.get(&url).send().await {
+            Ok(response) => match response.json::<SoftwareInfo>().await {
+                Ok(info) => {
+                    software_info = Some(info);
+                    break;
+                }
+                Err(e) => last_error = format!("解析 {} 的响应失败: {}", base, e),
+            },
+            Err(e) => last_error = format!("请求 {} 失败: {}", base, e),
+        }
+    }
+    let software_info = software_info.ok_or(last_error)?;
 
     // 处理版本号，去除两边的斜杠
     let latest_version = software_info.data.latest.trim_matches('/').to_string();
@@ -1983,8 +2008,12 @@ async fn test_network_connection() -> Result<serde_json::Value, String> {
     // 测试多个端点
     let test_urls = vec![
         (
-            "OpenFrp API",
-            "https://of-dev-api.bfsea.com/frp/api/getUserInfo",
+            "OpenFrp API (api.openfrp.net)",
+            "https://api.openfrp.net/frp/api/getUserInfo",
+        ),
+        (
+            "OpenFrp API 备用 (ofapi.naids.com)",
+            "https://ofapi.naids.com/frp/api/getUserInfo",
         ),
         ("Baidu", "https://www.baidu.com"),
         ("ZGIT API", "https://api.zyghit.cn"),
@@ -2027,6 +2056,84 @@ async fn test_network_connection() -> Result<serde_json::Value, String> {
     Ok(results)
 }
 
+/// 服务连通性探测结果
+#[derive(Serialize)]
+struct UrlProbeResult {
+    success: bool,
+    status: Option<u16>,
+    latency_ms: u64,
+    body: Option<String>,
+    error: Option<String>,
+}
+
+/// 由后端探测任意 HTTP/HTTPS 地址。
+/// 前端直接 fetch 会受 CORS 限制（例如 cv.naids.com 不返回 CORS 头），
+/// 通过后端 reqwest 请求可避免误报“CORS限制或网络问题”。
+#[command]
+async fn probe_url(
+    url: String,
+    timeout_ms: Option<u64>,
+    read_body: Option<bool>,
+) -> Result<UrlProbeResult, String> {
+    let url = url.trim().to_string();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅支持 http/https 地址".to_string());
+    }
+
+    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
+    let user_agent = format!(
+        "OpenFrp-CPL/{}-{}",
+        std::env::consts::OS,
+        env!("CARGO_PKG_VERSION")
+    );
+    let mut builder = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(timeout_ms.unwrap_or(5000)))
+        .user_agent(user_agent);
+    if bypass_proxy == "true" {
+        builder = builder.no_proxy();
+    }
+    let client = builder.build().map_err(|e| e.to_string())?;
+
+    let start = std::time::Instant::now();
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let body = if read_body.unwrap_or(false) {
+                match response.text().await {
+                    // 限制返回内容大小，避免把超大页面全部传入 IPC
+                    Ok(text) => Some(text.chars().take(200_000).collect()),
+                    Err(e) => {
+                        return Ok(UrlProbeResult {
+                            success: true,
+                            status: Some(status),
+                            latency_ms,
+                            body: None,
+                            error: Some(e.to_string()),
+                        })
+                    }
+                }
+            } else {
+                None
+            };
+            Ok(UrlProbeResult {
+                success: true,
+                status: Some(status),
+                latency_ms,
+                body,
+                error: None,
+            })
+        }
+        Err(e) => Ok(UrlProbeResult {
+            success: false,
+            status: None,
+            latency_ms: start.elapsed().as_millis() as u64,
+            body: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
 // 添加状态结构体
 #[derive(Default)]
 struct DeepLinkState(Mutex<Option<String>>);
@@ -2039,46 +2146,85 @@ struct OAuthResponse {
     data: String,
 }
 
+/// 未指定回调地址时使用的默认地址（与旧版快速登录页一致）
+const DEFAULT_OAUTH_REDIRECT: &str = "https://staticassets.naids.com/ofcpl_login";
+
 #[command]
 async fn oauth_callback(
     code: String,
     redirect_url: Option<String>,
 ) -> Result<OAuthResponse, String> {
     let client = reqwest::Client::new();
-    let mut form = std::collections::HashMap::new();
-    form.insert("code", code);
     // 使用与获取登录URL时相同的 redirect_url，确保服务端校验通过
-    form.insert(
-        "redirect_url",
-        redirect_url.unwrap_or_else(|| "https://staticassets.naids.com/ofcpl_login".to_string()),
-    );
+    let redirect_url = redirect_url.unwrap_or_else(|| DEFAULT_OAUTH_REDIRECT.to_string());
 
-    let res = client
-        .post("https://of-dev-api.bfsea.com/oauth2/callback")
-        .form(&form)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut last_error = String::from("OAuth 登录失败");
 
-    let headers = res.headers();
-    let auth = headers
-        .get("authorization")
-        .ok_or("登录失败: 未能找到 Authorization")?
-        .to_str()
-        .map_err(|e| e.to_string())?
-        .to_string();
+    // oauth2/callback 只从 URL query 读取 code（form body 会被当作空值），
+    // 因此这里必须使用 query 参数，并按主/备地址依次尝试。
+    for base in api_proxy::OPENFRP_API_BASES {
+        let res = match client
+            .post(format!("{}/oauth2/callback", base))
+            .query(&[("code", code.as_str()), ("redirect_url", redirect_url.as_str())])
+            .send()
+            .await
+        {
+            Ok(res) => res,
+            Err(e) => {
+                last_error = format!("请求 {} 失败: {}", base, e);
+                continue;
+            }
+        };
 
-    let json = res
-        .json::<serde_json::Value>()
-        .await
-        .map_err(|e| e.to_string())?;
+        let status = res.status();
+        // Authorization 头可能大小写不同，reqwest 的 HeaderMap 查找不区分大小写
+        let authorization = res
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .map(|v| v.to_string());
 
-    Ok(OAuthResponse {
-        authorization: auth,
-        flag: json["flag"].as_bool().unwrap_or(false),
-        msg: json["msg"].as_str().unwrap_or("").to_string(),
-        data: json["data"].as_str().unwrap_or("").to_string(),
-    })
+        let json = match res.json::<serde_json::Value>().await {
+            Ok(json) => json,
+            Err(e) => {
+                last_error = if status.is_success() {
+                    format!("解析 {} 的响应失败: {}", base, e)
+                } else {
+                    format!("{} 返回 HTTP {}", base, status.as_u16())
+                };
+                continue;
+            }
+        };
+
+        let flag = json["flag"].as_bool().unwrap_or(false);
+        let msg = json["msg"].as_str().unwrap_or("").to_string();
+        let data = match &json["data"] {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Null => String::new(),
+            other => other.to_string(),
+        };
+
+        if flag {
+            let authorization = authorization.ok_or_else(|| {
+                "登录失败: 服务端未返回 Authorization".to_string()
+            })?;
+            return Ok(OAuthResponse {
+                authorization,
+                flag,
+                msg,
+                data,
+            });
+        }
+
+        // 服务端明确返回失败（例如 code 无效），换备用地址再试一次
+        last_error = if msg.is_empty() {
+            format!("OAuth 登录失败 (HTTP {})", status.as_u16())
+        } else {
+            msg
+        };
+    }
+
+    Err(last_error)
 }
 
 #[tauri::command]
@@ -2090,37 +2236,36 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
 
     let app_handle = app.clone();
     thread::spawn(move || {
-        for req in server.incoming_requests() {
+        // 限制等待时间，避免用户取消登录后线程/端口长期占用
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+        loop {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let req = match server.recv_timeout(remaining) {
+                Ok(Some(req)) => req,
+                Ok(None) => break,
+                Err(_) => break,
+            };
             let url = req.url().to_string();
             // 仅接受 /oauth_callback
             if url.starts_with("/oauth_callback") {
-                let full = format!("http://127.0.0.1:{}{}", port, url);
-                // 解析 code
-                let code = full
-                    .split('?')
-                    .nth(1)
-                    .and_then(|qs| {
-                        qs.split('&')
-                            .find(|kv| kv.starts_with("code="))
-                            .and_then(|kv| kv.split('=').nth(1))
-                    })
-                    .map(|c| url_decode(c))
+                let params = parse_query_params(&url);
+                let code = params.get("code").cloned().unwrap_or_default();
+                let error = params.get("error").cloned().unwrap_or_default();
+                let error_desc = params
+                    .get("error_description")
+                    .cloned()
                     .unwrap_or_default();
-                let _ = app_handle.emit(
-                    "oauth-code",
-                    serde_json::json!({ "url": full, "code": code }),
-                );
-                // 后端直接执行登录流程，并将结果回传主进程
+
+                // 后端直接执行登录流程，并将结果回传主进程。
+                // 只在这里消费一次 code，避免前端/深链重复使用导致 code 失效。
+                let app_for_emit = app_handle.clone();
+                let redirect = format!("http://127.0.0.1:{}/oauth_callback", port);
                 if !code.is_empty() {
-                    let app_for_emit = app_handle.clone();
-                    let code_clone = code.clone();
                     tauri::async_runtime::spawn(async move {
-                        match oauth_callback(
-                            code_clone,
-                            Some(format!("http://127.0.0.1:{}/oauth_callback", port)),
-                        )
-                        .await
-                        {
+                        match oauth_callback(code, Some(redirect)).await {
                             Ok(resp) => {
                                 let _ = app_for_emit.emit(
                                     "oauth-auth",
@@ -2143,8 +2288,21 @@ async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Resul
                             }
                         }
                     });
+                } else {
+                    let msg = if error.is_empty() {
+                        "登录失败：回调地址中缺少 code 参数".to_string()
+                    } else if error_desc.is_empty() {
+                        format!("登录失败：{}", error)
+                    } else {
+                        format!("登录失败：{} ({})", error, error_desc)
+                    };
+                    let _ = app_for_emit.emit(
+                        "oauth-auth",
+                        serde_json::json!({ "flag": false, "msg": msg }),
+                    );
                 }
-                // 返回应用内置的 login.html 内容
+
+                // 返回应用内置的 login.html 内容（仅提示用户返回启动器，不再跳转深链）
                 let html = include_str!("../../src/login.html");
                 let _ = req.respond(
                     Response::from_string(html)
@@ -2421,6 +2579,7 @@ fn main() {
             get_env,
             check_proxy_bypass,
             test_network_connection,
+            probe_url,
             oauth_callback,
             check_update,
             install_update,

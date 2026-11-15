@@ -41,6 +41,7 @@ onMounted(() => {
           const authorization = res.headers.authorization;
           if (!authorization) throw new Error('未获取到授权信息');
           Cookies.set('authorization', authorization, { expires: 7 });
+          localStorage.setItem('userToken', authorization);
           message.success(res.data.msg || '登录成功');
           loginStatus.value = 'success';
           
