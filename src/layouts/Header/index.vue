@@ -15,12 +15,14 @@ import { errorMessage } from '@/utils/apiClient';
 import { useAppUpdates } from '@/services/appUpdates';
 import type { UpdateInfo } from '@/services/appUpdates';
 import { globalLogService } from '@/services/logService';
+import { notifySystem, useTunnelStartedNotice } from '@/services/tunnelNotifications';
 import { getSavedTunnelIds, pendingTunnels, startManagedTunnel } from '@/services/tunnelRuntime';
 import { proxyRemoteAddress } from '@/utils/proxies';
 
 const router = useRouter();
 const message = useMessage();
 const notification = useNotification();
+const showTunnelStarted = useTunnelStartedNotice();
 const dialog = useDialog();
 const session = useSessionStore();
 const appWindow = getCurrentWindow();
@@ -84,6 +86,7 @@ watch([restoreAtStartup, () => session.userInfo], async ([restore, account]) => 
 
 const handledLoginCodes = new Set<string>();
 async function handleDeepLink(value: string) {
+  let quickStartLabel: string | undefined;
   try {
     const url = new URL(value);
     if (url.protocol !== 'openfrp:') return;
@@ -109,23 +112,27 @@ async function handleDeepLink(value: string) {
     const name = url.searchParams.get('name')?.trim() || '';
     if (!/^[1-9]\d{0,19}$/.test(id) || !token || !remote || !name) {
       message.error('快速启动链接格式错误');
+      void notifySystem('快速启动链接格式错误', '请检查链接格式是否正确');
       return;
     }
     if (pendingTunnels.has(id)) return;
+    quickStartLabel = `隧道 #${id} ${name}`;
     if (!await invoke<boolean>('get_quick_start_enabled')) return;
     if (pendingTunnels.has(id)) return;
     message.info(`正在快速启动${name}隧道`);
     const result = await startManagedTunnel({ id, token, name, remote, external: true });
-    if (result === 'already-running') message.info(`隧道 #${id} 已在运行`);
-    else if (result === 'running') message.warning(`隧道 #${id} 的进程已启动，连接结果请查看日志`);
-    else notification.success({
-      title: `隧道 #${id} ${name} 启动成功`,
-      description: `连接地址：${remote}`,
-      duration: 5000,
-      content: () => h(NButton, { text: true, onClick: () => copyAddress(remote) }, () => '复制链接地址'),
-    });
+    if (result === 'already-running') {
+      message.info(`隧道 #${id} 已在运行`);
+    } else if (result === 'running') {
+      message.warning(`隧道 #${id} 的进程已启动，连接结果请查看日志`);
+      void notifySystem(`${quickStartLabel} 的进程已启动`, '连接结果请查看日志');
+    } else {
+      showTunnelStarted(`${quickStartLabel} 启动成功`, remote, () => copyAddress(remote));
+    }
   } catch (error) {
-    message.error(`处理链接失败：${errorMessage(error)}`);
+    const detail = errorMessage(error);
+    message.error(`处理链接失败：${detail}`);
+    if (quickStartLabel) void notifySystem(`${quickStartLabel} 启动失败`, detail);
   }
 }
 

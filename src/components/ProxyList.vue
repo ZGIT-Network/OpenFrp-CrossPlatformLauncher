@@ -16,12 +16,14 @@ import Menu from '@/components/ManageProxies/Menu.vue';
 import { useSessionStore } from '@/stores/session';
 import { errorMessage } from '@/utils/apiClient';
 import { hostAndPort, proxyRemoteAddress } from '@/utils/proxies';
+import { notifySystem, useTunnelStartedNotice } from '@/services/tunnelNotifications';
 import {
   pendingTunnels, rememberTunnel, runningTunnels, startManagedTunnel, stopManagedTunnel,
 } from '@/services/tunnelRuntime';
 
 const message = useMessage();
 const dialog = useDialog();
+const showTunnelStarted = useTunnelStartedNotice();
 const router = useRouter();
 const session = useSessionStore();
 const proxies = ref<Struct.UserProxy[]>([]);
@@ -106,11 +108,14 @@ function disabledReason(row: Row): string {
 }
 async function stop(id: string) {
   if (pendingTunnels.has(id)) return;
+  const external = runningTunnels.value.get(id)?.external;
   try {
     await stopManagedTunnel(id);
     const current = proxies.value.find(proxy => String(proxy.id) === id);
     if (current) current.online = false;
-    message.success(`隧道 #${id} 已停止`);
+    const title = `隧道 #${id} 已停止`;
+    message.success(title);
+    if (external) void notifySystem(title, '隧道已成功停止运行');
   } catch (error) {
     message.error(`停止隧道失败：${errorMessage(error)}`);
   }
@@ -126,7 +131,9 @@ async function toggle(row: Row) {
     });
     if (result === 'ready' && session.userInfo?.id === account.id) {
       rememberTunnel(account.id, row.id);
-      message.success(`隧道 #${row.id} ${row.proxy.proxyName} 启动成功`);
+      const title = `隧道 #${row.id} ${row.proxy.proxyName} 启动成功`;
+      message.success(title);
+      showTunnelStarted(title, row.remote, () => copyText(row.remote));
     } else if (result === 'running') {
       message.warning('Frpc 进程已启动，连接结果请查看日志');
     } else if (result === 'already-running') {

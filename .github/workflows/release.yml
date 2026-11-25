@@ -60,6 +60,23 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      - name: Read release notes from changelog
+        if: startsWith(github.ref, 'refs/tags/')
+        id: release_notes
+        shell: bash
+        run: |
+          delimiter="CHANGELOG_$(node -p "require('node:crypto').randomUUID()")"
+          {
+            echo "body<<$delimiter"
+            awk -v heading="## $GITHUB_REF_NAME" '
+              { sub(/\r$/, "") }
+              $0 == heading { found = 1; next }
+              found && /^## / { exit }
+              found { print }
+            ' CHANGELOG.md
+            echo "$delimiter"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Setup Windows ARM64 environment
         if: matrix.platform == 'windows-latest' && matrix.arch == 'arm64'
         run: |
@@ -70,8 +87,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Beta {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && (steps.release_notes.outputs.body || format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository)) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
@@ -95,8 +112,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Beta {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && (steps.release_notes.outputs.body || format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository)) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
@@ -159,8 +176,8 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('Beta {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && (steps.release_notes.outputs.body || format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository)) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true

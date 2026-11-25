@@ -101,7 +101,22 @@ const testing = ref(false);
 const testResult = ref<{ success: boolean; message: string }>();
 let nodeRequest = 0;
 
-const nodeOptions = computed(() => nodes.value.map(node => ({ label: `#${node.id} ${node.name}`, value: node.id })));
+function maskNodeHostname(hostname: string) {
+  if (hostname.includes(':') || /^\d+(?:\.\d+){3}$/.test(hostname)) {
+    return maskAddress(hostname.replace(/^\[|\]$/g, ''));
+  }
+  const labels = hostname.split('.');
+  const hasSubdomain = labels.length > 2;
+  const label = hasSubdomain ? labels[0] : hostname;
+  const visible = label.length > 8 ? 3 : 1;
+  const masked = `${label.slice(0, visible)}***${label.length > visible * 2 ? label.slice(-visible) : ''}`;
+  return hasSubdomain ? `${masked}.${labels.slice(1).join('.')}` : masked;
+}
+
+const nodeOptions = computed(() => nodes.value.map(node => ({
+  label: `#${node.id} ${node.name} (${maskNodeHostname(node.hostname)})`,
+  value: node.id,
+})));
 watch(selected, (id) => {
   port.value = nodes.value.find(node => node.id === id)?.port ?? null;
   testResult.value = undefined;
@@ -204,23 +219,30 @@ onMounted(() => {
       </n-space>
     </n-card>
 
-    <n-card v-if="session.signedIn" title="节点连通性测试">
+    <n-card v-if="session.signedIn">
       <n-space vertical>
+        <n-h4 class="node-test-title">节点连通性测试</n-h4>
+        <n-text>
+          选择一个节点并测试连接延迟和可达性<br />
+          <small>*请注意，如果测试结果始终为 正常（0ms）,请关闭您的网络代理</small>
+        </n-text>
         <n-alert v-if="nodeError" type="warning">{{ nodeError }}</n-alert>
-        <n-form @submit.prevent="testNode">
+        <n-form class="node-test-form" :show-feedback="false" @submit.prevent="testNode">
           <n-form-item label="选择节点">
             <n-select v-model:value="selected" :options="nodeOptions" :disabled="testing || !nodes.length" filterable placeholder="请选择一个节点" />
           </n-form-item>
           <n-form-item label="端口">
             <div class="test-controls">
               <n-input-number v-model:value="port" :min="1" :max="65535" :precision="0" :disabled="testing" />
-              <n-button attr-type="submit" :loading="testing" :disabled="!canTest">测试连接</n-button>
+              <n-button attr-type="submit" :loading="testing" :disabled="testing || !canTest">
+                {{ testing ? '测试中...' : '测试连接' }}
+              </n-button>
             </div>
           </n-form-item>
         </n-form>
         <n-alert v-if="testResult" :type="testResult.success ? 'success' : 'error'"
           :title="testResult.success ? '测试成功' : '测试失败'" closable @close="testResult = undefined">
-          {{ testResult.message }}
+          <n-text>{{ testResult.message }}</n-text>
         </n-alert>
       </n-space>
     </n-card>
@@ -258,14 +280,25 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.network-toolbar, .test-controls {
+.network-toolbar {
   display: flex;
   gap: 12px;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
 }
-.test-controls { justify-content: flex-start; }
+.node-test-title {
+  margin: 8px 0 0;
+  font-size: large;
+  font-weight: normal;
+}
+.node-test-form { display: grid; gap: 8px; }
+.test-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 7fr) minmax(96px, 3fr);
+  gap: 8px;
+  width: 100%;
+}
 .service-row {
   display: flex;
   flex-wrap: wrap;
