@@ -44,7 +44,7 @@ jobs:
       - name: Install Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || matrix.platform == 'macos-latest' && matrix.arch == 'universal' && 'aarch64-apple-darwin x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.platform == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' || matrix.platform == 'macos-latest' && matrix.arch == 'universal' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -58,20 +58,20 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Setup Windows ARM64 environment
         if: matrix.platform == 'windows-latest' && matrix.arch == 'arm64'
         run: |
-          echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+          'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
 
       - name: Build the app (Standard x64)
         if: matrix.arch == 'x64'
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
@@ -95,8 +95,8 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
@@ -152,11 +152,15 @@ jobs:
         if: matrix.platform == 'macos-latest' && matrix.arch == 'universal'
         uses: tauri-apps/tauri-action@v0
         env:
-          MACOSX_DEPLOYMENT_TARGET: 10.15
+          MACOSX_DEPLOYMENT_TARGET: '10.15'
+          APPLE_SIGNING_IDENTITY: 'Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)'
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
         with:
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
-          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL v{0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
-          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && '请查看 [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md) 了解更新内容。' || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
+          releaseName: ${{ startsWith(github.ref, 'refs/tags/') && format('OpenFrp CPL {0}', github.ref_name) || format('Development Build ({0})', github.sha) }}
+          releaseBody: ${{ startsWith(github.ref, 'refs/tags/') && format('请查看 [CHANGELOG.md](https://github.com/{0}/blob/main/CHANGELOG.md) 了解更新内容。', github.repository) || format('开发构建 - 提交信息：{0}', github.event.head_commit.message) }}
           releaseDraft: ${{ startsWith(github.ref, 'refs/tags/') }}
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           includeRelease: true
@@ -176,34 +180,19 @@ jobs:
             src-tauri/target/*.zip
           if-no-files-found: warn
 
-      - name: Re-sign with Entitlements (macOS only)
-        if: matrix.platform == 'macos-latest'
-        run: |
-          # 应用路径
-          APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
-          ENTITLEMENTS_PATH="$(pwd)/macos.entitlements"
-          
-          echo "检查entitlements文件："
-          cat "${ENTITLEMENTS_PATH}"
-
-          codesign --force --deep --timestamp --options runtime --entitlements "${ENTITLEMENTS_PATH}" --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" "${APP_PATH}"
-          
-          # 验证签名
-          codesign -dvvv "${APP_PATH}"
-
       - name: Create and Sign DMG (macOS only)
         if: matrix.platform == 'macos-latest'
         id: create_dmg
         run: |
           echo "创建DMG包..."
           # 设置路径变量
-          APP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
-          DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
-          TEMP_DMG_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/temp.dmg"
+          APP_PATH="${GITHUB_WORKSPACE}/src-tauri/target/universal-apple-darwin/release/bundle/macos/OpenFrp-CrossPlatformLauncher.app"
+          DMG_PATH="${GITHUB_WORKSPACE}/src-tauri/target/OpenFrp-CrossPlatformLauncher.dmg"
+          TEMP_DMG_PATH="${GITHUB_WORKSPACE}/src-tauri/target/temp.dmg"
           
           # 确保应用已签名
           echo "检查应用签名状态..."
-          codesign -dvv "${APP_PATH}" || echo "应用可能未正确签名，但会继续尝试"
+          codesign --verify --deep --strict "${APP_PATH}"
           
           # 检查目标路径是否存在
           [ -d "${APP_PATH}" ] || { echo "应用不存在于路径: ${APP_PATH}"; exit 1; }
@@ -250,7 +239,7 @@ jobs:
           # 创建可写 DMG，设置窗口布局后转为压缩只读
           if ! hdiutil create -volname "OpenFrp-CPL" -srcfolder "${STAGING_DIR}" -ov -format UDRW "${TEMP_DMG_PATH}"; then
             echo "创建DMG失败，尝试创建ZIP包作为备选..."
-            ZIP_PATH="/Users/runner/work/OpenFrp-CrossPlatformLauncher/OpenFrp-CrossPlatformLauncher/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
+            ZIP_PATH="${GITHUB_WORKSPACE}/src-tauri/target/OpenFrp-CrossPlatformLauncher.zip"
             ditto -c -k --keepParent "${APP_PATH}" "${ZIP_PATH}"
             echo "zip_path=${ZIP_PATH}" >> $GITHUB_OUTPUT
             echo "dmg_path=" >> $GITHUB_OUTPUT
@@ -290,122 +279,40 @@ jobs:
           hdiutil convert "${TEMP_DMG_PATH}" -format UDZO -o "${DMG_PATH}"
           rm -f "${TEMP_DMG_PATH}"
           
-          # 显示证书信息进行调试
-          echo "可用证书信息："
-          security find-identity -v build.keychain
-          
-          # 尝试签名DMG
-          echo "签名DMG..."
-          codesign --force --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" --keychain build.keychain --timestamp --verbose "${DMG_PATH}" || {
-            echo "第一次签名尝试失败，重试使用详细模式..."
-            
-            # 第二次尝试，更详细的输出
-            codesign --force --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" --keychain build.keychain --timestamp --verbose=4 "${DMG_PATH}" || {
-              echo "签名再次失败，但会继续处理..."
-            }
-          }
-          
-          echo "检查DMG签名状态..."
-          codesign -dvv "${DMG_PATH}" || echo "DMG签名验证失败，但将继续处理"
-          
-          echo "dmg_path=${DMG_PATH}" >> $GITHUB_OUTPUT
+          codesign --sign "Developer ID Application: Caner (Chongqing) Computer System Co., Ltd. (89M33WN9W7)" \
+            --keychain build.keychain --timestamp "${DMG_PATH}"
+          codesign --verify --strict "${DMG_PATH}"
+          echo "dmg_path=${DMG_PATH}" >> "$GITHUB_OUTPUT"
 
       - name: Notarize DMG (macOS only)
-        if: matrix.platform == 'macos-latest'
-        run: |
-          echo "准备公证DMG文件..."
-          if [ ! -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
-            echo "DMG文件不存在，跳过公证步骤"
-            exit 0
-          fi
-          
-          # 检查DMG基本信息
-          echo "DMG文件信息："
-          ls -la "${{ steps.create_dmg.outputs.dmg_path }}"
-          file "${{ steps.create_dmg.outputs.dmg_path }}"
-          
-          # 尝试公证
-          echo "提交公证请求..."
-          NOTARIZATION_INFO=$(mktemp)
-          
-          # 使用xcrun altool作为备选方案
-          if ! xcrun notarytool submit "${{ steps.create_dmg.outputs.dmg_path }}" \
-            --apple-id "${{ secrets.APPLE_ID }}" \
-            --password "${{ secrets.APPLE_SPECIFIC_PASSWORD }}" \
-            --team-id "${{ secrets.TEAM_ID }}" \
-            --wait --timeout 1200 > "${NOTARIZATION_INFO}" 2>&1; then
-            
-            echo "notarytool失败，尝试使用altool..."
-            xcrun altool --notarize-app \
-              --primary-bundle-id "org.openfrp.cpl" \
-              --username "${{ secrets.APPLE_ID }}" \
-              --password "${{ secrets.APPLE_SPECIFIC_PASSWORD }}" \
-              --team-id "${{ secrets.TEAM_ID }}" \
-              --file "${{ steps.create_dmg.outputs.dmg_path }}" > "${NOTARIZATION_INFO}" 2>&1 || {
-                echo "公证失败，但将继续构建"
-                exit 0
-              }
-          fi
-          
-          echo "公证输出："
-          cat "${NOTARIZATION_INFO}"
-          
-          # 即使公证失败也继续处理
-          echo "尝试添加公证戳章..."
-          xcrun stapler staple "${{ steps.create_dmg.outputs.dmg_path }}" || echo "添加公证戳章失败，但将继续构建"
-          
-          # 验证结果
-          echo "验证签名和公证状态..."
-          xcrun stapler validate "${{ steps.create_dmg.outputs.dmg_path }}" || echo "验证失败，但将继续构建"
-          spctl --assess --type open --context context:primary-signature -v "${{ steps.create_dmg.outputs.dmg_path }}" || echo "spctl验证失败，但将继续构建"
-          
-          # 为已签名和公证的DMG文件重命名，添加signed标识
-          if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
-            ORIGINAL_DMG_PATH="${{ steps.create_dmg.outputs.dmg_path }}"
-            SIGNED_DMG_PATH="${ORIGINAL_DMG_PATH%.dmg}_signed.dmg"
-            echo "重命名DMG文件，添加signed标识..."
-            cp "${ORIGINAL_DMG_PATH}" "${SIGNED_DMG_PATH}"
-            echo "signed_dmg_path=${SIGNED_DMG_PATH}" >> $GITHUB_OUTPUT
-            ls -la "${SIGNED_DMG_PATH}"
-          fi
-
-      - name: Upload signed DMG to Release (macOS only)
-        if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
-        run: |
-          if [ -f "${{ steps.create_dmg.outputs.dmg_path }}" ]; then
-            echo "DMG文件存在，准备上传"
-            # 添加调试信息
-            echo "DMG文件路径: ${{ steps.create_dmg.outputs.dmg_path }}"
-            ls -la "${{ steps.create_dmg.outputs.dmg_path }}"
-            
-            # 保留原始文件名并添加_signed标识
-            ORIGINAL_DMG_NAME=$(basename "${{ steps.create_dmg.outputs.dmg_path }}")
-            SIGNED_DMG_NAME="${ORIGINAL_DMG_NAME%.dmg}_signed.dmg"
-            cp "${{ steps.create_dmg.outputs.dmg_path }}" "./${SIGNED_DMG_NAME}"
-            
-            # 上传带signed标识的DMG
-            echo "上传带signed标识的DMG文件..."
-            gh release upload ${{ github.ref_name }} "./${SIGNED_DMG_NAME}" --clobber
-          else
-            echo "DMG文件不存在，跳过上传"
-          fi
-            
-            # 如果ZIP文件存在，也上传
-            if [ -n "${{ steps.create_dmg.outputs.zip_path }}" ] && [ -f "${{ steps.create_dmg.outputs.zip_path }}" ]; then
-              echo "ZIP文件存在，准备上传"
-              gh release upload ${{ github.ref_name }} "${{ steps.create_dmg.outputs.zip_path }}" --clobber || echo "上传ZIP失败"
-            fi
+        if: matrix.platform == 'macos-latest' && steps.create_dmg.outputs.dmg_path != ''
+        id: notarize_dmg
         env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Upload binary files to release
-        if: startsWith(github.ref, 'refs/tags/')
+          DMG_PATH: ${{ steps.create_dmg.outputs.dmg_path }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.TEAM_ID }}
         run: |
-          # 暂时不做这步，后面的post process其实有
-          echo "暂时不做这步，后面的post process其实有😂。"
+          xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" \
+            --wait --timeout 1200 --output-format json > "$RUNNER_TEMP/ofcpl-notary.json"
+          jq -e '.status == "Accepted"' "$RUNNER_TEMP/ofcpl-notary.json"
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          SIGNED_DMG_PATH="${DMG_PATH%.dmg}_signed.dmg"
+          mv "$DMG_PATH" "$SIGNED_DMG_PATH"
+          echo "path=$SIGNED_DMG_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload guided macOS installer
+        if: matrix.platform == 'macos-latest' && startsWith(github.ref, 'refs/tags/')
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          SIGNED_DMG_PATH: ${{ steps.notarize_dmg.outputs.path }}
+          ZIP_PATH: ${{ steps.create_dmg.outputs.zip_path }}
+        run: |
+          asset="${SIGNED_DMG_PATH:-$ZIP_PATH}"
+          test -f "$asset"
+          gh release upload "$GITHUB_REF_NAME" "$asset" --clobber
 
   process-updates:
     needs: release
@@ -413,7 +320,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -444,6 +351,14 @@ jobs:
           # 复制所有二进制文件和签名文件
           find artifacts -type f \( -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" -o -name "*.dmg" -o -name "*.zip" -o -name "*.sig" \) | while read -r file; do
             filename=$(basename "$file")
+            if [[ "$filename" == openfrp_cpl.exe ]]; then
+              case "$file" in
+                artifacts/windows-arm64-artifacts/*) arch=arm64 ;;
+                artifacts/windows-latest-x64-artifacts/*) arch=x64 ;;
+                *) continue ;;
+              esac
+              filename="OpenFrp-CrossPlatformLauncher_${GITHUB_REF_NAME#v}_${arch}_portable.exe"
+            fi
             echo "处理文件: $filename"
             cp "$file" "release_files/$filename"
             
@@ -458,56 +373,27 @@ jobs:
           for file in *; do
             if [ -f "$file" ]; then
               echo "上传 $file 到 GitHub Release"
-              gh release upload ${{ github.ref_name }} "$file" --clobber
+              gh release upload "$GITHUB_REF_NAME" "$file" --clobber
             fi
           done
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create update.json
-        run: |
-          # 获取版本号(去掉v前缀)
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          
-          # 基础URL
-          BASE_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}"
-          
-          # 读取签名文件（不存在则为空字符串）
-          echo "查找签名文件..."
-          WIN64_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi.sig" 2>/dev/null || echo "")
-          WINARM_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi.sig" 2>/dev/null || echo "")
-          MAC_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg.sig" 2>/dev/null || echo "")
-          LINUX_SIG=$(cat "release_files/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage.sig" 2>/dev/null || echo "")
-
-          # 使用 jq 构建 update.json 并注入签名（sed 多行替换不可靠，改用 jq 安全注入）
-          jq -n \
-            --arg version "$VERSION" \
-            --arg pub_date "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" \
-            --arg win64sig "$WIN64_SIG" \
-            --arg winarmsig "$WINARM_SIG" \
-            --arg macsig "$MAC_SIG" \
-            --arg linuxsig "$LINUX_SIG" \
-            --arg win64url "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_x64.msi" \
-            --arg winarmurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_arm64.msi" \
-            --arg macurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_universal.dmg" \
-            --arg linuxurl "$BASE_URL/OpenFrp-CrossPlatformLauncher_${VERSION}_amd64.AppImage" \
-            '{
-              version: $version,
-              notes: "请查看CHANGELOG.md了解更新内容。",
-              pub_date: $pub_date,
-              platforms: {
-                "windows-x86_64": { signature: $win64sig, url: $win64url },
-                "windows-aarch64": { signature: $winarmsig, url: $winarmurl },
-                "darwin-universal": { signature: $macsig, url: $macurl },
-                "linux-x86_64": { signature: $linuxsig, url: $linuxurl }
-              }
-            }' > update.json
-
-          echo "生成的update.json文件内容:"
-          cat update.json
-          
-          # 上传update.json到GitHub Release
-          gh release upload ${{ github.ref_name }} update.json --clobber
+      - name: Validate and publish the updater manifest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          manifest_dir=$(mktemp -d)
+          gh release download "$GITHUB_REF_NAME" --pattern latest.json --dir "$manifest_dir"
+          jq --exit-status --arg version "${GITHUB_REF_NAME#v}" '
+            (.version | ltrimstr("v")) == $version
+            and (.platforms as $platforms |
+              ["windows-x86_64", "windows-aarch64", "linux-x86_64", "darwin-x86_64", "darwin-aarch64"] |
+              all(. as $target |
+                ($platforms[$target].signature | type == "string" and length > 0)
+                and ($platforms[$target].url | type == "string" and startswith("https://"))
+              )
+            )
+          ' "$manifest_dir/latest.json"
+          cp "$manifest_dir/latest.json" "$manifest_dir/update.json"
+          gh release upload "$GITHUB_REF_NAME" "$manifest_dir/update.json" --clobber
