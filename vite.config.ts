@@ -37,8 +37,16 @@ export default defineConfig(async () => ({
   optimizeDeps: {
     include: ['@vicons/ionicons5', '@vicons/tabler']
   },
-  define: {
-    __DEV_MODE__: JSON.stringify(process.env.NODE_ENV === 'production'),
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](?:@vue|vue|vue-router|pinia)[\\/]/.test(id)) {
+            return 'vue-runtime';
+          }
+        },
+      },
+    },
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

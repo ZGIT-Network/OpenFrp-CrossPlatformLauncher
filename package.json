@@ -31,6 +31,7 @@
     "copy-to-clipboard": "^3.3.3",
     "datejs": "^1.0.0-rc3",
     "dayjs": "^1.11.13",
+    "dompurify": "^3.5.0",
     "highlight.js": "^11.11.1",
     "less": "^4.2.2",
     "marked": "^15.0.6",

@@ -2,19 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use flate2::read::GzDecoder;
-use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-use std::fs::File;
-use std::io::Cursor;
-use std::io::Write;
-// use std::io::{BufRead, BufReader};
-//use std::path::Path;
-// use std::error::Error;
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader, Read, Seek, Write};
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use tar::Archive;
@@ -27,15 +21,14 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 use tauri_plugin_deep_link;
 // use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-use crate::update::download_and_install_update;
-use crate::update::UpdateInfo;
-use tauri::Listener;
 use tauri_plugin_updater;
 mod api_proxy;
 mod update;
-use std::net::TcpListener;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use tiny_http::{Header, Response, Server};
+use tauri_plugin_deep_link::DeepLinkExt;
+mod local_ports;
+mod oauth;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -50,10 +43,10 @@ struct FrpcProcesses(Mutex<HashMap<String, ProcessInfo>>);
 
 struct ProcessInfo {
     child: Child,
+    instance_id: String,
     name: String,
     remote: String,
-    #[cfg(target_os = "windows")]
-    group_id: u32,
+    external: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -144,11 +137,21 @@ impl Config {
         // 再把字段写回 env，保证运行时仍可通过 set_env/get_env 使用
         env_map.insert(
             "FRPC_FORCE_TLS".to_string(),
-            if self.force_tls.unwrap_or(false) { "true" } else { "false" }.to_string(),
+            if self.force_tls.unwrap_or(false) {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         );
         env_map.insert(
             "USE_DOH".to_string(),
-            if self.use_doh.unwrap_or(false) { "true" } else { "false" }.to_string(),
+            if self.use_doh.unwrap_or(false) {
+                "true"
+            } else {
+                "false"
+            }
+            .to_string(),
         );
         env_map.insert(
             "DOH_ADDR".to_string(),
@@ -160,28 +163,6 @@ impl Config {
         // 更新版本号
         self.config_version = Some(CONFIG_VERSION);
         self
-    }
-}
-
-#[command]
-async fn check_update(_app_handle: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
-    match crate::update::check_update().await {
-        Ok(update) => Ok(update),
-        Err(e) => {
-            println!("检查更新失败: {}", e);
-            Err(e.to_string())
-        }
-    }
-}
-
-#[command]
-async fn install_update(app_handle: tauri::AppHandle) -> Result<(), String> {
-    match crate::update::download_and_install_update(app_handle).await {
-        Ok(_) => Ok(()),
-        Err(e) => {
-            println!("安装更新失败: {}", e);
-            Err(e.to_string())
-        }
     }
 }
 
@@ -242,52 +223,6 @@ fn default_frpc_filename() -> String {
     }
 }
 
-/// 简易 URL 解码（处理 %XX 和 +，用于 OAuth code）
-fn url_decode(s: &str) -> String {
-    let mut bytes: Vec<u8> = Vec::with_capacity(s.len());
-    let mut iter = s.bytes();
-    while let Some(b) = iter.next() {
-        match b {
-            b'+' => bytes.push(b' '),
-            b'%' => {
-                let hi = iter.next();
-                let lo = iter.next();
-                match (hi, lo) {
-                    (Some(hi), Some(lo)) => {
-                        let hex = format!("{}{}", hi as char, lo as char);
-                        if let Ok(byte) = u8::from_str_radix(&hex, 16) {
-                            bytes.push(byte);
-                        } else {
-                            bytes.push(b'%');
-                            bytes.push(hi);
-                            bytes.push(lo);
-                        }
-                    }
-                    _ => bytes.push(b'%'),
-                }
-            }
-            _ => bytes.push(b),
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-/// 解析 URL 查询参数（用于本地 OAuth 回调）
-fn parse_query_params(url: &str) -> HashMap<String, String> {
-    let mut params = HashMap::new();
-    let Some(query) = url.split_once('?').map(|(_, q)| q) else {
-        return params;
-    };
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        params.insert(url_decode(key), url_decode(value));
-    }
-    params
-}
-
 // 获取配置文件路径
 fn get_config_path() -> Result<PathBuf, String> {
     let app_dir = get_app_dir();
@@ -295,342 +230,269 @@ fn get_config_path() -> Result<PathBuf, String> {
 }
 
 // 加载配置
+static CONFIG_WRITE: Mutex<()> = Mutex::new(());
+
 fn load_config() -> Result<Config, String> {
-    let config_path = get_config_path()?;
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
-
-    let mut config = if config_path.exists() {
-        // 读取现有配置
-        let content =
-            fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
-
-        serde_json::from_str::<Config>(&content)
-            .map_err(|e| format!("解析配置文件失败: {}", e))?
-            .upgrade() // 升级配置文件结构
-    } else {
-        // 创建新配置
-        Config {
-            config_version: Some(CONFIG_VERSION),
-            cpl_version: Some(current_version.clone()),
-            ..Default::default()
-        }
+    let path = get_config_path()?;
+    let config = match fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<Config>(&content)
+            .map_err(|e| format!("解析配置文件失败: {}", e))?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Config::default(),
+        Err(e) => return Err(format!("读取配置文件失败: {}", e)),
     };
-
-    // 强制更新版本号为当前编译版本
-    config.cpl_version = Some(current_version);
-
-    // 保存可能升级后的配置
-    save_config(&config)?;
-
+    let mut config = config.upgrade();
+    config.cpl_version = Some(env!("CARGO_PKG_VERSION").to_string());
     Ok(config)
 }
 
-// 保存配置
-fn save_config(config: &Config) -> Result<(), String> {
-    let config_path = get_config_path()?;
-
-    // 确保配置目录存在
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {}", e))?;
-    }
-
-    let content =
-        serde_json::to_string_pretty(config).map_err(|e| format!("序列化配置失败: {}", e))?;
-
-    fs::write(&config_path, content).map_err(|e| format!("保存配置文件失败: {}", e))?;
-
+fn update_config(update: impl FnOnce(&mut Config)) -> Result<(), String> {
+    let _lock = CONFIG_WRITE.lock().map_err(|e| e.to_string())?;
+    let mut config = load_config()?;
+    update(&mut config);
+    let mut staged = tempfile::NamedTempFile::new_in(get_app_dir())
+        .map_err(|e| format!("创建临时配置文件失败: {}", e))?;
+    serde_json::to_writer_pretty(&mut staged, &config).map_err(|e| e.to_string())?;
+    staged.as_file().sync_all().map_err(|e| e.to_string())?;
+    staged
+        .persist(get_config_path()?)
+        .map_err(|e| format!("保存配置文件失败: {}", e))?;
     Ok(())
+}
+
+fn frpc_path(config: &Config) -> PathBuf {
+    let dir = get_app_dir();
+    let default = dir.join(default_frpc_filename());
+    let configured = config
+        .frpc_filename
+        .as_deref()
+        .filter(|name| Path::new(name).file_name().and_then(|file| file.to_str()) == Some(*name));
+    configured
+        .map(|name| dir.join(name))
+        .filter(|path| path.is_file())
+        .unwrap_or(default)
+}
+
+const MAX_FRPC_BYTES: usize = 128 * 1024 * 1024;
+static FRPC_DOWNLOAD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+fn copy_frpc(mut entry: impl Read, target: &mut impl Write) -> Result<(), String> {
+    let size = io::copy(&mut entry.by_ref().take(MAX_FRPC_BYTES as u64 + 1), target)
+        .map_err(|e| format!("解压 Frpc 失败: {}", e))?;
+    if size == 0 || size > MAX_FRPC_BYTES as u64 {
+        return Err("Frpc 可执行文件大小无效".into());
+    }
+    Ok(())
+}
+
+fn extract_frpc(bytes: &[u8], filename: &str, target: &mut impl Write) -> Result<(), String> {
+    let binary = if filename.ends_with(".exe") {
+        "frpc.exe"
+    } else {
+        "frpc"
+    };
+    let is_binary = |path: &Path| {
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name == filename || name == binary)
+    };
+    if filename.ends_with(".exe") {
+        let mut archive = zip::ZipArchive::new(io::Cursor::new(bytes))
+            .map_err(|e| format!("读取 Frpc 压缩包失败: {}", e))?;
+        for i in 0..archive.len() {
+            let entry = archive.by_index(i).map_err(|e| e.to_string())?;
+            if entry.is_file()
+                && entry
+                    .unix_mode()
+                    .map_or(true, |mode| (mode & 0o170000) != 0o120000)
+                && entry.enclosed_name().is_some_and(is_binary)
+            {
+                return copy_frpc(entry, target);
+            }
+        }
+    } else {
+        let mut archive = Archive::new(GzDecoder::new(bytes));
+        for entry in archive.entries().map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.header().entry_type().is_file()
+                && is_binary(&entry.path().map_err(|e| e.to_string())?)
+            {
+                return copy_frpc(entry, target);
+            }
+        }
+    }
+    Err("压缩包中没有找到对应的 Frpc 可执行文件".into())
+}
+
+fn valid_frpc_image(file: &mut fs::File) -> bool {
+    let mut header = [0; 4];
+    if file
+        .rewind()
+        .and_then(|_| file.read_exact(&mut header))
+        .is_err()
+    {
+        return false;
+    }
+    if cfg!(windows) {
+        header.starts_with(b"MZ")
+    } else if cfg!(target_os = "linux") {
+        header == *b"\x7FELF"
+    } else {
+        matches!(
+            header,
+            [0xcf, 0xfa, 0xed, 0xfe] | [0xca, 0xfe, 0xba, 0xbe] | [0xca, 0xfe, 0xba, 0xbf]
+        )
+    }
+}
+
+fn log_message<R: Runtime>(app: &tauri::AppHandle<R>, message: impl Into<String>) {
+    let _ = app.emit(
+        "log",
+        LogPayload {
+            message: message.into(),
+        },
+    );
 }
 
 #[command]
 async fn download_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
-    let os = std::env::consts::OS;
-
-    let os_name = os;
-    let version = env!("CARGO_PKG_VERSION");
-    let user_agent = format!("OpenFrp-CPL/{}-{}", os_name, version);
-    let client = reqwest::Client::builder()
-        .user_agent(&user_agent)
+    let _download = FRPC_DOWNLOAD.lock().await;
+    let filename = default_frpc_filename();
+    let windows = cfg!(target_os = "windows");
+    let archive_name = if windows {
+        format!("{}.zip", filename.trim_end_matches(".exe"))
+    } else {
+        format!("{}.tar.gz", filename)
+    };
+    let client = api_proxy::client_builder(60)
+        .https_only(true)
         .build()
         .map_err(|e| e.to_string())?;
 
-    let os_name = match os {
-        "windows" => "windows",
-        "linux" => "linux",
-        "macos" => "darwin",
-        _ => return Err("不支持的操作系统".to_string()),
-    };
-
-    let arch_name = match std::env::consts::ARCH {
-        "x86" => "386",
-        "x86_64" => "amd64",
-        "arm" => "arm",
-        "aarch64" => "arm64",
-        _ => return Err("不支持的系统架构".to_string()),
-    };
-
-    // 构建最终的文件名
-    let target_filename = if os == "windows" {
-        format!("frpc_{}_{}.exe", os_name, arch_name)
-    } else {
-        format!("frpc_{}_{}", os_name, arch_name)
-    };
-
-    app.emit(
-        "log",
-        LogPayload {
-            message: "开始获取最新版本信息...".into(),
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
-    let mut last_error = String::from("获取软件信息失败");
-    let mut software_info: Option<SoftwareInfo> = None;
+    log_message(&app, "开始获取最新 Frpc 版本信息...");
+    let mut last_error = "获取软件信息失败".to_string();
+    let mut metadata = None;
     for base in api_proxy::OPENFRP_API_BASES {
-        let url = format!("{}/commonQuery/get?key=software", base);
-        match client.get(&url).send().await {
-            Ok(response) => match response.json::<SoftwareInfo>().await {
-                Ok(info) => {
-                    software_info = Some(info);
-                    break;
-                }
-                Err(e) => last_error = format!("解析 {} 的响应失败: {}", base, e),
-            },
-            Err(e) => last_error = format!("请求 {} 失败: {}", base, e),
+        let result = async {
+            let response = client
+                .get(format!("{base}/commonQuery/get?key=software"))
+                .timeout(std::time::Duration::from_secs(12))
+                .send()
+                .await?
+                .error_for_status()?;
+            response.json::<SoftwareInfo>().await
         }
-    }
-    let software_info = software_info.ok_or(last_error)?;
-
-    // 处理版本号，去除两边的斜杠
-    let latest_version = software_info.data.latest.trim_matches('/').to_string();
-
-    // 检查版本
-    let mut config = load_config()?;
-    let app_dir = get_app_dir();
-    let target_path = app_dir.join(&target_filename);
-
-    // 先检查文件是否存在
-    if target_path.exists() {
-        app.emit(
-            "log",
-            LogPayload {
-                message: format!(
-                    "当前版本: {}, 最新版本: {}",
-                    config.frpc_version.as_ref().map_or("", |s| s.as_str()),
-                    latest_version
-                ),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        if let Some(current_version) = config.frpc_version.as_ref() {
-            if current_version.as_str() == latest_version {
-                app.emit(
-                    "log",
-                    LogPayload {
-                        message: "已经是最新版本".into(),
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-                return Ok("已经是最新版本".to_string());
+        .await;
+        match result {
+            Ok(info)
+                if !info.data.latest.trim_matches('/').is_empty()
+                    && !info.data.source.is_empty() =>
+            {
+                metadata = Some(info.data);
+                break;
             }
-        }
-    } else {
-        app.emit(
-            "log",
-            LogPayload {
-                message: "未检测到 frpc 文件，开始下载...".into(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    let app_dir = get_app_dir();
-    let target_path = app_dir.join(&target_filename);
-
-    // 如果文件已存在，先删除
-    if target_path.exists() {
-        fs::remove_file(&target_path).map_err(|e| format!("无法删除旧版本: {}", e))?;
-    }
-
-    let file_ext = match os {
-        "windows" => "zip",
-        _ => "tar.gz",
-    };
-
-    let download_url = format!(
-        "{}{}frpc_{}_{}.{}",
-        software_info.data.source[0].value, software_info.data.latest, os_name, arch_name, file_ext
-    );
-
-    app.emit(
-        "log",
-        LogPayload {
-            message: format!("开始下载: {}", download_url),
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
-    let response = client
-        .get(&download_url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let total_size = response.content_length().unwrap_or(0);
-    app.emit(
-        "log",
-        LogPayload {
-            message: format!("文件大小: {} bytes", total_size),
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
-    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
-
-    app.emit(
-        "log",
-        LogPayload {
-            message: format!("已下载: {} bytes", bytes.len()),
-        },
-    )
-    .map_err(|e| e.to_string())?;
-
-    if os == "windows" {
-        let temp_path = app_dir.join("frpc.zip");
-        app.emit(
-            "log",
-            LogPayload {
-                message: format!("临时文件路径: {}", temp_path.display()),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        let mut file = File::create(&temp_path).map_err(|e| e.to_string())?;
-        file.write_all(&bytes).map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())?;
-        drop(file);
-
-        app.emit(
-            "log",
-            LogPayload {
-                message: "开始解压文件...".into(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        let file = File::open(&temp_path).map_err(|e| format!("无法打开下载的文件: {}", e))?;
-
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("无法读取zip文件 (大小: {} bytes): {}", bytes.len(), e))?;
-
-        archive
-            .extract(&app_dir)
-            .map_err(|e| format!("解压失败: {}", e))?;
-
-        if let Err(e) = std::fs::remove_file(&temp_path) {
-            app.emit(
-                "log",
-                LogPayload {
-                    message: format!("警告：无法删除临时文件: {}", e),
-                },
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        // 移动文件到最终位置
-        let extracted_exe = app_dir.join(format!("frpc_{}_{}64/frpc.exe", os_name, arch_name));
-        if extracted_exe.exists() {
-            fs::rename(&extracted_exe, &target_path)
-                .map_err(|e| format!("无法重命名文件: {}", e))?;
-        }
-
-        // 清理解压目录
-        let extract_dir = app_dir.join(format!("frpc_{}_{}64", os_name, arch_name));
-        if extract_dir.exists() {
-            fs::remove_dir_all(extract_dir).map_err(|e| format!("无法清理解压目录: {}", e))?;
-        }
-    } else {
-        app.emit(
-            "log",
-            LogPayload {
-                message: "正在解压文件...".into(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        let cursor = Cursor::new(bytes);
-        let gz_decoder = GzDecoder::new(cursor);
-        let mut archive = Archive::new(gz_decoder);
-
-        archive.unpack(&app_dir).map_err(|e| e.to_string())?;
-
-        // 移动文件到最终位置
-        let extracted_exe = app_dir.join(format!("frpc_{}_{}64/frpc", os_name, arch_name));
-        if extracted_exe.exists() {
-            fs::rename(&extracted_exe, &target_path)
-                .map_err(|e| format!("无法重命名文件: {}", e))?;
-        }
-
-        // 清理解压目录
-        let extract_dir = app_dir.join(format!("frpc_{}_{}64", os_name, arch_name));
-        if extract_dir.exists() {
-            fs::remove_dir_all(extract_dir).map_err(|e| format!("无法清理解压目录: {}", e))?;
+            Ok(_) => last_error = "软件信息缺少版本或下载地址".into(),
+            Err(e) => last_error = format!("获取软件信息失败: {}", e),
         }
     }
-
-    // 更新配置
-    config.frpc_version = Some(latest_version);
-    config.frpc_filename = Some(target_filename);
-    save_config(&config)?;
-
-    // 设置文件权限
-    #[cfg(unix)]
+    let metadata = metadata.ok_or(last_error)?;
+    let version = metadata.latest.trim_matches('/');
+    let dir = get_app_dir();
+    let target_path = dir.join(&filename);
+    let config = load_config()?;
+    if target_path.is_file()
+        && frpc_path(&config) == target_path
+        && config.frpc_version.as_deref() == Some(version)
+        && fs::File::open(&target_path).is_ok_and(|mut file| valid_frpc_image(&mut file))
     {
-        use std::os::unix::fs::PermissionsExt;
-        match fs::metadata(&target_path) {
-            Ok(metadata) => {
-                let mut perms = metadata.permissions();
-                perms.set_mode(0o755); // 设置可执行权限
-                if let Err(e) = fs::set_permissions(&target_path, perms) {
-                    app.emit(
-                        "log",
-                        LogPayload {
-                            message: format!("警告：无法设置文件权限: {}", e),
-                        },
-                    )
-                    .map_err(|e| e.to_string())?;
-                } else {
-                    app.emit(
-                        "log",
-                        LogPayload {
-                            message: "已设置文件可执行权限".into(),
-                        },
-                    )
-                    .map_err(|e| e.to_string())?;
-                }
-            }
-            Err(e) => {
-                app.emit(
-                    "log",
-                    LogPayload {
-                        message: format!("警告：无法获取文件元数据: {}", e),
-                    },
-                )
-                .map_err(|e| e.to_string())?;
-            }
-        }
+        log_message(&app, "已经是最新版本");
+        return Ok("已经是最新版本".into());
     }
 
-    app.emit(
-        "log",
-        LogPayload {
-            message: "下载和安装完成".into(),
-        },
-    )
-    .map_err(|e| e.to_string())?;
+    let mut last_error = "没有可用的下载镜像".to_string();
+    for source in metadata.source {
+        let url = format!(
+            "{}/{}/{}",
+            source.value.trim_end_matches('/'),
+            version,
+            archive_name
+        );
+        log_message(&app, format!("正在从 {} 下载 Frpc...", source.label));
+        let staged = async {
+            let mut response = client
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| e.to_string())?
+                .error_for_status()
+                .map_err(|e| e.to_string())?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
+                if bytes.len() + chunk.len() > MAX_FRPC_BYTES {
+                    return Err("Frpc 压缩包过大".into());
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let mut file = tempfile::Builder::new()
+                .suffix(if windows { ".exe" } else { "" })
+                .tempfile_in(&dir)
+                .map_err(|e| e.to_string())?;
+            extract_frpc(&bytes, &filename, &mut file)?;
+            if !valid_frpc_image(file.as_file_mut()) {
+                return Err("压缩包中的 Frpc 不是当前平台的可执行文件".into());
+            }
+            file.as_file().sync_all().map_err(|e| e.to_string())?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                fs::set_permissions(file.path(), fs::Permissions::from_mode(0o755))
+                    .map_err(|e| format!("无法设置可执行权限: {}", e))?;
+            }
+            Ok::<_, String>(file)
+        }
+        .await;
+        let file = match staged {
+            Ok(file) => file,
+            Err(e) => {
+                last_error = format!("{} 下载或解压失败: {}", source.label, e);
+                log_message(&app, &last_error);
+                continue;
+            }
+        };
+        {
+            let processes = app.state::<FrpcProcesses>();
+            let mut running = processes.0.lock().map_err(|e| e.to_string())?;
+            if running
+                .values_mut()
+                .any(|info| !matches!(info.child.try_wait(), Ok(Some(_))))
+            {
+                return Err("请停止运行中的隧道后再更新 Frpc".into());
+            }
+            file.persist(&target_path)
+                .map_err(|e| format!("替换 Frpc 失败: {}", e))?;
+            update_config(|config| {
+                config.frpc_filename = Some(filename);
+                config.frpc_version = Some(version.to_string());
+            })
+            .map_err(|e| format!("Frpc 已安装，保存版本信息失败: {}", e))?;
+        }
+        log_message(&app, "Frpc 下载和安装完成");
+        return Ok("下载完成".into());
+    }
+    Err(last_error)
+}
 
-    Ok("下载完成".to_string())
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TunnelInstance {
+    tunnel_id: String,
+    instance_id: String,
+}
+
+#[derive(Clone, Serialize)]
+struct InstanceLog<'a> {
+    #[serde(flatten)]
+    instance: &'a TunnelInstance,
+    message: &'a str,
 }
 
 #[command]
@@ -638,146 +500,164 @@ async fn start_frpc_instance<R: Runtime>(
     app: tauri::AppHandle<R>,
     processes: State<'_, FrpcProcesses>,
     id: String,
+    instance_id: Option<String>,
     token: String,
     tunnel_id: String,
     name: String,
     remote: String,
+    external: Option<bool>,
 ) -> Result<String, String> {
-    if let Ok(map) = processes.0.lock() {
-        if map.contains_key(&id) {
-            return Err("该隧道已经在运行中".to_string());
+    if id != tunnel_id
+        || !id
+            .parse::<u64>()
+            .is_ok_and(|value| value > 0 && value.to_string() == id)
+    {
+        return Err("隧道 ID 无效".into());
+    }
+    let token = token.trim();
+    if token.is_empty() || token.starts_with('-') || token.chars().any(char::is_control) {
+        return Err("缺少有效的 Frpc 访问密钥".into());
+    }
+
+    let mut map = processes.0.lock().map_err(|e| e.to_string())?;
+    if let Some(info) = map.get_mut(&id) {
+        if info.child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            return Err("该隧道已经在运行中".into());
         }
     }
+    map.remove(&id);
 
-    let app_dir = get_app_dir();
     let config = load_config()?;
-    let frpc_filename = config
-        .frpc_filename
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "frpc 文件名未配置，请先下载 frpc".to_string())?;
-    let frpc_path = app_dir.join(frpc_filename);
-
-    if !frpc_path.exists() {
-        return Err("frpc 程序不存在，请先下载".to_string());
+    let path = frpc_path(&config);
+    if !path.is_file() {
+        return Err("Frpc 程序不存在，请先配置或下载".into());
     }
 
-    let mut cmd = Command::new(frpc_path);
-
+    let mut cmd = Command::new(path);
     #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    cmd.creation_flags(CREATE_NO_WINDOW);
 
-    cmd.args(&["-u", &token, "-p", &tunnel_id]);
-    // 如果启用了 DoH，则添加启动参数
-    let use_doh = std::env::var("USE_DOH").unwrap_or_else(|_| "false".to_string());
-    if use_doh == "true" {
-        cmd.arg("--use-doh");
-    }
-
-    // 如果需要输出 debug 日志
-    let debug_enabled = std::env::var("FRPC_DEBUG").unwrap_or_else(|_| "false".to_string());
-    if debug_enabled == "true" {
+    cmd.args(["-u", token, "-p", &tunnel_id]);
+    if config_value(&config, "FRPC_DEBUG").as_deref() == Some("true") {
         cmd.arg("--debug");
     }
-
-    // 强制 TLS
-    let force_tls = std::env::var("FRPC_FORCE_TLS").unwrap_or_else(|_| "false".to_string());
-    if force_tls == "true" {
+    if config.force_tls == Some(true) {
         cmd.arg("--force-tls");
     }
-
-    // 如果指定了自定义 DoH 地址
-    if let Ok(doh_addr) = std::env::var("DOH_ADDR") {
-        if !doh_addr.is_empty() {
-            // 确保也启用了 DoH
-            if use_doh != "true" {
-                cmd.arg("--use-doh");
-            }
-            cmd.args(&["--doh-addr", &doh_addr]);
+    if config.use_doh == Some(true) {
+        cmd.arg("--use-doh");
+        if let Some(addr) = config.doh_addr.as_deref().filter(|addr| !addr.is_empty()) {
+            cmd.args(["--doh-addr", addr]);
         }
     }
 
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    println!("{:?}", cmd);
-
-    // 添加绕过系统代理和 DoH 使用的环境变量
-    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
-    if bypass_proxy == "true" {
-        // 清除所有代理环境变量
-        cmd.env("HTTP_PROXY", "");
-        cmd.env("HTTPS_PROXY", "");
-        cmd.env("http_proxy", "");
-        cmd.env("https_proxy", "");
-        cmd.env("NO_PROXY", "");
-        cmd.env("no_proxy", "");
-        cmd.env("ALL_PROXY", "");
-        cmd.env("all_proxy", "");
-
-        // 在 Windows 上还需要清除系统代理设置
+    if config_value(&config, "BYPASS_PROXY").as_deref() == Some("true") {
+        for key in [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+        ] {
+            cmd.env_remove(key);
+        }
         #[cfg(target_os = "windows")]
-        {
-            cmd.env("WINHTTP_NO_PROXY", "*");
-        }
+        cmd.env("WINHTTP_NO_PROXY", "*");
     }
 
-    let mut child = cmd.spawn().map_err(|e| e.to_string())?;
+    // Frpc 可在启动器退出后继续写入日志，避免继承的管道关闭导致子进程退出。
+    let (reader, stdout, stderr) = frpc_log_handles(&get_app_dir().join("frpc"))
+        .map_err(|e| format!("准备 Frpc 日志失败: {e}"))?;
+    cmd.stdin(Stdio::null()).stdout(stdout).stderr(stderr);
 
-    // 处理标准输出
-    if let Some(stdout) = child.stdout.take() {
-        let event_name = format!("frpc-log-{}", id);
-        let app_handle = app.clone();
+    let child = cmd.spawn().map_err(|e| e.to_string())?;
+    let pid = child.id();
+    let instance = TunnelInstance {
+        tunnel_id: id.clone(),
+        instance_id: instance_id.unwrap_or_else(|| pid.to_string()),
+    };
+    map.insert(
+        id,
+        ProcessInfo {
+            child,
+            instance_id: instance.instance_id.clone(),
+            name,
+            remote,
+            external: external.unwrap_or(false),
+        },
+    );
+    drop(map);
 
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(stdout);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let _ = app_handle.emit(&event_name, LogPayload { message: line });
-                }
-            }
-        });
-    }
+    rebuild_tray_menu(&app);
+    thread::spawn(move || supervise_frpc(app, instance, pid, BufReader::new(reader)));
+    Ok("Frpc 进程已启动".to_string())
+}
 
-    // 处理标准错误
-    if let Some(stderr) = child.stderr.take() {
-        let event_name = format!("frpc-log-{}", id);
-        let app_handle = app.clone();
+fn frpc_log_handles(dir: &Path) -> io::Result<(fs::File, fs::File, fs::File)> {
+    let log = tempfile::NamedTempFile::new_in(dir)?;
+    let reader = log.reopen()?;
+    let stdout = log.as_file().try_clone()?;
+    let stderr = log.as_file().try_clone()?;
+    log.close()?;
+    Ok((reader, stdout, stderr))
+}
 
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    let _ = app_handle.emit(
-                        &event_name,
-                        LogPayload {
-                            message: format!("错误: {}", line),
+fn supervise_frpc<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    instance: TunnelInstance,
+    pid: u32,
+    mut reader: impl BufRead,
+) {
+    let mut bytes = Vec::new();
+    loop {
+        // 限制每轮工作量，持续输出时仍能及时检测退出。
+        for _ in 0..256 {
+            match reader
+                .by_ref()
+                .take(64 * 1024)
+                .read_until(b'\n', &mut bytes)
+            {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&bytes);
+                    let _ = app.emit_to(
+                        "main",
+                        "frpc-instance-log",
+                        InstanceLog {
+                            instance: &instance,
+                            message: line.trim_end_matches(['\r', '\n']),
                         },
                     );
+                    bytes.clear();
                 }
             }
-        });
-    }
-
-    // 存储进程信息
-    if let Ok(mut map) = processes.0.lock() {
-        #[cfg(target_os = "windows")]
-        {
-            let group_id = child.id();
-            map.insert(id.clone(), ProcessInfo { child, name, remote, group_id });
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-            map.insert(id.clone(), ProcessInfo { child, name, remote });
+        let exited = {
+            let processes = app.state::<FrpcProcesses>();
+            let Ok(mut map) = processes.0.lock() else {
+                return;
+            };
+            let Some(info) = map
+                .get_mut(&instance.tunnel_id)
+                .filter(|info| info.child.id() == pid && info.instance_id == instance.instance_id)
+            else {
+                return;
+            };
+            if matches!(info.child.try_wait(), Ok(Some(_))) {
+                map.remove(&instance.tunnel_id);
+                true
+            } else {
+                false
+            }
+        };
+        if exited {
+            rebuild_tray_menu(&app);
+            let _ = app.emit_to("main", "tunnels-stopped", [instance]);
+            return;
         }
+        thread::sleep(std::time::Duration::from_millis(100));
     }
-
-    // 重建托盘菜单（显示新启动的隧道）
-    rebuild_tray_menu(&app);
-
-    Ok("启动成功".to_string())
 }
 
 #[command]
@@ -796,115 +676,6 @@ fn get_detailed_system_info() -> String {
         "linux" => get_linux_version(),
         "macos" => get_macos_version(),
         _ => format!("{}-{}", os, std::env::consts::ARCH),
-    }
-}
-
-fn get_windows_version() -> String {
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-
-        // 尝试通过systeminfo命令获取Windows版本
-        let output = Command::new("cmd")
-            .args(&["/C", "systeminfo"])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                for line in output_str.lines() {
-                    if line.starts_with("OS Name:") {
-                        let os_name = line.split(":").nth(1).unwrap_or("").trim();
-                        // 尝试获取OS Version
-                        if let Some(version_line) =
-                            output_str.lines().find(|l| l.starts_with("OS Version:"))
-                        {
-                            let version = version_line.split(":").nth(1).unwrap_or("").trim();
-                            return format!("{} ({})", os_name, version);
-                        }
-                        return os_name.to_string();
-                    }
-                }
-            }
-        }
-
-        // 备用方法：通过 wmic 获取更详细的信息
-        let output = Command::new("wmic")
-            .args(&["os", "get", "Name,Caption,Version,OSArchitecture", "/value"])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                let mut caption = "";
-                let mut version = "";
-                let mut architecture = "";
-
-                for line in output_str.lines() {
-                    let line = line.trim();
-                    if line.starts_with("Caption=") {
-                        caption = line.split("=").nth(1).unwrap_or("");
-                    } else if line.starts_with("Version=") {
-                        version = line.split("=").nth(1).unwrap_or("");
-                    } else if line.starts_with("OSArchitecture=") {
-                        architecture = line.split("=").nth(1).unwrap_or("");
-                    }
-                }
-
-                if !caption.is_empty() && !version.is_empty() && !architecture.is_empty() {
-                    return format!("{} ({}) {}", caption, version, architecture);
-                } else if !caption.is_empty() {
-                    return caption.to_string();
-                }
-            }
-        }
-
-        // 再次备用方法：通过 ver 命令
-        let output = Command::new("cmd")
-            .args(&["/C", "ver"])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let version_string = String::from_utf8_lossy(&output.stdout);
-                return version_string.trim().to_string();
-            }
-        }
-
-        // 最后的备用方法：读取注册表信息
-        let output = Command::new("reg")
-            .args(&[
-                "query",
-                "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
-                "/v",
-                "ProductName",
-            ])
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .output();
-
-        if let Ok(output) = output {
-            if output.status.success() {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                for line in output_str.lines() {
-                    if line.contains("ProductName") && line.contains("REG_SZ") {
-                        let parts: Vec<&str> = line.split("REG_SZ").collect();
-                        if parts.len() > 1 {
-                            return parts[1].trim().to_string();
-                        }
-                    }
-                }
-            }
-        }
-
-        "Windows (unknown version)".to_string()
-    }
-
-    #[cfg(not(target_os = "windows"))]
-    {
-        "Windows (not available on this platform)".to_string()
     }
 }
 
@@ -1144,419 +915,213 @@ fn get_build_info() -> String {
 
 #[command]
 async fn tcp_ping(host: String, port: u16) -> Result<serde_json::Value, String> {
-    use std::net::{TcpStream, ToSocketAddrs};
     use std::time::{Duration, Instant};
-    println!("tcp_ping called with host: {}, port: {}", host, port);
+    use tokio::net::{lookup_host, TcpStream};
+    use tokio::time::timeout;
 
-    // 解析主机名和端口为SocketAddr
-    let addrs = match (host.as_str(), port).to_socket_addrs() {
-        Ok(addrs) => addrs,
-        Err(e) => {
-            return Ok(serde_json::json!({
-                "success": false,
-                "latency_ms": null,
-                "message": format!("地址解析失败: {}", e)
-            }));
-        }
-    };
-
-    // 取第一个地址进行连接测试
-    let addr = match addrs.into_iter().next() {
-        Some(addr) => {
-            println!("Using address: {:?}", addr);
-            addr
-        }
-        None => {
-            println!("No valid address found");
-            return Ok(serde_json::json!({
-                "success": false,
-                "latency_ms": null,
-                "message": "未能解析到有效的地址"
-            }));
-        }
-    };
-
-    let mut latencies: Vec<u128> = Vec::new();
-    let start_time = Instant::now();
-    let max_duration = Duration::from_secs(2); // 最多测试2秒钟
-
-    // 在1秒钟内进行多次测试
-    while start_time.elapsed() < max_duration {
+    let host = host.trim().trim_start_matches('[').trim_end_matches(']');
+    if host.is_empty() || port == 0 {
+        return Err("节点地址或端口无效".into());
+    }
+    let addresses: Vec<_> = timeout(Duration::from_secs(3), lookup_host((host, port)))
+        .await
+        .map_err(|_| "地址解析超时")?
+        .map_err(|error| format!("地址解析失败: {error}"))?
+        .collect();
+    if addresses.is_empty() {
+        return Err("未能解析到有效的地址".into());
+    }
+    let mut latencies = Vec::new();
+    for _ in 0..3 {
         let start = Instant::now();
-        match TcpStream::connect_timeout(&addr, Duration::from_secs(5)) {
-            Ok(_) => {
-                let duration = start.elapsed();
-                latencies.push(duration.as_millis());
-                // 短暂休眠以避免过于频繁的连接尝试
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-            Err(e) => {
-                println!("Connection failed: {}", e);
-                // 即使连接失败也记录时间，但用0表示失败
-                latencies.push(0);
-                // 短暂休眠
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
+        match timeout(
+            Duration::from_secs(2),
+            TcpStream::connect(addresses.as_slice()),
+        )
+        .await
+        {
+            Ok(Ok(_)) => latencies.push(start.elapsed().as_secs_f64() * 1000.0),
+            _ if latencies.is_empty() => break,
+            _ => {}
         }
     }
-
-    // 计算统计数据
     if latencies.is_empty() {
         return Ok(serde_json::json!({
-            "success": false,
-            "latency_ms": null,
-            "message": "未能执行任何测试"
+            "success": false, "latency_ms": null, "message": "无法连接到指定节点和端口",
         }));
     }
-
-    // 过滤掉失败的连接(延迟为0的)
-    let successful_latencies: Vec<u128> = latencies.iter().filter(|&&x| x > 0).cloned().collect();
-
-    if successful_latencies.is_empty() {
-        return Ok(serde_json::json!({
-            "success": false,
-            "latency_ms": 0,
-            "message": "所有连接测试均失败",
-            "total_tests": latencies.len(),
-            "successful_tests": 0
-        }));
-    }
-
-    let total_tests = latencies.len();
-    let successful_tests = successful_latencies.len();
-    let avg_latency = successful_latencies.iter().sum::<u128>() / successful_tests as u128;
-
-    // 计算最小和最大延迟
-    let min_latency = *successful_latencies.iter().min().unwrap();
-    let max_latency = *successful_latencies.iter().max().unwrap();
-
-    println!("Connection successful, average latency: {}ms", avg_latency);
+    let avg = latencies.iter().sum::<f64>() / latencies.len() as f64;
+    let min = latencies.iter().copied().fold(f64::INFINITY, f64::min);
+    let max = latencies.iter().copied().fold(0.0, f64::max);
     Ok(serde_json::json!({
         "success": true,
-        "latency_ms": avg_latency,
-        "message": format!("测试完成，平均延迟 {}ms (最小: {}ms, 最大: {}ms)", avg_latency, min_latency, max_latency),
-        "total_tests": total_tests,
-        "successful_tests": successful_tests,
-        "min_latency": min_latency,
-        "max_latency": max_latency
+        "latency_ms": avg,
+        "message": format!("平均延迟 {avg:.2} ms（最小 {min:.2} ms，最大 {max:.2} ms）"),
     }))
+}
+
+fn terminate_child(child: &mut Child) -> io::Result<()> {
+    if child.try_wait()?.is_none() {
+        if let Err(error) = child.kill() {
+            if child.try_wait()?.is_none() {
+                return Err(error);
+            }
+        }
+        child.wait()?;
+    }
+    Ok(())
+}
+
+fn stop_managed_tunnel<R: Runtime>(app: &tauri::AppHandle<R>, id: &str) -> Result<(), String> {
+    let stopped = {
+        let processes = app.state::<FrpcProcesses>();
+        let mut map = processes.0.lock().map_err(|e| e.to_string())?;
+        if let Some(info) = map.get_mut(id) {
+            terminate_child(&mut info.child).map_err(|e| format!("终止隧道 {id} 失败: {e}"))?;
+        }
+        map.remove(id)
+    };
+    rebuild_tray_menu(app);
+    if let Some(info) = stopped {
+        let instance = TunnelInstance {
+            tunnel_id: id.to_string(),
+            instance_id: info.instance_id,
+        };
+        let _ = app.emit_to("main", "tunnels-stopped", [instance]);
+    }
+    Ok(())
 }
 
 #[command]
 async fn stop_frpc_instance<R: Runtime>(
     app: tauri::AppHandle<R>,
-    processes: State<'_, FrpcProcesses>,
     id: String,
 ) -> Result<(), String> {
-    {
-        let mut map = processes.0.lock().map_err(|e| format!("无法获取进程锁: {}", e))?;
-        if let Some(mut process_info) = map.remove(&id) {
-            #[cfg(target_os = "windows")]
-            {
-                let mut cmd = Command::new("taskkill");
-                cmd.creation_flags(CREATE_NO_WINDOW);
-                let _ = cmd
-                    .args(&["/F", "/T", "/PID"])
-                    .arg(process_info.group_id.to_string())
-                    .output();
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let _ = process_info.child.kill();
-            }
-        } else {
-            return Err("进程不存在".to_string());
-        }
-    }
-    // 锁已释放，安全重建托盘菜单
-    rebuild_tray_menu(&app);
-    Ok(())
+    stop_managed_tunnel(&app, &id)
 }
 
 #[command]
-async fn get_frpc_version() -> Result<String, String> {
-    let config = load_config()?;
-    Ok(config
-        .frpc_version
-        .as_ref()
-        .unwrap_or(&String::new())
-        .clone())
+fn check_frpc() -> Result<bool, String> {
+    Ok(frpc_path(&load_config()?).is_file())
 }
 
-// 添加检查 frpc 的函数
-#[command]
-async fn check_frpc<R: Runtime>(app: tauri::AppHandle<R>) -> Result<bool, String> {
-    let app_dir = get_app_dir();
-    let config = load_config()?;
-
-    if config.frpc_filename.is_none() {
-        app.emit(
-            "log",
-            LogPayload {
-                message: "frpc 文件名为空".into(),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-        return Ok(false);
-    }
-
-    let frpc_path = app_dir.join(&config.frpc_filename.as_ref().unwrap());
-    Ok(frpc_path.exists())
+#[derive(Serialize)]
+struct FrpcFile {
+    path: PathBuf,
+    filename: String,
+    installed: bool,
 }
 
-// 修改版本获取命令
 #[command]
-async fn get_frpc_cli_version<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
-    let app_dir = get_app_dir();
-    let mut config = load_config()?;
+fn get_frpc_file() -> Result<FrpcFile, String> {
+    let path = frpc_path(&load_config()?);
+    Ok(FrpcFile {
+        filename: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_string(),
+        installed: path.is_file(),
+        path,
+    })
+}
 
-    // 检查frpc_filename是否存在
-    if config.frpc_filename.is_none() {
-        // 设置默认文件名
-        let os = std::env::consts::OS;
-        let arch = std::env::consts::ARCH;
-
-        let filename = if os == "windows" {
-            format!(
-                "frpc_windows_{}.exe",
-                if arch == "x86_64" { "amd64" } else { arch }
-            )
-        } else if os == "macos" || os == "darwin" {
-            format!(
-                "frpc_darwin_{}",
-                if arch == "x86_64" {
-                    "amd64"
-                } else if arch == "aarch64" {
-                    "arm64"
-                } else {
-                    arch
-                }
-            )
-        } else {
-            format!(
-                "frpc_linux_{}",
-                if arch == "x86_64" {
-                    "amd64"
-                } else if arch == "aarch64" {
-                    "arm64"
-                } else {
-                    arch
-                }
-            )
-        };
-
-        config.frpc_filename = Some(filename.clone());
-        // 保存更新后的配置
-        if let Err(e) = save_config(&config) {
-            return Err(format!("无法保存配置: {}", e));
-        }
-
-        // 返回包含路径和文件名信息的JSON对象
-        let result = serde_json::json!({
-            "version": "未知",
-            "path": app_dir.join(&filename).to_string_lossy().to_string(),
-            "filename": filename
-        });
-
-        return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+#[command]
+async fn get_frpc_cli_version() -> Result<String, String> {
+    let file = get_frpc_file()?;
+    if !file.installed {
+        return Err("未找到 Frpc 可执行文件".into());
     }
-
-    let filename = config.frpc_filename.as_ref().unwrap();
-    let frpc_path = app_dir.join(filename);
-
-    if !frpc_path.exists() {
-        // 返回包含路径和文件名信息的JSON对象
-        let result = serde_json::json!({
-            "version": "未知",
-            "path": frpc_path.to_string_lossy().to_string(),
-            "filename": filename
-        });
-
-        return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
-    }
-
-    let mut cmd = Command::new(&frpc_path);
+    let mut command = tokio::process::Command::new(file.path);
     #[cfg(target_os = "windows")]
-    {
-        cmd.creation_flags(CREATE_NO_WINDOW);
+    command.creation_flags(CREATE_NO_WINDOW);
+    command.arg("-v").kill_on_drop(true);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), command.output())
+        .await
+        .map_err(|_| "获取 Frpc 版本超时".to_string())?
+        .map_err(|e| format!("无法执行 Frpc: {}", e))?;
+    if !output.status.success() {
+        return Err(format!("获取 Frpc 版本失败 ({})", output.status));
     }
+    let version = String::from_utf8_lossy(&output.stdout);
+    version
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .map(|line| line.trim().to_string())
+        .ok_or_else(|| "Frpc 未返回版本信息".to_string())
+}
 
-    let child = match cmd.arg("-v").stdout(Stdio::piped()).spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            // 返回包含路径和文件名信息的JSON对象，但标记为错误
-            let result = serde_json::json!({
-                "version": format!("错误: {}", e),
-                "path": frpc_path.to_string_lossy().to_string(),
-                "filename": filename
+#[command]
+fn check_frpc_status(processes: State<'_, FrpcProcesses>, id: String) -> Result<bool, String> {
+    let mut map = processes.0.lock().map_err(|e| e.to_string())?;
+    match map.get_mut(&id) {
+        Some(info) => info
+            .child
+            .try_wait()
+            .map(|status| status.is_none())
+            .map_err(|e| e.to_string()),
+        None => Ok(false),
+    }
+}
+
+#[derive(Serialize)]
+struct RunningTunnel {
+    id: String,
+    external: bool,
+}
+
+#[command]
+fn list_frpc_instances(processes: State<'_, FrpcProcesses>) -> Result<Vec<RunningTunnel>, String> {
+    let mut map = processes.0.lock().map_err(|e| e.to_string())?;
+    let mut running = Vec::new();
+    for (id, info) in map.iter_mut() {
+        if info.child.try_wait().map_err(|e| e.to_string())?.is_none() {
+            running.push(RunningTunnel {
+                id: id.clone(),
+                external: info.external,
             });
-
-            return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
         }
-    };
+    }
+    Ok(running)
+}
 
-    let output = match child.wait_with_output() {
-        Ok(output) => output,
-        Err(e) => {
-            // 返回包含路径和文件名信息的JSON对象，但标记为错误
-            let result = serde_json::json!({
-                "version": format!("等待输出错误: {}", e),
-                "path": frpc_path.to_string_lossy().to_string(),
-                "filename": filename
-            });
-
-            return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
-        }
-    };
-
-    if output.status.success() {
-        let version_str = match String::from_utf8(output.stdout) {
-            Ok(s) => s,
-            Err(e) => {
-                // 返回包含路径和文件名信息的JSON对象，但标记为错误
-                let result = serde_json::json!({
-                    "version": format!("解析输出错误: {}", e),
-                    "path": frpc_path.to_string_lossy().to_string(),
-                    "filename": filename
+fn terminate_managed_tunnels<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    notify: bool,
+) -> Result<(), String> {
+    let mut stopped = Vec::new();
+    let mut errors = Vec::new();
+    {
+        let processes = app.state::<FrpcProcesses>();
+        let mut map = processes.0.lock().map_err(|e| e.to_string())?;
+        map.retain(|id, info| match terminate_child(&mut info.child) {
+            Ok(()) => {
+                stopped.push(TunnelInstance {
+                    tunnel_id: id.clone(),
+                    instance_id: info.instance_id.clone(),
                 });
-
-                return Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()));
+                false
             }
-        };
-
-        let ver = if let Some(version) = version_str.lines().next() {
-            if let Some(v) = version.split_whitespace().last() {
-                config.frpc_version = Some(v.to_string());
-                save_config(&config)?;
-                v.to_string()
-            } else {
-                "未知版本".to_string()
+            Err(error) => {
+                errors.push(format!("#{id}: {error}"));
+                true
             }
-        } else {
-            "未知版本".to_string()
-        };
-
-        app.emit(
-            "log",
-            LogPayload {
-                message: format!("检测到本地版本:{}", version_str),
-            },
-        )
-        .map_err(|e| e.to_string())?;
-
-        // 返回包含版本、路径和文件名信息的JSON对象
-        let result = serde_json::json!({
-            "version": ver,
-            "path": frpc_path.to_string_lossy().to_string(),
-            "filename": filename
         });
-
-        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
+    }
+    rebuild_tray_menu(app);
+    if notify && !stopped.is_empty() {
+        let _ = app.emit_to("main", "tunnels-stopped", stopped);
+    }
+    if errors.is_empty() {
+        Ok(())
     } else {
-        // 返回包含路径和文件名信息的JSON对象，但标记为错误
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let result = serde_json::json!({
-            "version": format!("获取版本错误: {}", stderr),
-            "path": frpc_path.to_string_lossy().to_string(),
-            "filename": filename
-        });
-
-        Ok(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string()))
+        Err(format!("部分隧道终止失败: {}", errors.join("；")))
     }
 }
 
-// 添加启动检查命令
 #[command]
-async fn check_and_download<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
-    if !check_frpc(app.clone()).await? {
-        app.emit("need_download", true).map_err(|e| e.to_string())?;
-        return Ok("需要下载 frpc".to_string());
-    }
-    Ok("frpc 已存在".to_string())
-}
-
-// 修改检查进程状态的命令
-#[command]
-async fn check_frpc_status(
-    processes: State<'_, FrpcProcesses>,
-    id: String,
-) -> Result<bool, String> {
-    if let Ok(mut map) = processes.0.lock() {
-        if let Some(mut process_info) = map.remove(&id) {
-            match process_info.child.try_wait() {
-                Ok(Some(_)) => {
-                    // 进程已结束
-                    return Ok(false);
-                }
-                Ok(None) => {
-                    // 进程仍在运行，放回map
-                    map.insert(id, process_info);
-                    return Ok(true);
-                }
-                Err(_) => {
-                    // try_wait 出错时把进程放回 map，避免失控进程无法停止
-                    map.insert(id, process_info);
-                    return Ok(false);
-                }
-            }
-        }
-    }
-    Ok(false)
-}
-
-#[command]
-async fn kill_all_processes() -> Result<(), String> {
-    let os = std::env::consts::OS;
-    let os_name = match os {
-        "windows" => "windows",
-        "linux" => "linux",
-        "macos" => "darwin",
-        _ => return Err("不支持的操作系统".to_string()),
-    };
-
-    let arch_name = match std::env::consts::ARCH {
-        "x86" => "386",
-        "x86_64" => "amd64",
-        "arm" => "arm",
-        "aarch64" => "arm64",
-        _ => return Err("不支持的系统架构".to_string()),
-    };
-
-    // 构建最终的文件名
-    let target_filename = if os == "windows" {
-        format!("frpc_{}_{}.exe", os_name, arch_name)
-    } else {
-        format!("frpc_{}_{}", os_name, arch_name)
-    };
-
-    #[cfg(target_os = "windows")]
-    {
-        let mut cmd = Command::new("taskkill");
-        cmd.creation_flags(CREATE_NO_WINDOW);
-        cmd.args(["/F", "/IM", &target_filename])
-            .output()
-            .map_err(|e| format!("终止进程失败: {}", e))?;
-    }
-
-    #[cfg(target_family = "unix")]
-    {
-        Command::new("pkill")
-            .args(["-f", &target_filename])
-            .output()
-            .map_err(|e| format!("终止进程失败: {}", e))?;
-    }
-
-    Ok(())
-}
-
-#[command]
-async fn emit_event<R: Runtime>(
-    app: tauri::AppHandle<R>,
-    event: String,
-    payload: serde_json::Value,
-) -> Result<(), String> {
-    app.emit(&event, payload)
-        .map_err(|e| format!("发送事件失败: {}", e))
+async fn kill_all_processes<R: Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    terminate_managed_tunnels(&app, true)
 }
 
 /// 查询当前是否以自启动模式运行（前端通过 invoke 调用，避免修改 URL 导致页面重载）
@@ -1567,19 +1132,41 @@ fn check_is_autostart() -> bool {
 
 #[command]
 async fn exit_app(app_handle: tauri::AppHandle) -> Result<(), String> {
+    terminate_managed_tunnels(&app_handle, false)?;
     app_handle.exit(0);
     Ok(())
 }
 
 // 动态重建托盘菜单（根据运行中的隧道列表）
 fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
-    let Some(tray) = app.tray_by_id("main") else { return };
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || set_tray_menu(&handle));
+}
+
+fn set_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let Some(tray) = app.tray_by_id("main") else {
+        return;
+    };
 
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>).ok();
     let sep1 = PredefinedMenuItem::separator(app).ok();
     let sep2 = PredefinedMenuItem::separator(app).ok();
-    let quit_with = MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>).ok();
-    let quit_keep = MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>).ok();
+    let quit_with = MenuItem::with_id(
+        app,
+        "quit_with_frpc",
+        "结束所有隧道并退出",
+        true,
+        None::<&str>,
+    )
+    .ok();
+    let quit_keep = MenuItem::with_id(
+        app,
+        "quit_keep_frpc",
+        "保持隧道运行并退出",
+        true,
+        None::<&str>,
+    )
+    .ok();
 
     let mut tunnel_submenus: Vec<Submenu<R>> = Vec::new();
     let mut no_tunnels: Option<MenuItem<R>> = None;
@@ -1587,18 +1174,36 @@ fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(processes) = app.try_state::<FrpcProcesses>() {
         if let Ok(map) = processes.0.lock() {
             if map.is_empty() {
-                no_tunnels = MenuItem::with_id(app, "no_tunnels", "（无运行中的隧道）", false, None::<&str>).ok();
+                no_tunnels =
+                    MenuItem::with_id(app, "no_tunnels", "（无运行中的隧道）", false, None::<&str>)
+                        .ok();
             } else {
                 for (id, info) in map.iter() {
-                    let copy_item = MenuItem::with_id(app, &format!("copy_link_{}", id), "复制链接地址", true, None::<&str>).ok();
-                    let stop_item = MenuItem::with_id(app, &format!("stop_{}", id), "停止隧道", true, None::<&str>).ok();
+                    let copy_item = MenuItem::with_id(
+                        app,
+                        &format!("copy_link_{}", id),
+                        "复制链接地址",
+                        true,
+                        None::<&str>,
+                    )
+                    .ok();
+                    let stop_item = MenuItem::with_id(
+                        app,
+                        &format!("stop_{}", id),
+                        "停止隧道",
+                        true,
+                        None::<&str>,
+                    )
+                    .ok();
                     let label = if info.name.is_empty() {
                         format!("#{}", id)
                     } else {
                         format!("#{} {}", id, info.name)
                     };
                     if let (Some(copy_item), Some(stop_item)) = (copy_item, stop_item) {
-                        if let Ok(submenu) = Submenu::with_items(app, &label, true, &[&copy_item, &stop_item]) {
+                        if let Ok(submenu) =
+                            Submenu::with_items(app, &label, true, &[&copy_item, &stop_item])
+                        {
                             tunnel_submenus.push(submenu);
                         }
                     }
@@ -1608,15 +1213,31 @@ fn rebuild_tray_menu<R: Runtime>(app: &tauri::AppHandle<R>) {
     }
 
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<R>> = Vec::new();
-    if let Some(ref item) = show { items.push(item); }
-    if let Some(ref item) = sep1 { items.push(item); }
-    if let Some(ref item) = no_tunnels { items.push(item); }
-    for item in &tunnel_submenus { items.push(item); }
-    if let Some(ref item) = sep2 { items.push(item); }
-    if let Some(ref item) = quit_with { items.push(item); }
-    if let Some(ref item) = quit_keep { items.push(item); }
+    if let Some(ref item) = show {
+        items.push(item);
+    }
+    if let Some(ref item) = sep1 {
+        items.push(item);
+    }
+    if let Some(ref item) = no_tunnels {
+        items.push(item);
+    }
+    for item in &tunnel_submenus {
+        items.push(item);
+    }
+    if let Some(ref item) = sep2 {
+        items.push(item);
+    }
+    if let Some(ref item) = quit_with {
+        items.push(item);
+    }
+    if let Some(ref item) = quit_keep {
+        items.push(item);
+    }
 
-    if items.is_empty() { return; }
+    if items.is_empty() {
+        return;
+    }
     if let Ok(menu) = Menu::with_items(app, &items) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -1630,8 +1251,20 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "no_tunnels", "（无运行中的隧道）", false, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit_with_frpc", "结束所有隧道并退出", true, None::<&str>)?,
-            &MenuItem::with_id(app, "quit_keep_frpc", "保持隧道运行并退出", true, None::<&str>)?,
+            &MenuItem::with_id(
+                app,
+                "quit_with_frpc",
+                "结束所有隧道并退出",
+                true,
+                None::<&str>,
+            )?,
+            &MenuItem::with_id(
+                app,
+                "quit_keep_frpc",
+                "保持隧道运行并退出",
+                true,
+                None::<&str>,
+            )?,
         ],
     )?;
 
@@ -1658,50 +1291,24 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
                     }
                 }
                 eid if eid.starts_with("stop_") => {
-                    let tunnel_id = eid.strip_prefix("stop_").unwrap().to_string();
-                    {
-                        if let Some(processes) = app.try_state::<FrpcProcesses>() {
-                            if let Ok(mut map) = processes.0.lock() {
-                                if let Some(mut process_info) = map.remove(&tunnel_id) {
-                                    #[cfg(target_os = "windows")]
-                                    {
-                                        let mut cmd = Command::new("taskkill");
-                                        cmd.creation_flags(CREATE_NO_WINDOW);
-                                        let _ = cmd
-                                            .args(&["/F", "/T", "/PID"])
-                                            .arg(process_info.group_id.to_string())
-                                            .output();
-                                    }
-                                    #[cfg(not(target_os = "windows"))]
-                                    {
-                                        let _ = process_info.child.kill();
-                                    }
-                                }
-                            }
+                    let id = eid.trim_start_matches("stop_").to_string();
+                    let app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(error) = stop_managed_tunnel(&app, &id) {
+                            let _ = app.emit_to("main", "tray-error", error);
                         }
-                    }
-                    rebuild_tray_menu(app);
-                    let _ = app.emit("tunnels-stopped", ());
+                    });
                 }
                 "quit_with_frpc" => {
-                    if let Some(processes) = app.try_state::<FrpcProcesses>() {
-                        if let Ok(mut map) = processes.0.lock() {
-                            for (_, mut process_info) in map.drain() {
-                                #[cfg(target_os = "windows")]
-                                {
-                                    let _ = Command::new("taskkill")
-                                        .args(&["/F", "/T", "/PID"])
-                                        .arg(process_info.group_id.to_string())
-                                        .output();
-                                }
-                                #[cfg(not(target_os = "windows"))]
-                                {
-                                    let _ = process_info.child.kill();
-                                }
+                    let app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        match terminate_managed_tunnels(&app, false) {
+                            Ok(()) => app.exit(0),
+                            Err(error) => {
+                                let _ = app.emit_to("main", "tray-error", error);
                             }
                         }
-                    }
-                    app.exit(0);
+                    });
                 }
                 "quit_keep_frpc" => {
                     app.exit(0);
@@ -1736,8 +1343,7 @@ fn create_tray_menu(app: &tauri::App) -> Result<TrayIcon, Box<dyn std::error::Er
 
 #[command]
 fn get_cpl_version() -> Result<String, String> {
-    let config = load_config()?;
-    Ok(config.cpl_version.unwrap_or_else(|| "0.9.1".to_string()))
+    Ok(env!("CARGO_PKG_VERSION").to_string())
 }
 
 #[tauri::command]
@@ -1925,135 +1531,63 @@ async fn debug_auto_start(app: tauri::AppHandle) -> Result<serde_json::Value, St
     Ok(debug_info)
 }
 
-// 设置环境变量命令
+const SETTING_KEYS: &[&str] = &[
+    "BYPASS_PROXY",
+    "FRPC_DEBUG",
+    "FRPC_FORCE_TLS",
+    "USE_DOH",
+    "DOH_ADDR",
+    "QUICK_START_ENABLED",
+];
+
+fn config_value(config: &Config, key: &str) -> Option<String> {
+    config
+        .env_vars
+        .as_ref()
+        .and_then(|map| map.get(key))
+        .cloned()
+}
+
 #[tauri::command]
 fn set_env(key: String, value: String) -> Result<(), String> {
-    // 设置进程环境变量
-    std::env::set_var(&key, &value);
-
-    // 同步到配置文件
-    let mut cfg = load_config()?;
-    let mut map = cfg.env_vars.unwrap_or_default();
-    if value.is_empty() {
-        map.remove(&key);
-    } else {
-        map.insert(key.clone(), value.clone());
+    if !SETTING_KEYS.contains(&key.as_str()) || value.chars().any(char::is_control) {
+        return Err("未知或无效的设置项".into());
     }
-
-    // 同步显式网络配置字段
-    match key.as_str() {
-        "FRPC_FORCE_TLS" => {
-            cfg.force_tls = Some(value == "true");
-        }
-        "USE_DOH" => {
-            cfg.use_doh = Some(value == "true");
-        }
-        "DOH_ADDR" => {
-            cfg.doh_addr = Some(value.clone());
-        }
-        _ => {}
+    if key != "DOH_ADDR" && value != "true" && value != "false" {
+        return Err("无效的设置值".into());
     }
-
-    cfg.env_vars = Some(map);
-    save_config(&cfg)?;
-
-    Ok(())
+    update_config(|cfg| {
+        match key.as_str() {
+            "FRPC_FORCE_TLS" => cfg.force_tls = Some(value == "true"),
+            "USE_DOH" => cfg.use_doh = Some(value == "true"),
+            "DOH_ADDR" => cfg.doh_addr = Some(value.clone()),
+            _ => {}
+        }
+        cfg.env_vars
+            .get_or_insert_with(HashMap::new)
+            .insert(key, value);
+    })
 }
 
-// 获取环境变量命令
 #[tauri::command]
 fn get_env(key: String) -> Result<Option<String>, String> {
-    // 先检查进程环境变量
-    if let Ok(val) = std::env::var(&key) {
-        return Ok(Some(val));
+    if !SETTING_KEYS.contains(&key.as_str()) {
+        return Err("未知的设置项".into());
     }
-    // 再检查配置文件中的持久化变量
-    let cfg = load_config()?;
-    if let Some(map) = cfg.env_vars {
-        if let Some(v) = map.get(&key) {
-            return Ok(Some(v.clone()));
-        }
-    }
-    Ok(None)
+    Ok(config_value(&load_config()?, &key))
 }
 
-// 检查代理绕过状态
+fn proxy_bypassed() -> bool {
+    load_config()
+        .ok()
+        .and_then(|config| config_value(&config, "BYPASS_PROXY"))
+        .as_deref()
+        == Some("true")
+}
+
 #[tauri::command]
 fn check_proxy_bypass() -> Result<bool, String> {
-    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
-    Ok(bypass_proxy == "true")
-}
-
-// 测试网络连接
-#[tauri::command]
-async fn test_network_connection() -> Result<serde_json::Value, String> {
-    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
-
-    let client_builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
-
-    let client = if bypass_proxy == "true" {
-        client_builder
-            .no_proxy()
-            .build()
-            .map_err(|e| e.to_string())?
-    } else {
-        client_builder.build().map_err(|e| e.to_string())?
-    };
-
-    let mut results = serde_json::json!({
-        "bypass_proxy": bypass_proxy == "true",
-        "tests": []
-    });
-
-    // 测试多个端点
-    let test_urls = vec![
-        (
-            "OpenFrp API (api.openfrp.net)",
-            "https://api.openfrp.net/frp/api/getUserInfo",
-        ),
-        (
-            "OpenFrp API 备用 (ofapi.naids.com)",
-            "https://ofapi.naids.com/frp/api/getUserInfo",
-        ),
-        ("Baidu", "https://www.baidu.com"),
-        ("ZGIT API", "https://api.zyghit.cn"),
-        ("GitHub", "https://api.github.com"),
-        ("Google DNS", "https://8.8.8.8"),
-    ];
-
-    for (name, url) in test_urls {
-        let start = std::time::Instant::now();
-        match client.get(url).send().await {
-            Ok(response) => {
-                let duration = start.elapsed();
-                results["tests"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(serde_json::json!({
-                        "name": name,
-                        "url": url,
-                        "success": true,
-                        "status": response.status().as_u16(),
-                        "latency_ms": duration.as_millis()
-                    }));
-            }
-            Err(e) => {
-                let duration = start.elapsed();
-                results["tests"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(serde_json::json!({
-                        "name": name,
-                        "url": url,
-                        "success": false,
-                        "error": e.to_string(),
-                        "latency_ms": duration.as_millis()
-                    }));
-            }
-        }
-    }
-
-    Ok(results)
+    Ok(config_value(&load_config()?, "BYPASS_PROXY").as_deref() == Some("true"))
 }
 
 /// 服务连通性探测结果
@@ -2080,39 +1614,31 @@ async fn probe_url(
         return Err("仅支持 http/https 地址".to_string());
     }
 
-    let bypass_proxy = std::env::var("BYPASS_PROXY").unwrap_or_else(|_| "false".to_string());
-    let user_agent = format!(
-        "OpenFrp-CPL/{}-{}",
-        std::env::consts::OS,
-        env!("CARGO_PKG_VERSION")
-    );
-    let mut builder = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(timeout_ms.unwrap_or(5000)))
-        .user_agent(user_agent);
-    if bypass_proxy == "true" {
-        builder = builder.no_proxy();
-    }
-    let client = builder.build().map_err(|e| e.to_string())?;
+    let timeout = std::time::Duration::from_millis(timeout_ms.unwrap_or(5000).clamp(500, 15_000));
+    let client = api_proxy::client_builder(15)
+        .timeout(timeout)
+        .build()
+        .map_err(|e| e.to_string())?;
 
     let start = std::time::Instant::now();
     match client.get(&url).send().await {
-        Ok(response) => {
+        Ok(mut response) => {
             let status = response.status().as_u16();
             let latency_ms = start.elapsed().as_millis() as u64;
             let body = if read_body.unwrap_or(false) {
-                match response.text().await {
-                    // 限制返回内容大小，避免把超大页面全部传入 IPC
-                    Ok(text) => Some(text.chars().take(200_000).collect()),
-                    Err(e) => {
-                        return Ok(UrlProbeResult {
-                            success: true,
-                            status: Some(status),
-                            latency_ms,
-                            body: None,
-                            error: Some(e.to_string()),
-                        })
+                const BODY_LIMIT: usize = 200_000;
+                let mut bytes = Vec::new();
+                while let Some(chunk) = response
+                    .chunk()
+                    .await
+                    .map_err(|e| e.without_url().to_string())?
+                {
+                    if bytes.len() + chunk.len() > BODY_LIMIT {
+                        return Err("检测响应内容过大".into());
                     }
+                    bytes.extend_from_slice(&chunk);
                 }
+                Some(String::from_utf8_lossy(&bytes).into_owned())
             } else {
                 None
             };
@@ -2132,197 +1658,6 @@ async fn probe_url(
             error: Some(e.to_string()),
         }),
     }
-}
-
-// 添加状态结构体
-#[derive(Default)]
-struct DeepLinkState(Mutex<Option<String>>);
-
-#[derive(Serialize, Deserialize)]
-struct OAuthResponse {
-    authorization: String,
-    flag: bool,
-    msg: String,
-    data: String,
-}
-
-/// 未指定回调地址时使用的默认地址（与旧版快速登录页一致）
-const DEFAULT_OAUTH_REDIRECT: &str = "https://staticassets.naids.com/ofcpl_login";
-
-#[command]
-async fn oauth_callback(
-    code: String,
-    redirect_url: Option<String>,
-) -> Result<OAuthResponse, String> {
-    let client = reqwest::Client::new();
-    // 使用与获取登录URL时相同的 redirect_url，确保服务端校验通过
-    let redirect_url = redirect_url.unwrap_or_else(|| DEFAULT_OAUTH_REDIRECT.to_string());
-
-    let mut last_error = String::from("OAuth 登录失败");
-
-    // oauth2/callback 只从 URL query 读取 code（form body 会被当作空值），
-    // 因此这里必须使用 query 参数，并按主/备地址依次尝试。
-    for base in api_proxy::OPENFRP_API_BASES {
-        let res = match client
-            .post(format!("{}/oauth2/callback", base))
-            .query(&[("code", code.as_str()), ("redirect_url", redirect_url.as_str())])
-            .send()
-            .await
-        {
-            Ok(res) => res,
-            Err(e) => {
-                last_error = format!("请求 {} 失败: {}", base, e);
-                continue;
-            }
-        };
-
-        let status = res.status();
-        // Authorization 头可能大小写不同，reqwest 的 HeaderMap 查找不区分大小写
-        let authorization = res
-            .headers()
-            .get(reqwest::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .map(|v| v.to_string());
-
-        let json = match res.json::<serde_json::Value>().await {
-            Ok(json) => json,
-            Err(e) => {
-                last_error = if status.is_success() {
-                    format!("解析 {} 的响应失败: {}", base, e)
-                } else {
-                    format!("{} 返回 HTTP {}", base, status.as_u16())
-                };
-                continue;
-            }
-        };
-
-        let flag = json["flag"].as_bool().unwrap_or(false);
-        let msg = json["msg"].as_str().unwrap_or("").to_string();
-        let data = match &json["data"] {
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Null => String::new(),
-            other => other.to_string(),
-        };
-
-        if flag {
-            let authorization = authorization.ok_or_else(|| {
-                "登录失败: 服务端未返回 Authorization".to_string()
-            })?;
-            return Ok(OAuthResponse {
-                authorization,
-                flag,
-                msg,
-                data,
-            });
-        }
-
-        // 服务端明确返回失败（例如 code 无效），换备用地址再试一次
-        last_error = if msg.is_empty() {
-            format!("OAuth 登录失败 (HTTP {})", status.as_u16())
-        } else {
-            msg
-        };
-    }
-
-    Err(last_error)
-}
-
-#[tauri::command]
-async fn start_local_oauth_server<R: Runtime>(app: tauri::AppHandle<R>) -> Result<String, String> {
-    // 先用 TcpListener 绑定随机端口以获取实际端口
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
-    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
-    let server = Server::from_listener(listener, None).map_err(|e| e.to_string())?;
-
-    let app_handle = app.clone();
-    thread::spawn(move || {
-        // 限制等待时间，避免用户取消登录后线程/端口长期占用
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
-        loop {
-            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-            if remaining.is_zero() {
-                break;
-            }
-            let req = match server.recv_timeout(remaining) {
-                Ok(Some(req)) => req,
-                Ok(None) => break,
-                Err(_) => break,
-            };
-            let url = req.url().to_string();
-            // 仅接受 /oauth_callback
-            if url.starts_with("/oauth_callback") {
-                let params = parse_query_params(&url);
-                let code = params.get("code").cloned().unwrap_or_default();
-                let error = params.get("error").cloned().unwrap_or_default();
-                let error_desc = params
-                    .get("error_description")
-                    .cloned()
-                    .unwrap_or_default();
-
-                // 后端直接执行登录流程，并将结果回传主进程。
-                // 只在这里消费一次 code，避免前端/深链重复使用导致 code 失效。
-                let app_for_emit = app_handle.clone();
-                let redirect = format!("http://127.0.0.1:{}/oauth_callback", port);
-                if !code.is_empty() {
-                    tauri::async_runtime::spawn(async move {
-                        match oauth_callback(code, Some(redirect)).await {
-                            Ok(resp) => {
-                                let _ = app_for_emit.emit(
-                                    "oauth-auth",
-                                    serde_json::json!({
-                                        "flag": resp.flag,
-                                        "msg": resp.msg,
-                                        "authorization": resp.authorization,
-                                        "data": resp.data,
-                                    }),
-                                );
-                            }
-                            Err(e) => {
-                                let _ = app_for_emit.emit(
-                                    "oauth-auth",
-                                    serde_json::json!({
-                                        "flag": false,
-                                        "msg": format!("{}", e),
-                                    }),
-                                );
-                            }
-                        }
-                    });
-                } else {
-                    let msg = if error.is_empty() {
-                        "登录失败：回调地址中缺少 code 参数".to_string()
-                    } else if error_desc.is_empty() {
-                        format!("登录失败：{}", error)
-                    } else {
-                        format!("登录失败：{} ({})", error, error_desc)
-                    };
-                    let _ = app_for_emit.emit(
-                        "oauth-auth",
-                        serde_json::json!({ "flag": false, "msg": msg }),
-                    );
-                }
-
-                // 返回应用内置的 login.html 内容（仅提示用户返回启动器，不再跳转深链）
-                let html = include_str!("../../src/login.html");
-                let _ = req.respond(
-                    Response::from_string(html)
-                        .with_header(
-                            Header::from_bytes(
-                                &b"Content-Type"[..],
-                                &b"text/html; charset=utf-8"[..],
-                            )
-                            .unwrap(),
-                        )
-                        .with_status_code(200),
-                );
-                break;
-            } else {
-                let _ = req.respond(Response::from_string("Not Found").with_status_code(404));
-            }
-        }
-    });
-
-    Ok(format!("http://127.0.0.1:{}", port))
 }
 
 #[command]
@@ -2367,127 +1702,84 @@ fn open_app_data_dir() -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-async fn get_local_ports() -> Result<serde_json::Value, String> {
-    #[cfg(target_os = "windows")]
-    {
-        use std::collections::HashMap;
-        let output = std::process::Command::new("netstat")
-            .args(["-ano"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut tcp_ports = Vec::new();
-        let mut udp_ports = Vec::new();
-        let mut pid_map: HashMap<u32, String> = HashMap::new();
-        // 获取进程名
-        if let Ok(tasklist) = std::process::Command::new("tasklist")
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            let taskout = String::from_utf8_lossy(&tasklist.stdout);
-            for line in taskout.lines().skip(3) {
-                let parts: Vec<_> = line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(pid) = parts[1].parse::<u32>() {
-                        pid_map.insert(pid, parts[0].to_string());
-                    }
-                }
-            }
-        }
-        for line in stdout.lines() {
-            let line = line.trim();
-            let parts: Vec<_> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                let proto = parts[0].to_uppercase();
-                let addr = parts[1];
-                let pid = parts.last().and_then(|s| s.parse::<u32>().ok());
-                if let Some(idx) = addr.rfind(':') {
-                    if let Ok(port) = addr[idx + 1..].parse::<u16>() {
-                        let process = pid.and_then(|p| pid_map.get(&p)).cloned();
-                        let entry = serde_json::json!({
-                            "port": port,
-                            "pid": pid,
-                            "process": process,
-                        });
-                        if proto.starts_with("TCP") {
-                            tcp_ports.push(entry);
-                        } else if proto.starts_with("UDP") {
-                            udp_ports.push(entry);
-                        }
-                    }
-                }
-            }
-        }
-        return Ok(serde_json::json!({ "tcp": tcp_ports, "udp": udp_ports }));
+static STARTUP_LINKS_READ: AtomicBool = AtomicBool::new(false);
+static RESTORE_CHECKED: AtomicBool = AtomicBool::new(false);
+
+#[command]
+fn take_startup_links(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    if STARTUP_LINKS_READ.swap(true, Ordering::Relaxed) {
+        return Ok(Vec::new());
     }
-    #[cfg(not(target_os = "windows"))]
-    {
-        use std::collections::HashMap;
-        let output = std::process::Command::new("netstat")
-            .args(["-tunlp"])
-            .output()
-            .map_err(|e| e.to_string())?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut tcp_ports = Vec::new();
-        let mut udp_ports = Vec::new();
-        let mut pid_map: HashMap<u32, String> = HashMap::new();
-        // 解析 /proc 获取进程名
-        if let Ok(entries) = std::fs::read_dir("/proc") {
-            for entry in entries.flatten() {
-                if let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() {
-                    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
-                        let name = cmdline
-                            .split('\0')
-                            .next()
-                            .unwrap_or("")
-                            .split('/')
-                            .last()
-                            .unwrap_or("")
-                            .to_string();
-                        pid_map.insert(pid, name);
-                    }
-                }
-            }
-        }
-        for line in stdout.lines() {
-            let line = line.trim();
-            let parts: Vec<_> = line.split_whitespace().collect();
-            if parts.len() >= 6 {
-                let proto = parts[0].to_lowercase();
-                let addr = parts[3];
-                let pid_info = parts[6];
-                let pid = pid_info
-                    .split('/')
-                    .next()
-                    .and_then(|s| s.parse::<u32>().ok());
-                if let Some(idx) = addr.rfind(':') {
-                    if let Ok(port) = addr[idx + 1..].parse::<u16>() {
-                        let process = pid.and_then(|p| pid_map.get(&p)).cloned();
-                        let entry = serde_json::json!({
-                            "port": port,
-                            "pid": pid,
-                            "process": process,
-                        });
-                        if proto.starts_with("tcp") {
-                            tcp_ports.push(entry);
-                        } else if proto.starts_with("udp") {
-                            udp_ports.push(entry);
-                        }
-                    }
-                }
-            }
-        }
-        return Ok(serde_json::json!({ "tcp": tcp_ports, "udp": udp_ports }));
-    }
-    #[allow(unreachable_code)]
-    Ok(serde_json::json!({ "tcp": [], "udp": [] }))
+    app.deep_link()
+        .get_current()
+        .map(|urls| {
+            urls.unwrap_or_default()
+                .into_iter()
+                .map(|url| url.to_string())
+                .collect()
+        })
+        .map_err(|e| e.to_string())
 }
 
-// 修改 main 函数
+#[command]
+fn take_autostart_restore() -> bool {
+    !RESTORE_CHECKED.swap(true, Ordering::Relaxed) && check_is_autostart()
+}
+
+#[command]
+fn get_quick_start_enabled(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        if config_value(&load_config()?, "QUICK_START_ENABLED").as_deref() == Some("false") {
+            return Ok(false);
+        }
+        app.deep_link()
+            .is_registered("openfrp")
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(target_os = "macos")]
+    return Ok(true);
+}
+
+#[command]
+fn set_quick_start_enabled(app: tauri::AppHandle, enabled: bool) -> Result<(), String> {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        let link = app.deep_link();
+        let was_enabled = link.is_registered("openfrp").map_err(|e| e.to_string())?;
+        if was_enabled != enabled {
+            if enabled {
+                link.register("openfrp")
+            } else {
+                link.unregister("openfrp")
+            }
+            .map_err(|e| e.to_string())?;
+        }
+        if let Err(error) = set_env("QUICK_START_ENABLED".into(), enabled.to_string()) {
+            if was_enabled != enabled {
+                let _ = if was_enabled {
+                    link.register("openfrp")
+                } else {
+                    link.unregister("openfrp")
+                };
+            }
+            return Err(error);
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "macos")]
+    return Err("macOS 由系统管理快速启动链接".into());
+}
+
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
@@ -2499,78 +1791,52 @@ fn main() {
             MacosLauncher::LaunchAgent,
             Some(vec!["--autostart".into()]),
         ))
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            println!("新实例参数: {:?}", argv);
-            let _ = app.emit("second-instance", argv);
-        }))
         .plugin(tauri_plugin_deep_link::init())
         .setup(|app| {
-            let app_dir = init_app_directory(app)?;
-            // 加载持久化环境变量并注入当前进程
-            if let Ok(cfg) = load_config() {
-                if let Some(map) = cfg.env_vars.clone() {
-                    for (k, v) in map {
-                        if !v.is_empty() {
-                            std::env::set_var(k, v);
-                        }
-                    }
-                }
-
-                // 显式字段兜底（避免 env_vars 被清空或缺失）
-                std::env::set_var(
-                    "FRPC_FORCE_TLS",
-                    if cfg.force_tls.unwrap_or(false) { "true" } else { "false" },
-                );
-                std::env::set_var(
-                    "USE_DOH",
-                    if cfg.use_doh.unwrap_or(false) { "true" } else { "false" },
-                );
-                if let Some(addr) = cfg.doh_addr {
-                    if !addr.is_empty() {
-                        std::env::set_var("DOH_ADDR", addr);
-                    }
-                }
+            init_app_directory(app)?;
+            if let Err(error) = update_config(|_| {}) {
+                eprintln!("无法初始化配置: {error}");
             }
-            println!("应用程序目录: {:?}", app_dir);
-
             #[cfg(any(windows, target_os = "linux"))]
+            if config_value(&load_config().unwrap_or_default(), "QUICK_START_ENABLED").as_deref()
+                != Some("false")
             {
-                use tauri_plugin_deep_link::DeepLinkExt;
-                app.deep_link().register("openfrp")?;
+                if let Err(error) = app.deep_link().register("openfrp") {
+                    eprintln!("快速启动链接注册失败: {error}");
+                }
             }
 
             let _tray = create_tray_menu(app)?;
 
             #[cfg(target_os = "windows")]
             {
-                if let Err(e) = register_app_for_notifications() {
+                if let Err(e) = register_app_for_notifications(app) {
                     eprintln!("Failed to register app for notifications: {}", e);
                 }
             }
 
-            app.listen("tauri://update-available", |event| {
-                println!("有更新可用: {}", event.payload());
-            });
-
-            // 更新状态监听器只注册一次（init_update_listener 内部处理状态分发）
-            crate::update::init_update_listener(app.handle());
-
             Ok(())
         })
         .manage(FrpcProcesses::default())
+        .manage(oauth::OAuthAttempt::default())
         .invoke_handler(tauri::generate_handler![
             check_frpc_status,
             download_frpc,
             start_frpc_instance,
             stop_frpc_instance,
-            start_local_oauth_server,
-            get_frpc_version,
+            oauth::begin_local_oauth_login,
+            oauth::start_local_oauth_server,
+            oauth::cancel_local_oauth_server,
+            check_frpc,
+            get_frpc_file,
             get_frpc_cli_version,
-            check_and_download,
+            list_frpc_instances,
             kill_all_processes,
-            emit_event,
             exit_app,
-            check_is_autostart,
+            take_autostart_restore,
+            take_startup_links,
+            get_quick_start_enabled,
+            set_quick_start_enabled,
             get_cpl_version,
             toggle_auto_start,
             check_auto_start,
@@ -2578,79 +1844,41 @@ fn main() {
             set_env,
             get_env,
             check_proxy_bypass,
-            test_network_connection,
             probe_url,
-            oauth_callback,
-            check_update,
-            install_update,
+            oauth::oauth_callback,
+            update::check_update,
             get_build_info,
             get_system_info,
             get_detailed_system_info,
             api_proxy::proxy_api,
+            api_proxy::get_announcement,
             get_app_data_dir,
             open_app_data_dir,
-            get_local_ports, // 新增端口扫描命令
-            download_and_install_update,
+            local_ports::get_local_ports,
+            update::download_and_install_update,
             tcp_ping,
-            argo_access::argo_generate_public_key,
             argo_access::argo_request_login,
-            argo_access::argo_poll_login,
             argo_access::argo_wait_authorization,
             argo_access::argo_cancel_wait,
-            // Argo stubs (已废弃)
-            // argo_generate_public_key,
-            // argo_request_login,
-            // argo_poll_login,
-            // argo_wait_authorization,
-            // argo_cancel_wait,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
 
-    app.run(|app_handle, event| {
-        match event {
-            tauri::RunEvent::Ready => {
-                // 迁移自启动参数、frpc 检查、emit 事件等到这里
-                let args: Vec<String> = std::env::args().collect();
-                let is_autostart = args.iter().any(|arg| arg == "--autostart");
-                if let Some(window) = app_handle.get_webview_window("main") {
-                    if is_autostart {
-                        // 不再修改 URL（window.location.search 变更会触发 WebView 整页重载，
-                        // 开机时小概率卡死）。前端通过 invoke('check_is_autostart') 查询。
-                        let _ = window.eval("localStorage.setItem('appStartedByAutostart', 'true')");
-                        println!("检测到自启动");
-                        // window.hide().unwrap(); // 如需隐藏窗口可取消注释
-                    }
-                    // 检查 frpc 是否存在（使用配置中的文件名，跨平台正确）
-                    let app_dir = get_app_dir();
-                    let frpc_filename = load_config()
-                        .ok()
-                        .and_then(|cfg| cfg.frpc_filename)
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or_else(default_frpc_filename);
-                    let frpc_path = app_dir.join(&frpc_filename);
-                    if !frpc_path.exists() {
-                        let _ = window.emit("redirect_to_settings", "need_download");
-                    }
-                }
-            }
-            tauri::RunEvent::Resumed => {}
-            tauri::RunEvent::MainEventsCleared => {}
-            tauri::RunEvent::Exit => {}
-            tauri::RunEvent::ExitRequested { .. } => {}
-            _ => {}
-        }
-    });
+    app.run(|_, _| {});
 }
 
 #[cfg(target_os = "windows")]
-fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
+fn register_app_for_notifications(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     use winreg::enums::*;
     use winreg::RegKey;
 
     let app_path = std::env::current_exe()?;
-    let app_name = "OpenFrp Launcher";
-    let app_id = "com.openfrp.launcher";
+    let app_name = app
+        .config()
+        .product_name
+        .as_deref()
+        .unwrap_or("OpenFrp Launcher");
+    let app_id = &app.config().identifier;
 
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = format!("SOFTWARE\\Classes\\AppUserModelId\\{}", app_id);
@@ -2660,4 +1888,80 @@ fn register_app_for_notifications() -> Result<(), Box<dyn std::error::Error>> {
     key.set_value("IconPath", &app_path.to_string_lossy().to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn zip_with_entry(name: &str, data: &[u8]) -> Vec<u8> {
+        let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+        zip.start_file(name, zip::write::FileOptions::default())
+            .unwrap();
+        zip.write_all(data).unwrap();
+        zip.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn frpc_extracts_flat_and_nested_windows_archives() {
+        for entry in ["frpc_windows_amd64.exe", "frpc_windows_amd64/frpc.exe"] {
+            let zip = zip_with_entry(entry, b"binary");
+            let mut output = Vec::new();
+            extract_frpc(&zip, "frpc_windows_amd64.exe", &mut output).unwrap();
+            assert_eq!(output, b"binary");
+        }
+    }
+
+    #[test]
+    fn frpc_extracts_a_nested_unix_binary() {
+        let gzip = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut tar = tar::Builder::new(gzip);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(6);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "frpc_darwin_arm64/frpc", &b"binary"[..])
+            .unwrap();
+        let archive = tar.into_inner().unwrap().finish().unwrap();
+        let mut output = Vec::new();
+        extract_frpc(&archive, "frpc_darwin_arm64", &mut output).unwrap();
+        assert_eq!(output, b"binary");
+    }
+
+    #[test]
+    fn missing_frpc_entry_leaves_the_installed_file_in_place() {
+        let directory = tempfile::tempdir().unwrap();
+        let installed = directory.path().join("frpc_windows_amd64.exe");
+        fs::write(&installed, b"old").unwrap();
+        let mut staged = tempfile::NamedTempFile::new_in(directory.path()).unwrap();
+        let zip = zip_with_entry("release-notes.txt", b"no binary");
+        assert!(extract_frpc(&zip, "frpc_windows_amd64.exe", &mut staged).is_err());
+        assert_eq!(fs::read(&installed).unwrap(), b"old");
+    }
+
+    #[test]
+    fn temporary_log_keeps_independent_read_and_write_handles() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut reader, mut stdout, mut stderr) = frpc_log_handles(directory.path()).unwrap();
+        stdout.write_all(b"stdout\n").unwrap();
+        let mut first_line = [0; 7];
+        reader.read_exact(&mut first_line).unwrap();
+        assert_eq!(&first_line, b"stdout\n");
+        stderr.write_all(b"stderr\n").unwrap();
+        drop(stdout);
+        drop(stderr);
+        let mut rest = String::new();
+        reader.read_to_string(&mut rest).unwrap();
+        assert_eq!(rest, "stderr\n");
+    }
+
+    #[tokio::test]
+    async fn tcp_ping_counts_sub_millisecond_local_connections() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let result = tcp_ping("127.0.0.1".into(), listener.local_addr().unwrap().port())
+            .await
+            .unwrap();
+        assert_eq!(result["success"], true);
+        assert!(result["latency_ms"].as_f64().unwrap() >= 0.0);
+    }
 }

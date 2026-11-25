@@ -7,11 +7,11 @@ interface Response {
 }
 
 export default async (req: Struct.EditOrNewUserProxy) => {
-  req.proxy_id = undefined;
+  const { proxy_id: _proxyId, ...body } = req;
   try {
     const response = await callApi<Response>('newProxy', {
       method: 'POST',
-      body: req,
+      body,
     });
     
     // 检查响应是否为 null 或 undefined

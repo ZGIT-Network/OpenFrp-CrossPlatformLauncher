@@ -1,584 +1,261 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch, onMounted, onUnmounted } from 'vue';
-import { lightTheme ,darkTheme, dateZhCN, useOsTheme, zhCN } from 'naive-ui';
-import { GlobalThemeOverrides } from 'naive-ui';
-import { NConfigProvider, NLoadingBarProvider, NDialogProvider, NNotificationProvider, NMessageProvider, NGlobalStyle, NLayout, NLayoutHeader, NLayoutContent, NText, NScrollbar } from 'naive-ui';
-
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue';
+import { dateZhCN, darkTheme, lightTheme, useOsTheme, zhCN } from 'naive-ui';
+import type { GlobalThemeOverrides } from 'naive-ui';
 import { invoke } from '@tauri-apps/api/core';
-import { useRouter, useRoute } from 'vue-router';
-// import { setWindowBlurEffect } from '@/utils/windowEffect';
-
-// 导入布局组件
+import { listen } from '@tauri-apps/api/event';
+import { useRoute } from 'vue-router';
 import Header from './layouts/Header/index.vue';
 import Sidebar from './layouts/Sidebar/index.vue';
-import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
-import Cookies from '@/utils/cookies';
 import { globalLogService } from '@/services/logService';
+import { recordStoppedTunnels, refreshRunningTunnels } from '@/services/tunnelRuntime';
+import type { TunnelInstance } from '@/services/tunnelRuntime';
+import { useSessionStore } from '@/stores/session';
 
-// 添加用户信息相关代码
-const userInfo = ref<Struct.UserInfo>();
-const router = useRouter();
+const session = useSessionStore();
+const isDev = import.meta.env.DEV;
 const route = useRoute();
+const pageScroll = ref<HTMLElement | null>(null);
+watch(() => route.path, () => pageScroll.value?.scrollTo(0, 0));
 
-const clearAuthAndRedirect = () => {
-  sessionStorage.setItem('redirectPath', route.fullPath);
-  Cookies.remove('authorization');
-  localStorage.removeItem('userToken');
-  // 避免重复跳转
-  if (route.path !== '/settings') {
-    router.push('/settings');
-  }
-};
-
-// 获取用户信息函数
-const getUserInfo = () => {
-  frpApiGetUserInfo()
-    .then((res) => {
-      console.log('App.vue 获取用户信息:', res);
-      if (res.flag) {
-        userInfo.value = res.data;
-        console.log('用户信息已更新:', userInfo.value);
-      } else {
-        clearAuthAndRedirect();
-      }
-    })
-    .catch((error) => {
-      console.error('获取用户信息失败:', error);
-      clearAuthAndRedirect();
-    });
-};
-
-// 在应用启动时获取用户信息
-getUserInfo();
-
-// 定时请求 getUserInfo 以刷新 authorization token
-// 仅触发 API 调用，token 更新由 apiClient 在响应头中自动捕获，不影响正常操作时的行为
-let tokenRefreshTimer: ReturnType<typeof setInterval> | undefined;
-const TOKEN_REFRESH_INTERVAL = 10 * 60 * 1000; // 10 分钟
-
-const refreshToken = () => {
-  if (!Cookies.get('authorization')) return; // 未登录则跳过
-  frpApiGetUserInfo().catch(() => {
-    // frpApiGetUserInfo 内部已有 try/catch，这里仅兜底
-  });
-};
-
-// 提供用户信息给所有子组件
-provide('userInfo', { userInfo, getUserInfo });
-
-// 其他现有代码保持不变
-const osThemeRef = useOsTheme();
-const savedScheme = localStorage.getItem('colorScheme') as 'dark' | 'light' | null;
-const colorScheme = ref<'dark' | 'light'>(
-  savedScheme ?? (osThemeRef.value === 'dark' ? 'dark' : 'light')
+const osTheme = useOsTheme();
+const savedScheme = localStorage.getItem('colorScheme');
+const selectedScheme = ref<'light' | 'dark' | null>(
+  savedScheme === 'dark' || savedScheme === 'light' ? savedScheme : null
 );
-const collapsed = ref(false);
-provide('collapsed', collapsed);
-
-// 背景图片相关
-// 背景图片、模糊与覆盖色控制
-const backgroundImage = ref<string>(localStorage.getItem('backgroundImage') || '');
-const backgroundBlur = ref<number>(parseInt(localStorage.getItem('backgroundBlur') || '40')); // 百分比 20-100
-const backgroundOpacity = ref<number>(parseInt(localStorage.getItem('backgroundOpacity') || '100')); // 0-100
-const setBackgroundImage = (url: string) => {
-  backgroundImage.value = url;
-  localStorage.setItem('backgroundImage', url);
-};
-
-const applyBackgroundImage = () => {
-  if (backgroundImage.value) {
-    // 在 body 前插入单独层，避免影响布局
-    let layer = document.getElementById('background-image-layer');
-    if (!layer) {
-      layer = document.createElement('div');
-      layer.id = 'background-image-layer';
-      Object.assign(layer.style, {
-        position: 'fixed',
-        top: '0',
-        left: '0',
-        right: '0',
-        bottom: '0',
-        zIndex: '-1',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center center',
-        backgroundRepeat: 'no-repeat'
-      });
-      document.body.prepend(layer);
-    }
-    layer.style.backgroundImage = `url('${backgroundImage.value}')`;
-    document.body.style.backgroundSize = 'cover';
-    document.body.style.backgroundPosition = 'center center';
-    document.body.style.backgroundRepeat = 'no-repeat';
-  } else {
-    const layer = document.getElementById('background-image-layer');
-    if (layer) layer.remove();
-  }
-};
-
-// 同步背景
-onMounted(applyBackgroundImage);
-watch(backgroundImage, applyBackgroundImage);
-
-const setBackgroundBlur = (percent: number) => {
-  const val = Math.max(20, Math.min(100, percent));
-  backgroundBlur.value = val;
-  localStorage.setItem('backgroundBlur', String(val));
-};
-
-const applyBackgroundBlur = () => {
-  const elem = document.getElementById('background-image-layer');
-  if (elem) {
-    const px = (backgroundBlur.value / 5).toFixed(1); // 20%->4px,100%->20px
-    elem.style.filter = `blur(${px}px)`;
-  }
-};
-
-watch(backgroundBlur, applyBackgroundBlur);
-onMounted(applyBackgroundBlur);
-
-const setBackgroundOpacity = (percent: number) => {
-  const val = Math.max(0, Math.min(100, percent));
-  backgroundOpacity.value = val;
-  localStorage.setItem('backgroundOpacity', String(val));
-};
-
-const applyBackgroundOpacity = () => {
-  const layer = document.getElementById('background-image-layer');
-  if (layer) {
-    layer.style.opacity = (backgroundOpacity.value / 100).toString();
-  }
-};
-
-watch(backgroundOpacity, applyBackgroundOpacity);
-onMounted(applyBackgroundOpacity);
-
-// 覆盖色开关
-const overlayColorEnabled = ref(localStorage.getItem('overlayColorEnabled') !== 'false');
-const toggleOverlayColor = (val: boolean) => {
-  overlayColorEnabled.value = val;
-  localStorage.setItem('overlayColorEnabled', val ? 'true' : 'false');
-};
-const applyOverlayColor = () => {
-  let ol = document.getElementById('overlay-color-layer');
-  if (!overlayColorEnabled.value) {
-    if (ol) ol.remove();
-    // 关闭时清掉 inline style，恢复由 CSS 接管
-    document
-      .querySelectorAll<HTMLElement>('.n-layout-header, .n-layout-sider, .n-layout-sider__content')
-      .forEach((el) => {
-        el.style.backgroundColor = '';
-      });
-    document.body.classList.remove('overlay-color-enabled');
-    return;
-  }
-  if (!ol) {
-    ol = document.createElement('div');
-    ol.id = 'overlay-color-layer';
-    Object.assign(ol.style, {
-      position: 'fixed',
-      top: '0', left: '0', right: '0', bottom: '0',
-      pointerEvents: 'none',
-      zIndex: '-1'
-    });
-    document.body.prepend(ol);
-  }
-  const color = colorScheme.value === 'dark' ? 'rgba(30,30,30,0.30)' : 'rgba(255,255,255,0.40)';
-  ol.style.backgroundColor = color;
-
-  // 给 Header/Sidebar 统一一个标记 class，便于全局样式兜底
-  document.body.classList.add('overlay-color-enabled');
-  // 同步 Header 与 Sidebar 背景（包含 sider 内部滚动容器等）
-  document
-    .querySelectorAll<HTMLElement>('.n-layout-header, .n-layout-sider, .n-layout-sider__content')
-    .forEach((el) => {
-      el.style.backgroundColor = color;
-    });
-};
-
-watch([overlayColorEnabled, colorScheme], applyOverlayColor, { immediate: true });
-
-watch(overlayColorEnabled, (val) => {
-  document.body.classList.toggle('overlay-color-enabled', val);
-}, { immediate: true });
-
-provide('backgroundImageControl', { backgroundImage, setBackgroundImage, backgroundBlur, setBackgroundBlur, backgroundOpacity, setBackgroundOpacity, overlayColorEnabled, toggleOverlayColor });
-
-const currentVersion = ref('v0.1');
-const getCurrentVersion = async (retries = 3) => {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const version = await invoke('get_cpl_version');
-      currentVersion.value = version as string;
-      return;
-    } catch (e) {
-      console.error(`获取版本失败 (尝试 ${i + 1}/${retries}):`, e);
-      if (i === retries - 1) {
-        currentVersion.value = '获取失败';
-      } else {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    }
-  }
-};
-getCurrentVersion();
-
-// 主题相关
-watch(osThemeRef, () => beAttachToggleColorScheme(osThemeRef.value === 'dark' ? 'dark' : 'light'));
-const theme = computed(() => (colorScheme.value === 'dark' ? darkTheme : lightTheme));
-
-const updateBodyColorSchemeForCssColorScheme = () => {
-  if (theme.value !== darkTheme) {
-    document.documentElement.classList.remove('actual-dark');
-  } else {
-    document.documentElement.classList.add('actual-dark');
-  }
-};
-
+const colorScheme = computed(() => selectedScheme.value ?? (osTheme.value === 'dark' ? 'dark' : 'light'));
 const toggleColorScheme = () => {
-  if (colorScheme.value === 'dark') {
-    colorScheme.value = 'light';
-  } else {
-    colorScheme.value = 'dark';
-  }
-  window.localStorage.setItem('colorScheme', colorScheme.value);
+  selectedScheme.value = colorScheme.value === 'dark' ? 'light' : 'dark';
+  localStorage.setItem('colorScheme', selectedScheme.value);
 };
-
-const beAttachToggleColorScheme = (x: string) => {
-  if (x === 'dark' && colorScheme.value === 'light') {
-    colorScheme.value = 'dark';
-  } else if (x === 'light' && colorScheme.value === 'dark') {
-    colorScheme.value = 'light';
-  }
-  window.localStorage.setItem('colorScheme', colorScheme.value);
-};
-
 provide('darkMode', { colorScheme, toggleColorScheme });
-watch(theme, () => updateBodyColorSchemeForCssColorScheme());
-updateBodyColorSchemeForCssColorScheme();
+watch(colorScheme, (scheme) => {
+  document.documentElement.classList.toggle('actual-dark', scheme === 'dark');
+  document.documentElement.classList.toggle('actual-light', scheme === 'light');
+}, { immediate: true });
+const theme = computed(() => colorScheme.value === 'dark' ? darkTheme : lightTheme);
 
+const collapsed = ref(window.innerWidth <= 900);
+const updateSidebar = (event: MediaQueryListEvent) => { collapsed.value = event.matches; };
+const narrowWindow = window.matchMedia('(max-width: 900px)');
+
+function settingNumber(key: string, fallback: number, minimum: number) {
+  const value = Number(localStorage.getItem(key) ?? fallback);
+  return Number.isFinite(value) ? Math.max(minimum, Math.min(100, value)) : fallback;
+}
+const backgroundImage = ref(localStorage.getItem('backgroundImage') || '');
+const backgroundBlur = ref(settingNumber('backgroundBlur', 40, 20));
+const backgroundOpacity = ref(settingNumber('backgroundOpacity', 100, 0));
+const setBackgroundImage = (url: string) => {
+  if (url) localStorage.setItem('backgroundImage', url);
+  else localStorage.removeItem('backgroundImage');
+  backgroundImage.value = url;
+};
+const setBackgroundBlur = (value: number) => {
+  backgroundBlur.value = value;
+  localStorage.setItem('backgroundBlur', String(value));
+};
+const setBackgroundOpacity = (value: number) => {
+  backgroundOpacity.value = value;
+  localStorage.setItem('backgroundOpacity', String(value));
+};
+provide('backgroundImageControl', {
+  backgroundImage, setBackgroundImage, backgroundBlur, setBackgroundBlur, backgroundOpacity, setBackgroundOpacity,
+});
+const backgroundStyle = computed(() => ({
+  backgroundImage: `url(${JSON.stringify(backgroundImage.value)})`,
+  filter: `blur(${backgroundBlur.value / 5}px)`,
+  opacity: backgroundOpacity.value / 100,
+}));
+
+const currentVersion = ref('');
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
-  const commonOverrides = {
-    primaryColor: '#72a0c9',
-    primaryColorHover: '#529bdb',
-    primaryColorPressed: '#0F6FB8',
-    primaryColorSuppl: '#529bdb',
-    borderRadius: '5px',
+  const dark = colorScheme.value === 'dark';
+  return {
+    common: {
+      primaryColor: dark ? '#72a0c9' : '#3974a7',
+      primaryColorHover: dark ? '#529bdb' : '#2c6495',
+      primaryColorPressed: '#0F6FB8',
+      primaryColorSuppl: '#529bdb',
+      borderRadius: '5px',
+    },
+    Layout: {
+      headerBorderColor: dark ? 'rgba(255, 255, 255, 0.25)' : 'rgba(0, 0, 0, 0.18)',
+      siderBorderColor: dark ? 'rgba(255, 255, 255, 0.25)' : 'rgba(0, 0, 0, 0.18)',
+    },
+    Menu: { itemColorHover: dark ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.09)' },
   };
-
-  if (colorScheme.value === 'dark') {
-    // Dark theme overrides
-    return {
-      common: commonOverrides,
-      Layout: {
-        headerBorderColor: 'rgba(255, 255, 255, 0.25)',
-        siderBorderColor: 'rgba(255, 255, 255, 0.25)',
-      },
-      Menu: {
-        itemColorHover: 'rgba(255, 255, 255, 0.15)',
-      },
-    };
-  } else {
-    // Light theme overrides
-    return {
-      common: commonOverrides,
-      Layout: {
-        headerBorderColor: 'rgba(0, 0, 0, 0.18)',
-        siderBorderColor: 'rgba(0, 0, 0, 0.18)',
-      },
-      Menu: {
-        itemColorHover: 'rgba(0, 0, 0, 0.09)',
-      },
-    };
-  }
 });
 
-onMounted(async () => {
-  console.log('App.vue 挂载，初始化全局日志服务');
+let disposed = false;
+const cleanups: (() => void)[] = [];
+const start = (registration: Promise<() => void>) => {
+  void registration.then((unlisten) => {
+    if (disposed) unlisten();
+    else cleanups.push(unlisten);
+  }).catch(console.error);
+};
 
-  try {
-    // 初始化全局日志服务
-    const success = await globalLogService.initialize();
-    if (success) {
-      console.log('全局日志服务初始化成功');
-    } else {
-      console.error('全局日志服务初始化失败');
-    }
-  } catch (e) {
-    console.error('初始化全局日志服务时出错:', e);
-  }
-
-  // 启动定时刷新 authorization（保持登录态不过期）
-  tokenRefreshTimer = setInterval(refreshToken, TOKEN_REFRESH_INTERVAL);
+onMounted(() => {
+  void session.refreshProfile();
+  const timer = setInterval(() => void session.refreshProfile(), 10 * 60 * 1000);
+  narrowWindow.addEventListener('change', updateSidebar);
+  window.addEventListener('pagehide', flushLogs);
+  cleanups.push(() => {
+    clearInterval(timer);
+    narrowWindow.removeEventListener('change', updateSidebar);
+    window.removeEventListener('pagehide', flushLogs);
+  });
+  start(globalLogService.attach());
+  start(listen<TunnelInstance[]>('tunnels-stopped', ({ payload }) => {
+    recordStoppedTunnels(payload);
+    void refreshRunningTunnels().catch(console.error);
+  }));
+  void refreshRunningTunnels().catch(console.error);
+  void invoke<string>('get_cpl_version').then(version => { currentVersion.value = version; }).catch(console.error);
 });
+
+function flushLogs() {
+  globalLogService.flush();
+}
 
 onUnmounted(() => {
-  console.log('App.vue 卸载，清理全局日志服务');
-  // 注意：这里不清理全局日志服务，因为它应该在整个应用生命周期内保持活跃
-  // globalLogService.cleanup();
-  if (tokenRefreshTimer) clearInterval(tokenRefreshTimer);
-  
+  disposed = true;
+  cleanups.forEach(cleanup => cleanup());
 });
-
-// 禁止右键菜单（但放行输入框，允许复制/粘贴/全选等操作）
-document.oncontextmenu = function (event: any) {
-  if (window.event) {
-    event = window.event;
-  }
-  try {
-    var the = event.target;
-    // 放行所有 input（含 password/email/number 等）和 textarea
-    if (the instanceof HTMLInputElement || the instanceof HTMLTextAreaElement) {
-      return true;
-    }
-    return false;
-  } catch (e) {
-    return false;
-  }
-};
-
-const version = `OFCPL 开发模式 | 开发中功能，不代表最终效果`;
-const shouldWatermark = !__DEV_MODE__;
 </script>
 
 <template>
-  <n-watermark
-    v-if="shouldWatermark"
-    :content="version"
-    cross
-    fullscreen
-    :font-size="16"
-    :line-height="80"
-    :width="600"
-    :height="800"
-    :x-offset="12"
-    :y-offset="60"
-    :rotate="-12"
-    style="z-index: 99999"
-  />
-  <div id="captcha-box"></div>
+  <n-watermark v-if="isDev" content="OFCPL 开发模式 | 开发中功能，不代表最终效果"
+    cross fullscreen :font-size="16" :line-height="80" :width="600" :height="800"
+    :x-offset="12" :y-offset="60" :rotate="-12" style="z-index: 99999; pointer-events: none" />
+  <div v-if="backgroundImage" class="app-background" :style="backgroundStyle" aria-hidden="true" />
   <n-config-provider :theme-overrides="themeOverrides" :locale="zhCN" :date-locale="dateZhCN" :theme="theme">
-    <n-dialog-provider>
-      <n-loading-bar-provider>
-        <n-notification-provider>
-          <n-message-provider>
-            <n-layout style="height: 100vh;">
-              <!-- 头部 -->
-              <n-layout-header bordered style="height: 48px; padding: 0">
+    <n-global-style />
+    <n-message-provider>
+      <n-dialog-provider>
+        <n-loading-bar-provider>
+          <n-notification-provider>
+            <div class="app-shell">
+              <n-layout-header bordered class="app-header">
                 <Header />
               </n-layout-header>
-              
-              <!-- 主体布局 -->
-              <n-layout has-sider position="absolute" style="top: 48px; bottom: 0">
-                <!-- 侧边栏组件 -->
-                <Sidebar v-model:collapsed="collapsed" style="/*background-color: transparent !important;*/"/>
-                
-                <!-- 内容区域 -->
-                <n-layout>
-                  <n-layout-content content-style="padding: 24px;">
-                    <n-text
-                      style="position:fixed;display:flex; right:40px;bottom: 40px;z-index:99999;pointer-events: none; user-select: none;opacity: 0.5;">
-                      OpenFrp Cross Platform Launcher<br />Beta v{{currentVersion}} 预览体验计划 {{ userInfo?.username }}
-                    </n-text>
-
-                      <!-- 不要给 router-view 设置 max-height：
-                           它会让滚动内容少算一段高度，导致滚动到底部时最后一行/底部边距被裁掉 -->
-                      <router-view></router-view>
-
-                  </n-layout-content>
-                </n-layout>
+              <n-layout has-sider position="absolute" class="app-main" style="top: 48px;" content-style="height: 100%; overflow: hidden;">
+                <Sidebar v-model:collapsed="collapsed" />
+                <main ref="pageScroll" class="app-page-scroll">
+                  <div class="app-page">
+                    <router-view v-slot="{ Component, route: currentRoute }">
+                      <Transition name="page-switch" mode="out-in">
+                        <div v-if="Component" :key="currentRoute.path">
+                          <component :is="Component" />
+                        </div>
+                      </Transition>
+                    </router-view>
+                  </div>
+                  <n-text v-if="currentVersion" tag="footer" depth="3" class="app-version">
+                    OpenFrp Cross Platform Launcher · Beta v{{ currentVersion }} 预览体验计划
+                  </n-text>
+                </main>
               </n-layout>
-            </n-layout>
-          </n-message-provider>
-        </n-notification-provider>
-      </n-loading-bar-provider>
-    </n-dialog-provider>
-    <n-global-style />
+            </div>
+          </n-notification-provider>
+        </n-loading-bar-provider>
+      </n-dialog-provider>
+    </n-message-provider>
   </n-config-provider>
 </template>
 
-
 <style>
-html,
-body {
+html, body, #app {
   margin: 0;
-  padding: 0;
-  height: 100%;
   width: 100%;
-  background-color: transparent !important;
+  height: 100%;
 }
-
+html {
+  overflow: hidden;
+  color-scheme: light;
+  --launcher-base: #f7f7f7;
+  --launcher-surface: rgba(255, 255, 255, 0.4);
+  --launcher-main: rgba(255, 255, 255, 0.2);
+  --launcher-link: #3974a7;
+  --launcher-selection: rgba(57, 116, 167, 0.12);
+}
+html.actual-dark {
+  color-scheme: dark;
+  --launcher-base: #202020;
+  --launcher-surface: rgba(30, 30, 30, 0.4);
+  --launcher-main: rgba(30, 30, 30, 0.3);
+  --launcher-link: #72a0c9;
+  --launcher-selection: rgba(114, 160, 201, 0.16);
+}
 #app {
-  height: 100%;
-  width: 100%;
-  background-color: transparent !important;
+  position: relative;
+  isolation: isolate;
+  background-color: var(--launcher-base);
 }
-
-.gaussian-blur-enabled {
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+.app-background {
+  position: absolute;
+  inset: -20px;
+  z-index: -1;
+  background-position: center;
+  background-size: cover;
+  pointer-events: none;
 }
-
-.n-layout {
-  background-color: rgba(255, 255, 255, 0.20) !important; 
-  height: 100%;
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  position: relative;
 }
-
-.n-layout-header {
-  background-color: rgba(255, 255, 255, 0.45) !important; 
-  height: 100%;
+.app-header.n-layout-header {
+  height: 48px;
+  padding: 0;
+  background-color: var(--launcher-surface);
 }
-
-.n-layout-sider {
-  background-color: rgba(255, 255, 255, 0.45) !important; 
-  height: 100%;
+.app-main.n-layout {
+  background-color: var(--launcher-main);
 }
-
-/* 覆盖色启用后，Header/Sidebar 走同一套色值（JS 会写 inline，这里做兜底/一致性） */
-
-
-/* body.overlay-color-enabled .n-layout-sider__content {
-  background-color: rgba(255, 255, 255, 0.40) !important;
-}
-
-body.actual-dark.overlay-color-enabled .n-layout-sider__content {
-  background-color: rgba(30, 30, 30, 0.30) !important;
-} */
-
-.actual-dark .n-layout  {
-  background-color: rgba(30, 30, 30, 0.3) !important; 
-  height: 100%;
-  /* 暗色主题下内容区域背景 */
-}
-
-
-.actual-dark .n-layout-header  {
-  background-color: rgba(30, 30, 30, 0.2) !important; 
-  height: 100%;
-} 
-
-/* .n-layout-content {
+.app-page-scroll {
+  min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
-  background-color: rgba(255, 255, 255, 0.4) !important; 
-  /* 内容区域半透明但不完全透明 */
-  /* height:100%;
-  flex: auto;
-} */ 
-
-/* .actual-dark .n-layout-content {
-  background-color: rgba(30, 30, 30, 0.5) !important; 
-  height: 100%;
-  /* 暗色主题下内容区域背景 */
-/* }  */
-
-.n-layout-sider {
-  background-color: transparent;
+  overflow: auto;
 }
-
-a {
-  text-decoration: none;
-  color: #72a0c9;
+.app-page {
+  flex: 1 0 auto;
+  padding: 20px 24px 24px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
-
-a:hover {
-  color: #529bdb;
+.app-page h2:first-child {
+  margin-top: 0;
 }
-
-.animate__animated {
-  --animate-duration: 0.55s;
+@media (prefers-reduced-motion: no-preference) {
+  .page-switch-enter-active { transition: opacity 160ms ease-out, transform 160ms ease-out; }
+  .page-switch-leave-active { transition: opacity 90ms ease-in; }
+  .page-switch-enter-from { opacity: 0; transform: translateY(4px); }
+  .page-switch-leave-to { opacity: 0; }
 }
-
-/* 暗色模式样式 */
-.actual-dark {
-  color-scheme: dark light;
+.app-version {
+  align-self: flex-end;
+  text-align: right;
+  font-size: 12px;
+  padding: 0 24px 16px;
 }
-
 .n-card {
-  background-color: rgba(255, 255, 255, 0.4) !important;
+  background-color: var(--launcher-surface) !important;
   backdrop-filter: blur(8px);
 }
+a { text-decoration: none; color: var(--launcher-link); }
+a:hover { color: #529bdb; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.32); }
+.actual-dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.22); }
+.actual-dark ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.36); }
 
-.actual-dark .n-card {
-  background-color: rgba(30, 30, 30, 0.3) !important;
-}
-
-/* ---------- 原生滚动条兜底样式（代码块等仍会使用原生滚动条） ---------- */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-button {
-  display: none;
-}
-
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 999px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.32);
-}
-
-.actual-dark ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.actual-dark ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.36);
-}
-
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-
-/* 亮色模式样式 */
-/* :not(.actual-dark) {
-  color-scheme: light;
-} */
-
-/* 根样式 */
-:root {
-  font-family: 'Segoe UI', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol' !important;
-  height: 100%;
-}
-
-body {
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-
-#root,
-.actual-dark,
-.actual-light {
-  height: 100%;
-  background-color: transparent !important;
-}
-
-@media screen and (min-width: 700px) {
-  .n-config-provider,
-  body {
-    height: 100%;
-  }
-
-  #root {
-    height: 100%;
-  }
-}
-
-/* 处理亮/暗模式样式 */
-.actual-dark {
-  color-scheme: dark light;
-}
-
-.actual-light {
-  color-scheme: light;
+@media (max-width: 900px) {
+  .app-page { padding: 16px; }
+  .app-version { padding-inline: 16px; }
 }
 </style>

@@ -1,7 +1,7 @@
 import { callApi } from '../../utils/apiClient';
 
 interface Request {
-  proxy_id: bigint;
+  proxy_id: number;
   proxy_do: boolean;
 }
 

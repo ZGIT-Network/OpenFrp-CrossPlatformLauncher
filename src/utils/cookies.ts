@@ -15,7 +15,9 @@ export default {
             localStorage.removeItem(name);
             return undefined;
           }
-          return data.value;
+          if (typeof data.value === 'string') return data.value;
+          localStorage.removeItem(name);
+          return undefined;
         }
         // 如果不是特定格式，直接返回值
         return value;

@@ -1,42 +1,23 @@
 <script setup lang="ts">
-import { NCard, NAlert, NSpace, NCollapse, NCollapseItem, NList, NListItem, NThing, NTable, NScrollbar, NImage, NGradientText, NText, NConfigProvider } from 'naive-ui';
-import { ref, onMounted, inject } from 'vue';
+import { onMounted, ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { darkTheme } from 'naive-ui'
-
+import { darkTheme } from 'naive-ui';
 import cardImage from '@/assets/pexels-pok-rie-6135376.jpg';
 import ymaalyp from '@/assets/ymaalyp.png';
 import ymavx from '@/assets/ymawx.png';
 
-const currentVersion = ref('v0.1')
+const currentVersion = ref('—');
+const systemInfo = ref('—');
+const buildInfo = ref('—');
 
-const getCurrentVersion = async () => {
-    try {
-        const version = await invoke('get_cpl_version')
-        currentVersion.value = version as string
-    } catch (e) {
-        currentVersion.value = '获取失败'
-        console.error('获取版本失败:', e)
-    }
-}
-getCurrentVersion()
-
-const systemInfo = ref('')
-const buildInfo = ref('')
-
-onMounted(async () => {
-    try {
-        currentVersion.value = await invoke('get_cpl_version')
-        systemInfo.value = await invoke('get_system_info')
-        buildInfo.value = await invoke('get_build_info')
-    } catch (e) {
-        console.error('获取版本信息失败:', e)
-    }
-})
+onMounted(() => {
+  void Promise.allSettled(([
+    ['get_cpl_version', currentVersion], ['get_system_info', systemInfo], ['get_build_info', buildInfo],
+  ] as const).map(([command, target]) => invoke<string>(command).then(value => { target.value = value; })));
+});
 </script>
 <template>
-    <n-scrollbar>
-        <n-space vertical>
+    <n-space vertical :size="12">
             <!-- <n-alert type="warning">您当前正在使用 Beta 测试版本，可能存在一些问题，请谨慎在生产环境使用。<br />若遇到问题，请及时反馈。</n-alert> -->
 
             <n-config-provider :theme="darkTheme">
@@ -96,18 +77,15 @@ onMounted(async () => {
             <n-card>
                 <n-collapse :default-expanded-names="['1']">
                     <n-collapse-item title="赞助开发" name="1">
-                        <template #header-extra>
-                            <n-gradient-text type="error">
-                                快吃不起饭了求你了给点吧.jpg
-                            </n-gradient-text>
-                        </template>
                         <div v-external>
                             <n-text>
                                 感谢使用。<br />
                                 如果您愿意赞助本项目，请扫描下方二维码，或者前往 <a href="https://afdian.com/a/zgitnetwork">爱发电</a>
                                 赞助。<br />您的每一笔赞助都将用于本项目的开发并标注在 <a href="https://www.zyghit.cn/sponsor">赞助者列表</a>。<br />
-                                <n-image width="300" :src="ymavx" /><n-image width="200"
-                                    :src="ymaalyp" /><br />
+                                <n-space align="start">
+                                    <n-image style="width: min(300px, 52vw)" :src="ymavx" />
+                                    <n-image style="width: min(200px, 52vw)" :src="ymaalyp" />
+                                </n-space>
                             </n-text>
                         </div>
                     </n-collapse-item>
@@ -155,6 +133,5 @@ onMounted(async () => {
                     </n-collapse-item>
                 </n-collapse>
             </n-card>
-        </n-space>
-    </n-scrollbar>
+    </n-space>
 </template>

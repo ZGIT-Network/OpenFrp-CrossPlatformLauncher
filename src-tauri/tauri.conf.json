@@ -68,7 +68,8 @@
         }
       },
       "files": {},
-      "hardenedRuntime": false,
+      "hardenedRuntime": true,
+      "entitlements": "../macos.entitlements",
       "minimumSystemVersion": "10.15",
       "exceptionDomain": "",
       "providerShortName": "openfrp"

@@ -1,779 +1,282 @@
 <script setup lang="ts">
-import { NCard, NAlert, NSpace, NH4, NH2, NList, NIcon, NThing, NTable, NScrollbar, NImage, NGradientText, NText, NConfigProvider, NButton, NTag, NResult, NSelect, NFormItem, NForm, NInputNumber } from 'naive-ui';
-import { ref, onMounted, computed, Ref, inject } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
-import { ReloadOutline, CheckmarkCircle, CloseCircle, AlertCircle, Ellipse } from '@vicons/ionicons5';
-
-const currentVersion = ref('v0.1')
-
-import frpApiGetNodeStatus from '@/requests/frpApi/frpApiGetNodeStatus';
-import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
+import { ReloadOutline, CheckmarkCircle, CloseCircle, AlertCircle } from '@vicons/ionicons5';
+import { useSessionStore } from '@/stores/session';
+import { errorMessage } from '@/utils/apiClient';
 import { OPENFRP_API_BASES } from '@/utils/apiBase';
-
-const userInfoObj = inject<{ userInfo: Ref<Struct.UserInfo | undefined>, getUserInfo: () => void }>('userInfo');
-
-const getCurrentVersion = async () => {
-    try {
-        const version = await invoke('get_cpl_version')
-        currentVersion.value = version as string
-    } catch (e) {
-        currentVersion.value = '获取失败'
-        console.error('获取版本失败:', e)
-    }
-}
-getCurrentVersion()
-
-const systemInfo = ref('')
-const buildInfo = ref('')
-
-const isLoggedIn = computed(() => {
-    return !!userInfoObj?.userInfo?.value?.token;
-});
-
-// 节点测试相关
-interface NodeItem {
-    id: number;
-    name: string;
-    hostname: string;
-    port: number;
-    status: number;
-    description: string;
-}
-
-const nodeList = ref<NodeItem[]>([]);
-const selectedNode = ref<number | null>(null);
-const testPort = ref<number>(8120);
-const nodeTesting = ref(false);
-const nodeTestResult = ref<{
-    success: boolean;
-    message: string;
-    latency?: any;
-} | null>(null);
-
-// 定义服务检测配置
-interface ServiceCheck {
-    id: string;
-    name: string;
-    url: string;
-    status: boolean | null;
-    checking: boolean;
-    error: string | null;
-    latency: number | null; // 增加延迟字段
-}
-
-const serviceChecks = ref<ServiceCheck[]>([
-    {
-        id: 'main-api',
-        name: 'OPENFRP 基本 API (api.openfrp.net)',
-        url: `${OPENFRP_API_BASES[0]}/commonQuery/get?key=test`,
-        status: null,
-
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'backup-api',
-        name: 'OPENFRP 备用 API (ofapi.naids.com)',
-        url: `${OPENFRP_API_BASES[1]}/commonQuery/get?key=test`,
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'cplupd',
-        name: 'OpenFrp CPL 更新检查服务',
-        url: 'https://api.zyghit.cn/updater/ofcpl',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'zgit-api',
-        name: 'ZGIT Network OPENAPI',
-        url: 'https://api.zyghit.cn',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    
-    {
-        id: 'nykid',
-        name: 'Natayark OpenID 用户中心',
-        url: 'https://account.naids.com/api/',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'collect-api',
-        name: 'Natayark 人机验证服务',
-        url: 'https://cv.naids.com/gen',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'i-zyghit',
-        name: 'ZGIT Network 基本资源服务',
-        url: 'https://i.zyghit.cn/',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'r-zyghit',
-        name: 'ZGIT Network 大型资源文件服务',
-        url: 'https://r.zyghit.cn/',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-    {
-        id: 'r-naids',
-        name: 'Natayark 静态资源服务',
-        url: 'https://staticassets.naids.com/',
-        status: null,
-        checking: false,
-        error: null,
-        latency: null
-    },
-])
-
-// 全局检查状态变量
-const checking = ref(false)
-const onlineStatus = ref<boolean | null>(null)
-const checkingNetwork = ref(false)
-const networkError = ref<string | null>(null)
-const ipInfo = ref('')
-const showFullIP = ref(false)
-
-// 代理网络检测相关
-const proxyBypassStatus = ref<boolean | null>(null)
-const useDoHStatus = ref<boolean | null>(null)
-const dohAddr = ref<string | null>(null)
-const frpcForceTlsEnabled = ref<boolean | null>(null)
-const proxyNetworkTestResults = ref<any>(null)
-const testingProxyNetwork = ref<boolean>(false)
-
-const detailedSystemInfo = ref('')
-const all_total_node = ref(0);
-
-
-const getNodeStatus = () => {
-    frpApiGetNodeStatus().then((res) => {
-        if (res.flag)
-            all_total_node.value = 0;
-
-        // 将每个节点的 total_traffic_in 累加到 all_total_traffic_in
-        res.data.forEach((item: any) => {
-            if (item.version !== '') all_total_node.value += 1;
-        });
-
-        // console.log(res.data);
-
-    }
-    );
-};
-
-getNodeStatus();
-
+import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
+import frpApiGetNodeStatus from '@/requests/frpApi/frpApiGetNodeStatus';
 
 interface ProbeResult {
-    success: boolean
-    status: number | null
-    latency_ms: number
-    body?: string | null
-    error?: string | null
+  success: boolean; status?: number; latency_ms: number; body?: string; error?: string;
 }
-
-// 检查网络连接状态（走 Rust 后端，避免 WebView 的 CORS 限制）
-const checkNetworkConnectivity = async () => {
-    checkingNetwork.value = true
-    networkError.value = null
-    try {
-        const result = await invoke<ProbeResult>('probe_url', {
-            url: 'https://www.baidu.com',
-            timeoutMs: 5000
-        })
-        onlineStatus.value = result.success
-        if (!result.success) {
-            networkError.value = result.error || '网络连接异常'
-        }
-    } catch (e: any) {
-        console.error('网络连接检查失败:', e)
-        onlineStatus.value = false
-        networkError.value = e?.message || '网络连接异常'
-    } finally {
-        checkingNetwork.value = false
-    }
+interface Service {
+  name: string; url: string; result?: ProbeResult; pending: boolean;
 }
+const services = ref<Service[]>([
+  ['OPENFRP 基本 API (api.openfrp.net)', `${OPENFRP_API_BASES[0]}/commonQuery/get?key=test`],
+  ['OPENFRP 备用 API (ofapi.naids.com)', `${OPENFRP_API_BASES[1]}/commonQuery/get?key=test`],
+  ['OpenFrp CPL 更新检查服务', 'https://api.zyghit.cn/updater/ofcpl'],
+  ['ZGIT Network OPENAPI', 'https://api.zyghit.cn'],
+  ['Natayark OpenID 用户中心', 'https://account.naids.com/api/'],
+  ['Natayark 人机验证服务', 'https://cv.naids.com/gen'],
+  ['ZGIT Network 基本资源服务', 'https://i.zyghit.cn/'],
+  ['ZGIT Network 大型资源文件服务', 'https://r.zyghit.cn/'],
+  ['Natayark 静态资源服务', 'https://staticassets.naids.com/'],
+].map(([name, url]) => ({ name, url, pending: false })));
+const session = useSessionStore();
+const userAgent = navigator.userAgent;
+const checking = ref(false);
+const online = ref<boolean>();
+const timestamp = ref('');
+const currentVersion = ref('—');
+const systemInfo = ref('—');
+const buildInfo = ref('—');
+const detailedSystemInfo = ref('—');
+const proxyBypass = ref<boolean>();
+const useDoH = ref<string | null>();
+const dohAddr = ref<string | null>();
+const forceTls = ref<string | null>();
 
-// 检查代理绕过状态
-const checkProxyBypassStatus = async () => {
-    try {
-        const isBypassed = await invoke('check_proxy_bypass') as boolean
-        proxyBypassStatus.value = isBypassed
-    } catch (e) {
-        console.error('检查代理状态失败:', e)
-        proxyBypassStatus.value = null
-    }
-}   
+const ip = ref('');
+const location = ref('');
+const ipLoading = ref(false);
+const fullIP = ref(false);
+const maskAddress = (address: string) => address.includes(':')
+  ? `${address.split(':').slice(0, 2).filter(Boolean).join(':')}::…`
+  : address.replace(/\.\d+$/, '.xxx');
+const shownIp = computed(() => fullIP.value ? ip.value : maskAddress(ip.value));
 
-const checkDoHStatus = async () => {
-    try {
-        const useDohEnv = await invoke('get_env', { key: 'USE_DOH' }) as (string | null)
-        useDoHStatus.value = (useDohEnv === 'true')
-        if (useDoHStatus.value) {
-            // 获取自定义 DoH 地址（若未设置则保持默认）
-            const addr = await invoke('get_env', { key: 'DOH_ADDR' }) as (string | null)
-            dohAddr.value = addr && addr.length > 0 ? addr : '223.5.5.5'
-        } else {
-            dohAddr.value = null
-        }
-    } catch (e) {
-        console.error('检查 DoH 状态失败:', e)
-        useDoHStatus.value = null
-        dohAddr.value = null
-    }
+async function probe(url: string, readBody = false): Promise<ProbeResult> {
+  try {
+    return await invoke<ProbeResult>('probe_url', { url, timeoutMs: 5000, readBody });
+  } catch (error) {
+    return { success: false, latency_ms: 0, error: errorMessage(error, '网络连接异常') };
+  }
 }
-
-const checkForceTlsStatus = async () => {
-    try {
-        const forceTlsEnv = await invoke('get_env', { key: 'FRPC_FORCE_TLS' }) as (string | null)
-        frpcForceTlsEnabled.value = (forceTlsEnv === 'true')
-    } catch (e) {
-        console.error('检查 Force TLS 状态失败:', e)
-        frpcForceTlsEnabled.value = null
-    }
+async function checkIp() {
+  ipLoading.value = true;
+  fullIP.value = false;
+  ip.value = '';
+  location.value = '';
+  try {
+    const result = await probe('https://myip.ipip.net/json', true);
+    const value = JSON.parse(result.body || '{}');
+    const address: unknown = value.data?.ip;
+    if (!result.success || value.ret !== 'ok' || typeof address !== 'string' || !address) return;
+    ip.value = address;
+    location.value = Array.isArray(value.data.location) ? value.data.location.filter(Boolean).join(' ') : '';
+  } catch {
+    // 接口异常时保持空值，页面显示获取失败。
+  } finally {
+    ipLoading.value = false;
+  }
 }
-
-
-// 检查单个服务状态（走 Rust 后端，避免 WebView 的 CORS 限制）
-const checkServiceStatus = async (service: ServiceCheck) => {
-    service.checking = true
-    service.error = null
-    service.latency = null
-
-    try {
-        const result = await invoke<ProbeResult>('probe_url', {
-            url: service.url,
-            timeoutMs: 5000
-        })
-
-        service.latency = result.latency_ms
-        if (result.success) {
-            const status = result.status ?? 0
-            // 只要能拿到 HTTP 响应（且非 5xx）就视为服务可达
-            service.status = status < 500
-            if (!service.status) {
-                service.error = `HTTP ${status}`
-            }
-        } else {
-            service.status = false
-            service.error = result.error || '网络连接异常'
-        }
-    } catch (e: any) {
-        console.error(`${service.name}检查失败:`, e)
-        service.status = false
-        service.error = e?.message || '网络连接异常'
-    } finally {
-        service.checking = false
-    }
-}
-
-
-const getIpInfo = async () => {
-    try {
-        const result = await invoke<ProbeResult>('probe_url', {
-            url: 'https://myip.ipip.net/json',
-            timeoutMs: 8000,
-            readBody: true
-        })
-        if (result.success && result.body) {
-            ipInfo.value = result.body.trim()
-        } else {
-            console.error('获取IP信息失败:', result.error)
-            ipInfo.value = '获取失败'
-        }
-    } catch (e) {
-        console.error('获取IP信息失败:', e)
-        ipInfo.value = '获取失败'
-    }
-}
-
-// 获取解析后的IP信息
-const parsedIpInfo = computed(() => {
-    try {
-        return JSON.parse(ipInfo.value)
-    } catch (e) {
-        return null
-    }
-})
-
-// 获取打码后的IP
-const maskedIP = computed(() => {
-    if (!parsedIpInfo.value || parsedIpInfo.value.ret !== 'ok') return '获取失败'
-    const ip = parsedIpInfo.value.data.ip
-    const parts = ip.split('.')
-    if (parts.length !== 4) return ip
-    return `${parts[0]}.${parts[1]}.xxx.${parts[3]}`
-})
-
-// 获取完整IP
-const fullIP = computed(() => {
-    if (!parsedIpInfo.value || parsedIpInfo.value.ret !== 'ok') return '获取失败'
-    return parsedIpInfo.value.data.ip
-})
-
-// 获取位置信息
-const locationInfo = computed(() => {
-    if (!parsedIpInfo.value || parsedIpInfo.value.ret !== 'ok') return ''
-    return parsedIpInfo.value.data.location.join(' ')
-})
-
-// 切换IP显示状态
-const toggleIPDisplay = () => {
-    showFullIP.value = !showFullIP.value
-}
-
-
-// 依次执行所有服务检查，增加延迟
-const checkAllServicesSequentially = async () => {
-    // 先将所有服务标记为检查中状态
-    serviceChecks.value.forEach(service => {
-        service.checking = true
-        service.status = null
-        service.error = null
-        service.latency = null
-    })
-
-    // 等待一小段时间，确保UI更新
-    await new Promise(resolve => setTimeout(resolve, 50))
-
-    for (const service of serviceChecks.value) {
-        await checkServiceStatus(service)
-        // 增加延迟，使检查过程更明显
-        await new Promise(resolve => setTimeout(resolve, 300))
-    }
-}
-
-// 执行所有检查
-const performAllChecks = async () => {
-    checking.value = true
-    try {
-        await checkNetworkConnectivity()
-        await checkProxyBypassStatus()
-        await checkDoHStatus()
-        await checkForceTlsStatus()
-        // 增加延迟，使检查过程更明显
-        await new Promise(resolve => setTimeout(resolve, 300))
-        await checkAllServicesSequentially()
-        // 获取节点列表
-        await getNodeList()
-
-    } finally {
-        checking.value = false
-    }
-}
-
-onMounted(async () => {
-    try {
-        currentVersion.value = await invoke('get_cpl_version')
-        systemInfo.value = await invoke('get_system_info')
-        buildInfo.value = await invoke('get_build_info')
-        detailedSystemInfo.value = await invoke('get_detailed_system_info')
-
-        await getIpInfo()
-    } catch (e) {
-        console.error('获取版本信息失败:', e)
-    }
-
-    // 组件挂载后自动执行检查
-    performAllChecks()
-})
-const timestamp = new Date().toISOString()
-const userAgent = navigator.userAgent
-
-
-// 获取节点列表
-const getNodeList = async () => {
-    try {
-        const res = await frpApiGetNodeList();
-        if (res.flag && res.data && res.data.list) {
-            nodeList.value = res.data.list.map((item: any) => ({
-                id: item.id,
-                name: item.name,
-                hostname: item.hostname,
-                port: item.port,
-                status: item.status,
-                description: item.description
-            }));
-
-            // 如果还没有选择节点，默认选择第一个
-            if (!selectedNode.value && nodeList.value.length > 0) {
-                selectedNode.value = nodeList.value[0].id;
-                testPort.value = nodeList.value[0].port;
-            }
-        }
-    } catch (e) {
-        console.error('获取节点列表失败:', e);
-    }
-};
-
-// 节点选择改变时更新端口
-const onNodeChange = (value: number) => {
-    const node = nodeList.value.find(n => n.id === value);
-    if (node) {
-        testPort.value = node.port;
-    }
-};
-
-interface TcpPingResult {
-    success: boolean;
-    message: string;
-    latency_ms: number | null;
-}
-
-// 测试节点连通性（通过后端实现）
-const testNodeConnectivity = async () => {
-    if (!selectedNode.value) {
-        nodeTestResult.value = {
-            success: false,
-            message: '请选择一个节点'
-        };
-        return;
-    }
-
-    const node = nodeList.value.find(n => n.id === selectedNode.value);
-    if (!node) {
-        nodeTestResult.value = {
-            success: false,
-            message: '未找到选择的节点'
-        };
-        return;
-    }
-
-    nodeTesting.value = true;
-    nodeTestResult.value = null;
-
-    try {
-        // 调用后端的TCP ping功能
-        const result = await invoke<TcpPingResult>('tcp_ping', {
-            host: node.hostname,
-            port: testPort.value
-        });
-
-        nodeTestResult.value = {
-            success: result.success,
-            message: result.message,
-            latency: result.latency_ms
-        };
-    } catch (e) {
-        nodeTestResult.value = {
-            success: false,
-            message: '测试过程中发生错误: ' + (e as Error).message
-        };
-    } finally {
-        nodeTesting.value = false;
-    }
-};
-
-
-// 节点选择选项
-// 节点选择选项
-const nodeOptions = computed(() => {
-  return nodeList.value.map(node => ({
-    label: `#${node.id} ${node.name} (${maskHostname(node.hostname)})`,
-    value: node.id
+async function checkServices() {
+  const general = probe('https://www.baidu.com');
+  await Promise.all(services.value.map(async service => {
+    service.pending = true;
+    try { service.result = await probe(service.url); }
+    finally { service.pending = false; }
   }));
+  online.value = (await general).success || services.value.some(service => service.result?.success);
+}
+function serviceState(result?: ProbeResult) {
+  if (!result) return '待检测';
+  if (!result.success) return '无法访问';
+  const status = result.status ?? 0;
+  if (status >= 500) return `服务异常（HTTP ${status}）`;
+  if (status >= 400) return `可达（HTTP ${status} · ${result.latency_ms} ms）`;
+  return `已连接，延迟 ${result.latency_ms}ms`;
+}
+
+type Node = Pick<Struct.Node, 'id' | 'name' | 'port'> & { hostname: string };
+const nodes = ref<Node[]>([]);
+const nodeCount = ref<number>();
+const nodeError = ref('');
+const selected = ref<number | null>(null);
+const port = ref<number | null>(null);
+const testing = ref(false);
+const testResult = ref<{ success: boolean; message: string }>();
+let nodeRequest = 0;
+
+const nodeOptions = computed(() => nodes.value.map(node => ({ label: `#${node.id} ${node.name}`, value: node.id })));
+watch(selected, (id) => {
+  port.value = nodes.value.find(node => node.id === id)?.port ?? null;
+  testResult.value = undefined;
 });
+watch(port, () => { testResult.value = undefined; });
 
-// 添加函数用于打码hostname
-const maskHostname = (hostname: string): string => {
-  
-  // 按照域名规则处理，将域名分割成各部分
-  const parts = hostname.split('.');
-  
-  // 如果是三级或更高级域名（至少3个部分）
-  if (parts.length >= 3) {
-    // 对子域名部分（第一个部分）进行打码
-    const subdomain = parts[0];
-    let maskedSubdomain;
-    
-    if (subdomain.length <= 4) {
-      // 如果子域名很短，只显示首尾字符
-      maskedSubdomain = subdomain.charAt(0) + "***" + subdomain.charAt(subdomain.length - 1);
-    } else {
-      // 保留前2位和后2位，中间用***代替
-      maskedSubdomain = subdomain.substring(0, 5) + "***" + subdomain.substring(subdomain.length - 5);
-    }
-    
-    // 重新组合域名
-    parts[0] = maskedSubdomain;
-    return parts.join('.');
+async function fetchNodes() {
+  const request = ++nodeRequest;
+  if (!session.signedIn) {
+    nodes.value = [];
+    nodeCount.value = undefined;
+    selected.value = null;
+    return;
   }
-  
-  // 对于其他域名格式，保留前3位和后3位
-  if (hostname.length <= 8) {
-    // 如果域名很短，只显示首尾字符
-    return hostname.charAt(0) + "***" + hostname.charAt(hostname.length - 3);
+  nodeError.value = '';
+  const [list, status] = await Promise.all([frpApiGetNodeList(), frpApiGetNodeStatus()]);
+  if (request !== nodeRequest) return;
+  if (status.flag && Array.isArray(status.data)) {
+    nodeCount.value = status.data.filter(node => typeof node?.version === 'string' && node.version.trim()).length;
   } else {
-    // 保留前3位和后3位
-    const prefix = hostname.substring(0, 3);
-    const suffix = hostname.substring(hostname.length - 3);
-    return prefix + "***" + suffix;
+    nodeCount.value = undefined;
   }
-};
+  if (!list.flag || !Array.isArray(list.data?.list)) {
+    nodeError.value = list.msg || '获取节点列表失败';
+    return;
+  }
+  nodes.value = (list.data.list as Node[]).filter(node => typeof node?.hostname === 'string'
+    && /^[\da-z:.[\]_-]+$/i.test(node.hostname) && Number.isInteger(node.port) && node.port > 0 && node.port <= 65535);
+  if (!nodes.value.some(node => node.id === selected.value)) selected.value = nodes.value[0]?.id ?? null;
+}
+const canTest = computed(() => selected.value != null && port.value != null
+  && Number.isInteger(port.value) && port.value >= 1 && port.value <= 65535);
+async function testNode() {
+  if (testing.value || !canTest.value) return;
+  const node = nodes.value.find(node => node.id === selected.value);
+  if (!node) return;
+  const testPort = port.value;
+  testing.value = true;
+  testResult.value = undefined;
+  try {
+    const result = await invoke<{ success: boolean; message: string }>('tcp_ping', { host: node.hostname, port: testPort });
+    if (node.id === selected.value && testPort === port.value) testResult.value = result;
+  } catch (error) {
+    if (node.id === selected.value && testPort === port.value) testResult.value = { success: false, message: errorMessage(error) };
+  } finally {
+    testing.value = false;
+  }
+}
+
+async function checkEverything() {
+  if (checking.value) return;
+  checking.value = true;
+  online.value = undefined;
+  timestamp.value = new Date().toLocaleString();
+  await Promise.allSettled([
+    checkServices(), checkIp(), fetchNodes(),
+    invoke<boolean>('check_proxy_bypass').then(value => { proxyBypass.value = value; }).catch(() => { proxyBypass.value = undefined; }),
+    ...([
+      ['USE_DOH', useDoH], ['DOH_ADDR', dohAddr], ['FRPC_FORCE_TLS', forceTls],
+    ] as const).map(([key, target]) =>
+      invoke<string | null>('get_env', { key }).then(value => { target.value = value; }).catch(() => { target.value = undefined; })
+    ),
+  ]);
+  checking.value = false;
+}
+watch(() => session.signedIn, () => { void fetchNodes(); });
+onMounted(() => {
+  void checkEverything();
+  void Promise.allSettled(([
+    ['get_cpl_version', currentVersion], ['get_system_info', systemInfo],
+    ['get_build_info', buildInfo], ['get_detailed_system_info', detailedSystemInfo],
+  ] as const).map(([command, target]) => invoke<string>(command).then(value => { target.value = value; })));
+});
 </script>
+
 <template>
-    <n-scrollbar>
-        <n-h2 style="margin-bottom: 3px;">网络</n-h2>
+  <n-space vertical :size="12">
+    <div class="network-toolbar">
+      <n-h2 style="margin-bottom: 0;">网络</n-h2>
+      <n-button :loading="checking" @click="checkEverything">
+        <template #icon><n-icon><ReloadOutline /></n-icon></template>
+        重新检查网络状态
+      </n-button>
+    </div>
 
-        <n-space vertical>
+    <n-card title="服务状态">
+      <n-space vertical :size="6">
+        <n-text>{{ online == null ? '正在检查互联网连接…' : online ? 'OpenFrp Cross Platform Launcher 已连接至互联网。' : 'OpenFrp Cross Platform Launcher 无法访问互联网。' }}</n-text>
+        <div v-for="service in services" :key="service.url" class="service-row">
+          <span class="service-name">
+            <n-spin v-if="service.pending" :size="14" />
+            <n-icon v-else-if="service.result && (!service.result.success || (service.result.status || 0) >= 500)" color="#d03050"><CloseCircle /></n-icon>
+            <n-icon v-else-if="service.result && ((service.result.status || 0) >= 400 || service.result.latency_ms > 500)" color="#c68a25"><AlertCircle /></n-icon>
+            <n-icon v-else-if="service.result" color="#18a058"><CheckmarkCircle /></n-icon>
+            {{ service.name }}
+          </span>
+          <n-text depth="3" :title="service.result?.error">{{ service.pending ? '测试中…' : serviceState(service.result) }}</n-text>
+        </div>
+        <n-text v-if="session.signedIn" depth="3">在线节点数：{{ nodeCount == null ? '暂不可用' : nodeCount + ' 个' }}</n-text>
+      </n-space>
+    </n-card>
 
+    <n-card v-if="session.signedIn" title="节点连通性测试">
+      <n-space vertical>
+        <n-alert v-if="nodeError" type="warning">{{ nodeError }}</n-alert>
+        <n-form @submit.prevent="testNode">
+          <n-form-item label="选择节点">
+            <n-select v-model:value="selected" :options="nodeOptions" :disabled="testing || !nodes.length" filterable placeholder="请选择一个节点" />
+          </n-form-item>
+          <n-form-item label="端口">
+            <div class="test-controls">
+              <n-input-number v-model:value="port" :min="1" :max="65535" :precision="0" :disabled="testing" />
+              <n-button attr-type="submit" :loading="testing" :disabled="!canTest">测试连接</n-button>
+            </div>
+          </n-form-item>
+        </n-form>
+        <n-alert v-if="testResult" :type="testResult.success ? 'success' : 'error'"
+          :title="testResult.success ? '测试成功' : '测试失败'" closable @close="testResult = undefined">
+          {{ testResult.message }}
+        </n-alert>
+      </n-space>
+    </n-card>
 
-            <n-card>
-                <n-space vertical>
-
-                    <n-text v-if="onlineStatus === null">正在检查网络服务...</n-text>
-                    <template v-else>
-
-                        <n-h4>互联网状态</n-h4>
-                        <n-text style="margin-left: 15px; margin-bottom: 5px;">{{ onlineStatus ? "OpenFrp Cross Platform Launcher 已连接至互联网" : "OpenFrp Cross Platform Launcher 无法访问互联网" }}。</n-text>
-
-                        <n-h4>服务状态</n-h4>
-                        <div v-for="service in serviceChecks" :key="service.id" class="service-check-row">
-                            <span class="service-check-left">
-                                <n-spin v-if="service.checking" :size="16" />
-                                <n-icon v-else-if="service.status === true && service.latency !== null && service.latency > 500" :size="16" color="#cc8800">
-                                    <AlertCircle />
-                                </n-icon>
-                                <n-icon v-else-if="service.status === true" :size="16" color="#266e48">
-                                    <CheckmarkCircle />
-                                </n-icon>
-                                <n-icon v-else-if="service.status === false" :size="16" color="#d03050">
-                                    <CloseCircle />
-                                </n-icon>
-                                <n-icon v-else :size="16" color="#ccc">
-                                    <Ellipse />
-                                </n-icon>
-                                <span class="service-check-name">{{ service.name }}</span>
-                            </span>
-                            <span class="service-check-right">
-                                <span v-if="service.checking" class="service-checking">测试中...</span>
-                                <span v-else-if="service.status === true && service.latency !== null && service.latency > 500"
-                                    :style="{ color: '#cc8800' }">
-                                    已连接，延迟 {{ service.latency }}ms
-                                </span>
-                                <span v-else-if="service.status === true && service.latency !== null"
-                                    :style="{ color: '#266e48' }">
-                                    已连接，延迟 {{ service.latency }}ms
-                                </span>
-                                <span v-else-if="service.status === true"
-                                    :style="{ color: '#266e48' }">
-                                    已连接
-                                </span>
-                                <span v-else-if="service.status === false"
-                                    :style="{ color: '#d03050' }">
-                                    {{ service.error || '无法访问' }}
-                                </span>
-                                <span v-else :style="{ color: '#999' }">待检测</span>
-                            </span>
-                        </div>
-
-                        <template v-if="isLoggedIn">
-
-                        <n-h4>节点数据</n-h4>
-                        <n-text style="margin-left: 15px; margin-bottom: 5px;"><span>在线节点数：</span>{{ all_total_node }}
-                            个</n-text>
-                        </template>
-                        <n-text v-else>尚未登录到启动器。</n-text>
-
-                    </template>
-
-
-                </n-space>
-            </n-card>
-            <!-- 节点连通性测试卡片 -->
-             <n-card v-if="isLoggedIn">
-                <n-space vertical>
-                    <n-h4>节点连通性测试</n-h4>
-                    <n-text style="margin-bottom: 10px;">选择一个节点并测试连接延迟和可达性 <br/><small>*请注意，如果测试结果始终为 正常（0ms）,请关闭您的网络代理</small></n-text>
-
-                    <n-form>
-                        <n-form-item label="选择节点" path="selectedNode" style="margin-bottom: -15px;">
-                            <n-select
-                                v-model:value="selectedNode"
-                                :options="nodeOptions"
-                                placeholder="请选择一个节点"
-                                @update:value="onNodeChange"
-                            />
-                        </n-form-item>
-
-                        <n-form-item label="端口">
-                            <!-- <n-slider v-model:value="testPort" :step="1" :max="65535" /> -->
-                            <n-input-number
-                                v-model:value="testPort"
-                                :min="1"
-                                :max="65535"
-                                style="width: 70%"
-                            /> 
-                            <n-button
-                            @click="testNodeConnectivity"
-                            :loading="nodeTesting"
-                            :disabled="nodeTesting || !selectedNode"
-                            style="margin-left:8px;width: 30%"
-                            type="default"
-                        >
-                            {{ nodeTesting ? '测试中...' : '测试连接' }}
-                        </n-button>
-                        </n-form-item>
-
-                        
-                    </n-form>
-
-                    <div v-if="nodeTestResult" style="margin-top: -15px;">
-                        <n-alert
-                            :type="nodeTestResult.success ? 'success' : 'error'"
-                            :title="nodeTestResult.success ? '测试成功' : '测试失败'"
-                            closable
-                        >
-                            <n-space vertical :size="4">
-                                <n-text>{{ nodeTestResult.message }}</n-text>
-                            </n-space>
-                        </n-alert>
-                    </div>
-                </n-space>
-            </n-card>
-            <n-card>
-                <n-h4>诊断信息</n-h4>
-                <n-table style="margin-top: 5px;" size="small">
-                    <tbody>
-                        <tr>
-                            <td>启动器版本</td>
-                            <td>Beta v{{ currentVersion }} / {{ buildInfo }}</td>
-                        </tr>
-                        <tr>
-                            <td>系统架构</td>
-                            <td>{{ systemInfo }}</td>
-                        </tr>
-                        <tr>
-                            <td>系统版本</td>
-                            <td>{{ detailedSystemInfo }}</td>
-                        </tr>
-                        <tr>
-                            <td>系统时间</td>
-                            <td>{{ timestamp }}</td>
-                        </tr>
-                        <tr>
-                            <td>用户代理</td>
-                            <td>{{ userAgent }}</td>
-                        </tr>
-                        <tr>
-                            <td>IP信息</td>
-                            <td>
-                                <n-text v-if="!parsedIpInfo || parsedIpInfo.ret !== 'ok'">{{ ipInfo }}</n-text>
-                                <n-text v-else>
-                                    <span @click="toggleIPDisplay" style="cursor: pointer; color: #2080f0;">
-                                        {{ showFullIP ? fullIP : maskedIP }} ({{ locationInfo }})
-                                    </span>
-                                </n-text>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>代理状态</td>
-                            <td>
-                               
-                                <span >
-                                    <span :style="{ color: proxyBypassStatus ? '#266e48' : '' }">
-                                        {{ proxyBypassStatus ? '已绕过系统代理' : '正在使用系统代理' }}
-                                    </span>
-                                </span>
-                            </td>
-                        </tr>
-                        <tr>
-                            <td>网络配置</td>
-                            <td>
-                               
-                                <span >
-                                    <span :style="{ color: useDoHStatus ? '#2080f0' : '', marginRight: '10px' }">
-                                        {{ useDoHStatus ? '已启用 DoH (' + dohAddr + ')' : '未启用 DoH' }}
-                                    </span>
-                                    <span :style="{ color: frpcForceTlsEnabled ? '#2080f0' : '' }">
-                                        {{ frpcForceTlsEnabled ? '已启用 Force TLS' : '未启用 Force TLS' }}
-                                    </span>
-                                </span>
-                            </td>
-                        </tr>
-                    </tbody>
-                </n-table>
-            
-
-            </n-card>
-
-            <n-button @click="performAllChecks" :loading="checking" :disabled="checking" style="width: 100%;">
-                <template #icon>
-                    <NIcon>
-                        <ReloadOutline />
-                    </NIcon>
-                </template>
-                重新检查网络状态
-            </n-button>
-
-        </n-space>
-    </n-scrollbar>
+    <n-card title="诊断信息">
+      <n-table size="small" class="diagnostics-table">
+        <tbody>
+          <tr><th scope="row">启动器版本</th><td>Beta v{{ currentVersion }} / {{ buildInfo }}</td></tr>
+          <tr><th scope="row">系统架构</th><td>{{ systemInfo }}</td></tr>
+          <tr><th scope="row">系统版本</th><td>{{ detailedSystemInfo }}</td></tr>
+          <tr><th scope="row">系统时间</th><td>{{ timestamp }}</td></tr>
+          <tr><th scope="row">用户代理</th><td>{{ userAgent }}</td></tr>
+          <tr>
+            <th scope="row">IP 信息</th>
+            <td>
+              <n-text v-if="ipLoading">获取中…</n-text>
+              <n-space v-else-if="ip" align="center" :size="8">
+                <span>{{ shownIp }} {{ location }}</span>
+                <n-button text type="primary" @click="fullIP = !fullIP">{{ fullIP ? '隐藏完整 IP' : '显示完整 IP' }}</n-button>
+              </n-space>
+              <n-text v-else depth="3">获取失败</n-text>
+            </td>
+          </tr>
+          <tr><th scope="row">代理状态</th><td>{{ proxyBypass == null ? '未知' : proxyBypass ? '已绕过系统代理' : '正在使用系统代理' }}</td></tr>
+          <tr><th scope="row">网络配置</th>
+            <td>
+              DoH {{ useDoH === undefined ? '未知' : useDoH === 'true' ? '已启用（' + (dohAddr || '223.5.5.5') + '）' : '未启用' }}
+              · Force TLS {{ forceTls === undefined ? '未知' : forceTls === 'true' ? '已启用' : '未启用' }}
+            </td>
+          </tr>
+        </tbody>
+      </n-table>
+    </n-card>
+  </n-space>
 </template>
 
 <style scoped>
-.n-h4 {
-    margin-bottom: 0px;
-    margin-top: 8px;
-    ;
-    font-size: large;
-    font-weight: normal;
-
+.network-toolbar, .test-controls {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
 }
-
-.service-check-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-left: 15px;
-    margin-bottom: 8px;
-    min-height: 28px;
+.test-controls { justify-content: flex-start; }
+.service-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px 16px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--n-border-color);
 }
-
-.service-check-left {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-}
-
-.service-check-right {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    margin-right: 15px;
-}
-
-.service-checking {
-    color: #999;
-}
-
-.icon-spin {
-    animation: icon-spin 1s linear infinite;
-}
-
-@keyframes icon-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
-}
+.service-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.service-name :deep(.n-icon) { flex-shrink: 0; }
+.diagnostics-table th { width: 112px; }
+.diagnostics-table td { overflow-wrap: anywhere; }
 </style>

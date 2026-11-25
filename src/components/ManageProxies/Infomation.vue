@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { defineProps } from 'vue';
+import { computed } from 'vue';
+import { hostAndPort, proxyDomains } from '@/utils/proxies';
 
 const props = defineProps<{
   proxy: Struct.UserProxy;
@@ -9,15 +10,7 @@ const copyLink = (url: string) => {
   props.copyFallback(url);
 };
 
-// 用于解析域名的辅助函数
-const parseDomain = (domainStr: string) => {
-  try {
-    const domains = JSON.parse(domainStr);
-    return Array.isArray(domains) ? domains : [];
-  } catch (e) {
-    return [];
-  }
-};
+const domains = computed(() => proxyDomains(props.proxy.domain));
 
 // 检查是否为TCP/UDP类型
 const isTcpOrUdp = (proxyType: string) => {
@@ -39,7 +32,7 @@ const shouldShowRemotePort = (proxyType: string, remotePort: number) => {
             {{ proxy.id }}
           </n-descriptions-item>
           <n-descriptions-item label="映射对象">
-            {{ proxy.proxyType.toUpperCase() }} {{ proxy.localIp }}:{{ proxy.localPort }}
+            {{ proxy.proxyType.toUpperCase() }} {{ hostAndPort(proxy.localIp, proxy.localPort) }}
           </n-descriptions-item>
           <n-descriptions-item label="节点">
             #{{ proxy.nid }} {{ proxy.friendlyNode }}
@@ -90,7 +83,7 @@ const shouldShowRemotePort = (proxyType: string, remotePort: number) => {
       </n-gi>
       
       <!-- 链接地址 - HTTP/HTTPS类型（无域名） -->
-      <n-gi v-if="!isTcpOrUdp(proxy.proxyType) && !proxy.domain">
+      <n-gi v-if="!isTcpOrUdp(proxy.proxyType) && !domains.length">
         <n-descriptions bordered :cols="1">
           <n-descriptions-item label="链接地址">
             <n-space vertical size="small">
@@ -122,11 +115,11 @@ const shouldShowRemotePort = (proxyType: string, remotePort: number) => {
       </n-gi>
       
       <!-- 绑定域名 - 仅HTTP/HTTPS类型 -->
-      <n-gi v-if="!isTcpOrUdp(proxy.proxyType) && proxy.domain">
+      <n-gi v-if="!isTcpOrUdp(proxy.proxyType) && domains.length">
         <n-descriptions bordered :cols="1">
           <n-descriptions-item label="绑定域名">
             <n-space vertical size="small">
-              <template v-for="(domain, index) in parseDomain(proxy.domain)" :key="index">
+              <template v-for="(domain, index) in domains" :key="index">
                 <n-tooltip trigger="hover">
                   <template #trigger>
                     <n-button text @click="() => copyLink(domain)">

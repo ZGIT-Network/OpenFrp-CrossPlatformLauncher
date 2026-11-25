@@ -22,7 +22,7 @@ declare namespace Struct {
     outLimit: number;
     proxies: number;
     realname: boolean;
-    regTime: number;
+    regTime: string | number;
     token: string;
     traffic: number;
     used: number;
@@ -61,9 +61,9 @@ declare namespace Struct {
     /// 请求来源
     /// </summary>
     // Disabled hostHeaderRewrite: string;
-    id: bigint;
-    lastLogin: bigint;
-    lastupdate: bigint;
+    id: number;
+    lastLogin?: number | null;
+    lastUpdate?: number | null;
     localIp: string;
     localPort: number;
     // Disabled locations: string;
@@ -103,7 +103,7 @@ declare namespace Struct {
     autoTls: string;
     forceHttps: boolean;
     proxyProtocolVersion: boolean;
-    proxy_id: bigint | undefined;
+    proxy_id?: number;
   }
   export interface AppOrder {
     gid: number;

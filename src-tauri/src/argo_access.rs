@@ -1,24 +1,25 @@
 use base64::Engine; // for URL_SAFE_NO_PAD.encode()/decode()
 use once_cell::sync::Lazy;
-use reqwest::header::HeaderMap;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::command;
 
 // 纯 Rust：X25519 + XSalsa20-Poly1305
 use crypto_box::{PublicKey as BoxPublicKey, SalsaBox, SecretKey as BoxSecretKey};
 use rand_core::OsRng;
 use x25519_dalek::{PublicKey as X25519Public, StaticSecret as X25519Secret};
-use xsalsa20poly1305::{
-    aead::{Aead, KeyInit},
-    Nonce, XSalsa20Poly1305,
-};
+use xsalsa20poly1305::aead::Aead;
 
-// 针对每个 request_uuid 存储一次性密钥对，避免重复使用同一公钥
-static REQ_KP_MAP: Lazy<Mutex<HashMap<String, (X25519Secret, X25519Public)>>> =
+const AUTH_WAIT: Duration = Duration::from_secs(300);
+struct PendingLogin {
+    key: X25519Secret,
+    expires_at: Instant,
+    waiting: bool,
+}
+static PENDING_LOGINS: Lazy<Mutex<HashMap<String, PendingLogin>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
-static CANCEL_SET: Lazy<Mutex<HashSet<String>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 #[derive(Serialize, Deserialize)]
 pub struct RequestLoginResp {
@@ -47,19 +48,13 @@ pub struct PollLoginData {
 }
 
 fn generate_keypair() -> (X25519Secret, X25519Public) {
-    let sk = X25519Secret::new(OsRng);
+    let sk = X25519Secret::random_from_rng(OsRng);
     let pk = X25519Public::from(&sk);
     (sk, pk)
 }
 
 fn b64_urlsafe_padded(data: &[u8]) -> String {
     base64::engine::general_purpose::URL_SAFE.encode(data)
-}
-
-fn b64_urlsafe_padded_decode(s: &str) -> Result<Vec<u8>, String> {
-    base64::engine::general_purpose::URL_SAFE
-        .decode(s)
-        .map_err(|e| e.to_string())
 }
 
 fn b64_decode_any(s: &str) -> Result<Vec<u8>, String> {
@@ -85,17 +80,14 @@ fn b64_decode_any(s: &str) -> Result<Vec<u8>, String> {
 }
 
 #[command]
-pub async fn argo_generate_public_key() -> Result<String, String> {
-    let (_sk, pk) = generate_keypair();
-    Ok(b64_urlsafe_padded(pk.as_bytes()))
-}
-
-#[command]
 pub async fn argo_request_login() -> Result<RequestLoginData, String> {
     let (sk, pk) = generate_keypair();
     let public_key_b64 = b64_urlsafe_padded(pk.as_bytes());
 
-    let client = reqwest::Client::new();
+    let client = crate::api_proxy::client_builder(10)
+        .https_only(true)
+        .build()
+        .map_err(|e| e.to_string())?;
     let resp = client
         .post("https://access.openfrp.net/argoAccess/requestLogin")
         .json(&serde_json::json!({"public_key": public_key_b64}))
@@ -112,69 +104,56 @@ pub async fn argo_request_login() -> Result<RequestLoginData, String> {
         return Err(format!("请求授权失败: {}", body.msg));
     }
     let data = body.data.ok_or_else(|| "响应缺少 data".to_string())?;
-    // 将本次请求的临时密钥对与 request_uuid 关联保存
-    REQ_KP_MAP
-        .lock()
-        .unwrap()
-        .insert(data.request_uuid.clone(), (sk, pk));
+    let mut pending = PENDING_LOGINS.lock().unwrap();
+    pending.retain(|_, entry| entry.expires_at > Instant::now());
+    pending.insert(
+        data.request_uuid.clone(),
+        PendingLogin {
+            key: sk,
+            expires_at: Instant::now() + AUTH_WAIT,
+            waiting: false,
+        },
+    );
     Ok(data)
 }
 
-#[command]
-pub async fn argo_poll_login(request_uuid: String) -> Result<String, String> {
-    // 返回明文 Authorization
-    let (sk, _pk) = REQ_KP_MAP
-        .lock()
-        .unwrap()
-        .get(&request_uuid)
-        .cloned()
-        .ok_or_else(|| "未找到对应请求的密钥，请重新发起登录".to_string())?;
-    let client = reqwest::Client::new();
-    // 按文档使用 GET + query 参数 request_uuid
-    let resp = client
+async fn poll_login(
+    client: &reqwest::Client,
+    request_uuid: &str,
+    sk: &X25519Secret,
+) -> Result<Option<String>, String> {
+    let resp = match client
         .get("https://access.openfrp.net/argoAccess/pollLogin")
-        .query(&[("request_uuid", request_uuid.clone())])
+        .query(&[("request_uuid", request_uuid)])
         .send()
         .await
-        .map_err(|e| e.to_string())?;
-
-    if resp.status().as_u16() == 429 {
-        return Err("请求过于频繁 (429)".into());
+    {
+        Ok(resp) => resp,
+        Err(e) if e.is_connect() || e.is_timeout() => return Ok(None),
+        Err(e) => return Err(e.without_url().to_string()),
+    };
+    let status = resp.status();
+    if matches!(status.as_u16(), 204 | 429) || status.is_server_error() {
+        return Ok(None);
+    }
+    if !status.is_success() {
+        return Err(format!("轮询失败: HTTP {status}"));
     }
 
-    // 先抓取响应头，再解析 Body
-    let status = resp.status().as_u16();
-    let headers: HeaderMap = resp.headers().clone();
-    if status == 204 {
-        println!("[Argo] 授权未完成 (204)");
-        return Err("未授权".into());
-    }
-    if status == 429 {
-        println!("[Argo] 命中阈值限制 (429)");
-        return Err("429 Too Many Requests".into());
-    }
-    if status != 200 {
-        let txt = resp.text().await.unwrap_or_default();
-        println!("[Argo] 非200状态: {}, 响应文本: {}", status, txt);
-        return Err(format!("轮询失败: HTTP {}", status));
-    }
-    let body: PollLoginResp = resp.json().await.map_err(|e| e.to_string())?;
+    let server_pk_b64 = resp
+        .headers()
+        .get("x-request-public-key")
+        .and_then(|value| value.to_str().ok())
+        .ok_or("缺少服务器公钥")?
+        .to_owned();
+    let body: PollLoginResp = resp.json().await.map_err(|e| e.without_url().to_string())?;
     if body.code != 200 {
         return Err(format!("轮询失败: {}", body.msg));
     }
-    let data = body.data.ok_or_else(|| "响应缺少 data".to_string())?;
-    let server_pk_b64 = match headers.get("x-request-public-key") {
-        Some(v) => v.to_str().map_err(|e| e.to_string())?.to_string(),
-        None => {
-            // 调试输出全部响应头，便于定位问题
-            println!("[Argo] 缺少服务器公钥，响应头如下：");
-            for (k, v) in headers.iter() {
-                println!("[Argo] header {}: {}", k, v.to_str().unwrap_or("<bin>"));
-            }
-            return Err("缺少服务器公钥".into());
-        }
-    };
-
+    let data = body.data.ok_or("响应缺少 data")?;
+    if data.request_uuid != request_uuid {
+        return Err("授权请求不匹配".into());
+    }
     // 服务器公钥
     let server_pk_bytes = b64_decode_any(&server_pk_b64)?;
     if server_pk_bytes.len() != 32 {
@@ -197,63 +176,60 @@ pub async fn argo_poll_login(request_uuid: String) -> Result<String, String> {
     let sk_box = BoxSecretKey::from(sk.to_bytes());
     let pk_box = BoxPublicKey::from(server_pk.to_bytes());
     let sbox = SalsaBox::new(&pk_box, &sk_box);
-    match sbox.decrypt(&nonce_bytes.into(), cipher) {
-        Ok(plain) => {
-            let auth = String::from_utf8_lossy(&plain).to_string();
-            REQ_KP_MAP.lock().unwrap().remove(&request_uuid);
-            Ok(auth)
-        }
-        Err(_e) => Err("解密失败".into()),
+    let plain = sbox
+        .decrypt(&nonce_bytes.into(), cipher)
+        .map_err(|_| "解密失败")?;
+    let auth = String::from_utf8(plain).map_err(|_| "授权信息格式无效")?;
+    if auth.trim().is_empty() {
+        return Err("授权信息为空".into());
     }
+    Ok(Some(auth))
 }
 
 #[command]
 pub async fn argo_wait_authorization(request_uuid: String) -> Result<String, String> {
-    use tokio::time::{sleep, Duration};
-    println!("[Argo] 开始轮询授权，request_uuid={}", request_uuid);
-    let mut attempts: u32 = 0;
-    let max_attempts: u32 = 60; // 5分钟，每5秒一次
-    loop {
-        if CANCEL_SET.lock().unwrap().contains(&request_uuid) {
-            println!("[Argo] 检测到用户取消，停止轮询");
-            REQ_KP_MAP.lock().unwrap().remove(&request_uuid);
-            CANCEL_SET.lock().unwrap().remove(&request_uuid);
-            return Err("用户已取消".into());
+    let client = crate::api_proxy::client_builder(10)
+        .https_only(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+    let (key, expires_at) = {
+        let mut pending = PENDING_LOGINS.lock().unwrap();
+        let entry = pending
+            .get_mut(&request_uuid)
+            .ok_or("授权请求已取消或过期")?;
+        if entry.waiting {
+            return Err("正在等待本次授权".into());
         }
-        attempts += 1;
-        println!("[Argo] 第 {} 次轮询...", attempts);
-        match argo_poll_login(request_uuid.clone()).await {
-            Ok(auth) => {
-                println!("[Argo] 成功获取授权明文，结束轮询");
+        entry.waiting = true;
+        (entry.key.clone(), entry.expires_at)
+    };
+    let result = tokio::time::timeout_at(expires_at.into(), async {
+        loop {
+            if !PENDING_LOGINS.lock().unwrap().contains_key(&request_uuid) {
+                return Err("用户已取消".into());
+            }
+            if let Some(auth) = poll_login(&client, &request_uuid, &key).await? {
                 return Ok(auth);
             }
-            Err(e) => {
-                let msg = e.to_string();
-                // 未完成授权或服务端限流等，继续等待
-                if msg.contains("429") {
-                    println!("[Argo] 命中限流，延迟后重试");
-                } else if msg.contains("解密算法未完成") {
-                    println!("[Argo] 收到加密数据但后端解密尚未实现，将继续等待...");
-                } else if msg.contains("未找到对应请求的密钥") {
-                    println!("[Argo] 未找到请求密钥，可能进程已重启或缓存丢失，停止轮询");
-                    return Err(msg);
-                } else {
-                    println!("[Argo] 轮询返回: {}", msg);
-                }
-            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
         }
-
-        if attempts >= max_attempts {
-            println!("[Argo] 轮询超时，结束等待");
-            return Err("轮询超时，未完成授权".into());
-        }
-        sleep(Duration::from_secs(5)).await;
+    })
+    .await
+    .unwrap_or_else(|_| Err("轮询超时，未完成授权".into()));
+    if PENDING_LOGINS
+        .lock()
+        .unwrap()
+        .remove(&request_uuid)
+        .is_some()
+    {
+        result
+    } else {
+        Err("用户已取消".into())
     }
 }
 
 #[command]
 pub async fn argo_cancel_wait(request_uuid: String) -> Result<(), String> {
-    println!("[Argo] 收到取消请求，request_uuid={}", &request_uuid);
-    CANCEL_SET.lock().unwrap().insert(request_uuid);
+    PENDING_LOGINS.lock().unwrap().remove(&request_uuid);
     Ok(())
 }

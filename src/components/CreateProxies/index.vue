@@ -1,402 +1,185 @@
-<script lang="ts" setup>
-import { computed, h, inject, Ref, ref } from 'vue';
-import { RouterLink, useRouter } from 'vue-router';
-
-// import classNames from 'classnames';
-import { useLoadingBar, useMessage, useNotification, NButton } from 'naive-ui';
-
+<script setup lang="ts">
+import { computed, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useMessage } from 'naive-ui';
+import { openUrl } from '@tauri-apps/plugin-opener';
+import { RefreshOutline } from '@vicons/ionicons5';
 import frpApiGetNodeList from '@/requests/frpApi/frpApiGetNodeList';
 import frpApiNewProxy from '@/requests/frpApi/frpApiNewProxy';
-import { RefreshOutline } from '@vicons/ionicons5';
-
+import { useSessionStore } from '@/stores/session';
+import { errorMessage } from '@/utils/apiClient';
+import { groupAllowsNode } from '@/utils/proxies';
 import Edit from '../ManageProxies/Edit.vue';
 import Card from './Card.vue';
-
-import { openUrl } from '@tauri-apps/plugin-opener';
-
-// import frpApiNewProxy from '@/requests/frpApiNewProxy';
 import './style.less';
 
-// const total = ref<number>(0);
-const { userInfo } = inject<{ userInfo: Ref<Struct.UserInfo> }>('userInfo') || { userInfo: ref() };
-const nodeList = ref<Struct.Node[]>();
-const filterProOptions = [
-  {
-    label: '全部',
-    value: 'all',
-  },
-  {
-    type: 'group',
-    label: '支持的协议',
-    key: 'protocols',
-    children: [
-      {
-        label: 'UDP',
-        value: 'udp-support',
-      },
-      {
-        label: 'HTTP(S)',
-        value: 'web-support',
-      },
-    ],
-  },
-  {
-    type: 'group',
-    label: '特性',
-    key: 'feature',
-    children: [
-      {
-        label: '大水管(大带宽)',
-        value: 'bigb',
-      },
-    ],
-  },
-];
-
 const router = useRouter();
-const notification = useNotification();
 const message = useMessage();
-const loadingBar = useLoadingBar();
+const session = useSessionStore();
+const nodes = ref<Struct.Node[]>([]);
+const loading = ref(false);
+const failure = ref('');
+const filter = ref('all');
+const showFull = ref(true);
+const showRestricted = ref(true);
+const selectedNode = ref<Struct.Node>();
+const showEditor = ref(false);
+const submitting = ref(false);
+let requestId = 0;
+let active = true;
 
-const selectedFilterProMode = ref<string>('all');
-const watchDog = ref<boolean>(false);
-// const isMinimalMode = inject<boolean>('isMinimalMode') || true;
+const filterOptions = [
+  { label: '全部协议', value: 'all' },
+  { label: '支持 UDP', value: 'udp' },
+  { label: '支持 HTTP(S)', value: 'web' },
+  { label: '大带宽（≥ 50 Mbps）', value: 'bandwidth' },
+];
+const areas = [
+  { id: 1, title: '中国大陆', note: '均需实名', tone: 'info' },
+  { id: 2, title: '中国香港 / 中国台湾 / 中国澳门', note: '免备建站', tone: 'success' },
+  { id: 3, title: '海外', note: '不建议中国大陆使用', tone: 'warning' },
+] as const;
 
-const fallbackConf = (success: boolean, body: Struct.EditOrNewUserProxy | undefined) => {
-  if (success && body !== undefined) {
-    createProxy(body);
-  } else {
-    setTimeout(() => {
-      watchDog.value = false;
-    }, 1000);
-  }
-};
-const handleGetConf = () => {
-  watchDog.value = true;
-};
-
-const openUsercenter = () => {
-  if (userInfo.value) {
-    openUrl('https://console.openfrp.net/usercenter');
-  }
-};
-
-const getNodeList = () => {
-  nodeList.value = [];
-  loadingBar.start();
-  frpApiGetNodeList().then((res) => {
-    if (res.flag) {
-      //      total.value = res.data.total;
-      //    sourceList.value = res.data.list || [];
-      nodeList.value = Object.freeze(res.data.list);
-      loadingBar.finish();
-    } else {
-      message.error(res.msg);
-      loadingBar.error();
-    }
-  });
-};
-const createProxy = (body: Struct.EditOrNewUserProxy) => {
-  frpApiNewProxy(body)
-    .then((res) => {
-      if (res.flag) {
-        message.info(`隧道 ${body.name} ${res.msg}`);
-        router.push('/proxylist');
-      } else {
-        message.error(res.msg);
-      }
-    })
-    .catch((res) => {
-      message.error(res.statusText);
-    });
-  watchDog.value = false;
-};
-getNodeList();
-
-const displayCreateTunnelModel = ref<boolean>(false);
-const displayLevelEqual = ref<boolean>(true);
-const displayFull = ref<boolean>(true);
-
-// const currentState = ref<number>(1);
-// const contentRef = ref();
-// const expandItem = ref<string | null>('cn-mainland');
-const selectedNode = ref<Struct.Node>({
-  allowEc: false,
-  fullyLoaded: false,
-  bandwidth: -1,
-  bandwidthMagnification: -1,
-  classify: -1,
-  comments: '',
-  group: '',
-  id: -1,
-  maxOnlineMagnification: -1,
-  name: '',
-  needRealname: false,
-  port: -1,
-  status: -1,
-  unitcostEc: -1,
-  description: '',
-  protocolSupport: {
-    tcp: false,
-    udp: false,
-    http: false,
-    https: false,
-  },
-  allowPort: null,
-});
-const handleSelected = (node: Struct.Node) => {
-  notification.destroyAll();
-  if (node.fullyLoaded) {
-    notification.error({
-      title: `无法选中 #${node.id} ${node.name}`,
-      content: '该节点现处于满载状态，可尝试刷新后再次选择或选用其他节点',
-      duration: 2500,
-    });
-    return;
-  }
-  if (userInfo.value) {
-    if (!node.group.includes(userInfo.value.group)) {
-      notification.error({
-        title: `无法选中 #${node.id} ${node.name}`,
-        content: `该节点需要权限 ${!node.group.replaceAll('svip', '').includes('vip') ? 'SVIP' : node.group.includes('vip') ? 'VIP' : '不属于您的组'} 权限`,
-        duration: 1500,
-      });
-      return;
-    }
-    if (!userInfo.value.realname && node.needRealname) {
-      const lc = notification.error({
-        title: `无法选中 #${node.id} ${node.name}`,
-        content: () =>
-          h(
-            'div',
-            {},
-            {
-              default: () => [
-                '该节点需要您先完成实名认证。\n',
-                h(
-                  NButton,
-                  {
-                    type: 'primary',
-                    size: 'small',
-                    text: true,
-                    onClick: () => {
-                      lc.destroy();
-                      openUsercenter();
-                    },
-                  },
-                  
-                  '跳转到 个人中心 进行',
-                ),
-              ],
-            },
-          ),
-        duration: 2500,
-      });
-      return;
-    }
-  }
-
-  selectedNode.value = node;
-  displayCreateTunnelModel.value = true;
-  // currentState.value = 2;
-};
-const nodeFilter = (classify: number) => {
-  if (!nodeList.value || nodeList.value.length == 0 || !userInfo.value) {
-    return [];
-  }
-
-  return nodeList.value.filter(
-    (x) =>
-      x.classify == classify &&
-      (displayFull.value || !x.fullyLoaded) &&
-      (displayLevelEqual.value || x.group.includes(userInfo.value!.group)) &&
-      filterPro2(x),
+function restriction(node: Struct.Node) {
+  const user = session.userInfo;
+  if (node.status !== 200) return '节点暂不可用';
+  if (node.fullyLoaded) return '节点已满载';
+  if (!user) return '正在获取用户信息';
+  if (!groupAllowsNode(user.group, node)) return '当前用户组无权限';
+  if ((node.classify === 1 || node.needRealname) && !user.realname) return '待实名认证';
+  if (!node.protocolSupport || !Object.values(node.protocolSupport).some(Boolean)) return '节点暂不支持可用协议';
+  return '';
+}
+const filtered = computed(() => {
+  const account = session.userInfo;
+  return nodes.value.filter(node =>
+    (showFull.value || !node.fullyLoaded)
+    && (showRestricted.value || !account || groupAllowsNode(account.group, node))
+    && (filter.value === 'all'
+      || filter.value === 'udp' && node.protocolSupport?.udp
+      || filter.value === 'web' && (node.protocolSupport?.http || node.protocolSupport?.https)
+      || filter.value === 'bandwidth' && node.bandwidth >= 50)
   );
-};
-function filterPro2(x: Struct.Node) {
-  switch (selectedFilterProMode.value) {
-    case 'all': {
-      return true;
-    }
-    case 'bigb': {
-      // 大宽带
-      return x.bandwidth >= 50;
-    }
-    case 'udp-support': {
-      return x.protocolSupport.udp;
-    }
-    case 'web-support': {
-      return x.protocolSupport.http || x.protocolSupport.https;
-    }
+});
+const areasWithNodes = computed(() => {
+  const groups = areas.map(area => ({
+    ...area, nodes: filtered.value.filter(node => node.classify === area.id),
+  }));
+  const other = filtered.value.filter(node => !areas.some(area => area.id === node.classify));
+  return other.length ? [...groups, { id: 0, title: '其他', note: '', tone: 'info' as const, nodes: other }] : groups;
+});
+
+async function getNodeList() {
+  if (loading.value || !session.signedIn) return;
+  const id = ++requestId;
+  loading.value = true;
+  failure.value = '';
+  try {
+    const response = await frpApiGetNodeList();
+    if (id !== requestId || !active) return;
+    if (!response.flag) throw new Error(response.msg);
+    if (!Array.isArray(response.data.list)) throw new Error('节点列表格式异常');
+    nodes.value = response.data.list;
+  } catch (error) {
+    if (id === requestId && active) failure.value = errorMessage(error, '获取节点列表失败');
+  } finally {
+    if (id === requestId) loading.value = false;
   }
 }
-function nodeCountFilter(classify: number) {
-  if (!nodeList.value || !userInfo.value) {
-    return -1;
+watch(() => session.signedIn, (signedIn) => {
+  if (signedIn) void getNodeList();
+  else {
+    requestId++;
+    nodes.value = [];
+    loading.value = false;
+    showEditor.value = false;
   }
-  var x: number = 0;
-  for (let i = 0; i < nodeList.value.length; i++) {
-    const le = nodeList.value[i];
-    if (
-      le.classify == classify &&
-      (displayFull.value || !le.fullyLoaded) &&
-      (displayLevelEqual.value || le.group.includes(userInfo.value!.group)) &&
-      filterPro2(le)
-    ) {
-      x++;
-    }
-    // else if (le.name === selectedNode.value.name) {
-    //   selectedNode.value = {
-    //     allowEc: false,
-    //     fullyLoaded: false,
-    //     bandwidth: -1,
-    //     bandwidthMagnification: -1,
-    //     classify: -1,
-    //     comments: '',
-    //     group: '',
-    //     id: -1,
-    //     maxOnlineMagnification: -1,
-    //     name: '',
-    //     needRealname: false,
-    //     port: -1,
-    //     status: -1,
-    //     unitcostEc: -1,
-    //     description: '',
-    //     protocolSupport: {
-    //       tcp: false,
-    //       udp: false,
-    //       http: false,
-    //       https: false,
-    //     },
-    //     allowPort: null,
-    //   };
-    // }
+}, { immediate: true });
+onUnmounted(() => { active = false; });
+
+function selectNode(node: Struct.Node) {
+  const reason = restriction(node);
+  if (reason) {
+    message.warning(reason);
+    return;
   }
-  return x;
+  selectedNode.value = node;
+  showEditor.value = true;
+}
+async function save(valid: boolean, body?: Struct.EditOrNewUserProxy) {
+  try {
+    if (!valid || !body) return;
+    const response = await frpApiNewProxy(body);
+    if (!response.flag) throw new Error(response.msg);
+    message.success(response.msg || '创建成功');
+    showEditor.value = false;
+    void session.refreshProfile();
+    if (active) await router.push('/proxylist');
+  } catch (error) {
+    message.error(errorMessage(error, '创建隧道失败'));
+  } finally {
+    submitting.value = false;
+  }
+}
+function openUsercenter() {
+  void openUrl('https://console.openfrp.net/usercenter').catch(() => message.error('打开个人中心失败'));
 }
 </script>
 
 <template>
-  <div className="createchannel">
-    <n-space :size="[0, 16]" vertical>
-      <n-h2>创建隧道</n-h2>
-      <n-alert
-        v-if="!userInfo?.realname"
-        style="margin-top: -24px; margin-bottom: 20px"
-        title="无法使用 中国内陆 节点"
-        type="error"
-      >
-        <n-flex :size="[0, 0]" vertical>
-          <n-text>请尽快进行实名认证以获得最佳服务体验。未实名将无法使用中国大陆地区节点。<br/> 
-            <n-button text   @click="openUsercenter()" style="text-justify: left;">前往 个人中心 实名认证</n-button></n-text>
-         
-        </n-flex>
+  <n-space vertical :size="12" class="createchannel">
+    <n-h2 style="margin-bottom: 3px;">创建隧道</n-h2>
+    <n-card v-if="!session.signedIn">
+      <n-empty description="登录后可创建隧道">
+        <template #extra><n-button type="primary" @click="router.push('/settings')">立即登录</n-button></template>
+      </n-empty>
+    </n-card>
+    <template v-else>
+      <n-alert v-if="session.userInfo && !session.userInfo.realname" type="warning" title="中国大陆节点需要实名认证">
+        <n-button text type="primary" @click="openUsercenter">前往个人中心实名认证</n-button>
       </n-alert>
-      <n-flex align="center" :size="[12, 8]" style="margin-top: -24px">
-        <n-button tertiary size="medium" @click="getNodeList">
-          <template #icon>
-            <n-icon :component="RefreshOutline"> </n-icon>
-          </template>
+      <n-alert v-else-if="!session.userInfo && session.profileError" type="warning" title="获取用户信息失败">
+        <n-space align="center">
+          {{ session.profileError }}
+          <n-button size="small" :loading="session.loading" @click="session.refreshProfile">重试</n-button>
+        </n-space>
+      </n-alert>
+      <n-space align="center">
+        <n-button tertiary :loading="loading" @click="getNodeList">
+          <template #icon><n-icon :component="RefreshOutline" /></template>
           刷新
         </n-button>
-        <n-select
-          v-model:value="selectedFilterProMode"
-          style="width: 200px"
-          :options="filterProOptions"
-          @update:value="
-            (x: string) => {
-              selectedFilterProMode = x;
-            }
-          "
-        ></n-select>
-        <n-space :size="[8, 0]">
-          <n-checkbox
-            size="large"
-            :checked="displayFull"
-            @update:checked="(x: boolean) => (displayFull = x)"
-            >满载</n-checkbox
-          >
-          <n-checkbox
-            size="large"
-            :checked="displayLevelEqual"
-            @update:checked="(x: boolean) => (displayLevelEqual = x)"
-            >无权限</n-checkbox
-          >
-        </n-space>
-      </n-flex>
-      <!-- <div>
-        {{ selectedFilterProMode }}
-        显示满载: {{ displayFull }} , 显示无权限: {{ displayLevelEqual }},MinimalMode: {{ isMinimalMode }}
-        {{ userInfo?.group }} Realname: {{ userInfo?.realname }}
-      </div> -->
-      <n-skeleton v-if="!nodeList || nodeList.length == 0" height="30svh"></n-skeleton>
-      <n-collapse v-else accordion default-expanded-names="cn-mainland">
-        <n-collapse-item name="cn-mainland">
+        <n-select v-model:value="filter" :options="filterOptions" style="width: min(190px, 52vw);" aria-label="节点筛选" />
+        <n-checkbox v-model:checked="showFull">显示满载节点</n-checkbox>
+        <n-checkbox v-model:checked="showRestricted">显示无权限节点</n-checkbox>
+      </n-space>
+      <n-alert v-if="failure" type="error" title="获取节点列表失败">{{ failure }}</n-alert>
+      <n-skeleton v-if="loading && !nodes.length" :height="120" />
+      <n-card v-else-if="!filtered.length && !failure">
+        <n-empty :description="nodes.length ? '没有符合条件的节点' : '暂无节点'" />
+      </n-card>
+      <n-collapse v-if="filtered.length" default-expanded-names="1">
+        <n-collapse-item v-for="area in areasWithNodes" :key="area.id" :name="String(area.id)">
           <template #header>
-            <n-flex :size="[4, 0]" style="font-size: 1rem">
-              <n-text>中国大陆 </n-text>
-              <n-gradient-text>均需实名</n-gradient-text>
-              <n-text :depth="3">{{ nodeCountFilter(1) }} 个可用</n-text>
-            </n-flex>
+            <n-space align="center" :size="8">
+              <n-text>{{ area.title }}</n-text>
+              <n-gradient-text v-if="area.note" :type="area.tone">{{ area.note }}</n-gradient-text>
+              <n-text depth="3">{{ area.nodes.length }} 个节点</n-text>
+            </n-space>
           </template>
-          <n-flex :size="[8, 8]">
-            <template v-for="node in nodeFilter(1)" :key="node.id">
-              <Card :fallback="handleSelected" :selected-id="selectedNode?.id" :node="node"></Card>
-            </template>
-          </n-flex>
-        </n-collapse-item>
-        <n-collapse-item name="china-hk&china-tw">
-          <template #header>
-            <n-flex :size="[4, 0]" style="font-size: 1rem">
-              <n-text>中国香港 / 中国台湾 / 中国澳门 </n-text>
-              <n-gradient-text type="success">免备建站</n-gradient-text>
-              <n-text :depth="3">{{ nodeCountFilter(2) }} 个可用</n-text>
-            </n-flex>
-          </template>
-          <n-flex :size="[8, 8]">
-            <template v-for="node in nodeFilter(2)" :key="node.id">
-              <Card :fallback="handleSelected" :selected-id="selectedNode?.id" :node="node"></Card>
-            </template>
-          </n-flex>
-        </n-collapse-item>
-        <n-collapse-item name="other">
-          <template #header>
-            <n-flex :size="[4, 0]" style="font-size: 1rem">
-              <n-text>海外 </n-text>
-              <n-gradient-text type="warning">不建议中国大陆使用</n-gradient-text>
-              <n-text :depth="3">{{ nodeCountFilter(3) }} 个可用</n-text>
-            </n-flex>
-          </template>
-          <n-flex :size="[8, 8]">
-            <template v-for="node in nodeFilter(3)" :key="node.id">
-              <Card :fallback="handleSelected" :selected-id="selectedNode?.id" :node="node"></Card>
-            </template>
-          </n-flex>
+          <div v-if="area.nodes.length" class="node-grid">
+            <Card v-for="node in area.nodes" :key="node.id" :node="node" :reason="restriction(node)" :fallback="selectNode" />
+          </div>
+          <n-empty v-else description="没有符合条件的节点" />
         </n-collapse-item>
       </n-collapse>
-    </n-space>
-    <n-back-top :listen-to="`download`" :right="40" />
-    <n-back-top :listen-to="`html`" :right="40" />
-    <n-modal
-      v-model:show="displayCreateTunnelModel"
-      :on-positive-click="
-        () => {
-          handleGetConf();
-          return false;
-        }
-      "
-      :positiveButtonProps="{ loading: watchDog, size: 'medium', disabled: watchDog }"
-      preset="dialog"
-      title="创建隧道"
-      positive-text="创建"
-    >
-      <Edit
-        v-bind:node-config="computed(() => selectedNode)"
-        :fallback="fallbackConf"
-        v-bind:watch-dog="computed(() => watchDog)"
-        :isEditMode="false"
-        :editConfig="undefined"
-      ></Edit>
-    </n-modal>
-  </div>
+    </template>
+  </n-space>
+  <n-modal v-model:show="showEditor" preset="dialog" title="创建隧道" style="width: min(560px, calc(100vw - 32px));"
+    :mask-closable="!submitting" :close-on-esc="!submitting" :closable="!submitting"
+    :positive-button-props="{ loading: submitting, disabled: submitting }"
+    :negative-button-props="{ disabled: submitting }" positive-text="创建" negative-text="取消"
+    :on-positive-click="() => { submitting = true; return false }">
+    <Edit v-if="showEditor && selectedNode" :key="selectedNode.id" :node-config="selectedNode" :watch-dog="submitting" :fallback="save" />
+  </n-modal>
 </template>

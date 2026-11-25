@@ -1,742 +1,239 @@
 <script lang="ts" setup>
+import { ref, computed, inject, h, onMounted, onUnmounted, watch } from 'vue';
+import type { Ref } from 'vue';
+import { NButton, useDialog, useMessage, useNotification } from 'naive-ui';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { useDialog, /*NText,*/ useNotification, NButton, useMessage, NIcon } from 'naive-ui';
-import { onMounted, h, onUnmounted, ref, provide, inject, computed,Ref } from 'vue';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { RouterLink, useRouter, useRoute } from 'vue-router';
-import { onOpenUrl, getCurrent } from '@tauri-apps/plugin-deep-link'
-import { useLinkTunnelsStore } from '@/stores/linkTunnels'
-import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification'
-import { Remove, Expand, Contract, Close, Refresh, Moon, Sunny } from '@vicons/ionicons5'
-import { AxiosError } from 'axios';
+import { onOpenUrl } from '@tauri-apps/plugin-deep-link';
+import { RouterLink, useRouter } from 'vue-router';
+import { Remove, Expand, Contract, Close, Refresh, Moon, Sunny } from '@vicons/ionicons5';
+import copy from 'copy-to-clipboard';
+import frpApiGetUserProxies from '@/requests/frpApi/frpApiGetUserProxies';
+import { useSessionStore } from '@/stores/session';
+import { errorMessage } from '@/utils/apiClient';
+import { useAppUpdates } from '@/services/appUpdates';
+import type { UpdateInfo } from '@/services/appUpdates';
+import { globalLogService } from '@/services/logService';
+import { getSavedTunnelIds, pendingTunnels, startManagedTunnel } from '@/services/tunnelRuntime';
+import { proxyRemoteAddress } from '@/utils/proxies';
 
-
-import frpApiGetUserInfo from '@/requests/frpApi/frpApiGetUserInfo';
-
-import Cookies from '@/utils/cookies';
-
-import { useThemeStore } from '@/stores/theme'
-
-const notification = useNotification();
 const router = useRouter();
-const route = useRoute();
-const userInfo = ref<Struct.UserInfo>();
+const message = useMessage();
+const notification = useNotification();
+const dialog = useDialog();
+const session = useSessionStore();
+const appWindow = getCurrentWindow();
+const { installing, installUpdate } = useAppUpdates();
 
-const clearAuthAndRedirect = () => {
-  sessionStorage.setItem('redirectPath', route.fullPath);
-  Cookies.remove('authorization');
-  localStorage.removeItem('userToken');
-  if (route.path !== '/settings') {
-    router.push('/settings');
-  }
-};
-
-
-const errorMessage = ref<{
-  statusCode: number;
-  title: string;
-}>({ statusCode: 500, title: '加载中' });
-const loaded = ref<boolean>(false);
-
-// 获取用户信息
-const getUserInfo = () => {
-  frpApiGetUserInfo()
-    .then((res) => {
-      console.log(res);
-      if (res.flag) {
-        console.log(res.data)
-        userInfo.value = res.data;
-        // 在这里提供用户信息，确保在数据加载后立即提供
-        provide('userInfo', { userInfo, getUserInfo });
-        setTimeout(() => {
-          loaded.value = true;
-        }, 250);
-      } else {
-        // 需要登录的情况
-        clearAuthAndRedirect();
-      }
-    })
-    .catch((res: AxiosError) => {
-      // 如果是未登录错误，也引导重新登录
-      clearAuthAndRedirect();
-      errorMessage.value = {
-        statusCode: Number(res.response?.status),
-        title: res.response?.statusText ?? '发生了未知错误',
-      };
-      notification.error({
-        content: res.message,
-        meta: '这可能是由于服务器的问题，请稍后重试。',
-        duration: 4500,
-      });
-      loaded.value = false;
-    });
-};
-getUserInfo();
-
-
-
-const isMaximized = ref(false)
-const minimizeWindow = async () => {
-  const window = await getCurrentWindow()
-  await window.minimize()
-}
-
-const maximizeWindow = async () => {
-  const window = await getCurrentWindow()
-  if (await window.isMaximized()) {
-    await window.unmaximize()
-    isMaximized.value = false
-  } else {
-    await window.maximize()
-    isMaximized.value = true
-  }
-}
-
-const closeWindow = async () => {
-  const window = await getCurrentWindow()
-  await window.close()
-}
-
-// 刷新当前窗口
-const refreshWebview = async () => {
-  window.location.reload()
-}
-
-// 在启动应用时初始化自动恢复隧道功能
-async function initAutoRestoreTunnels() {
+const isMaximized = ref(false);
+const minimizeWindow = () => appWindow.minimize().catch(console.error);
+const closeWindow = () => appWindow.close().catch(console.error);
+async function maximizeWindow() {
   try {
-    // 检查是否是自启动模式 - 只信任URL参数，不再信任localStorage
-    const isAutostart = await invoke('check_is_autostart') as boolean;
-    
-    // 如果有URL参数指示是自启动，则设置标志
-    if (isAutostart) {
-      localStorage.setItem('appStartedByAutostart', 'true');
-    } else {
-      // 如果不是自启动，清除标志防止下次误判
-      localStorage.removeItem('appStartedByAutostart');
-    }
-    
-    // 检查是否启用了自动恢复隧道功能
-    const autoRestoreTunnels = localStorage.getItem('autoRestoreTunnels') === 'true';
-    
-    if (autoRestoreTunnels) {
-      console.log('自动恢复隧道功能已启用，是自启动状态:', isAutostart);
-      
-      // 添加日志记录
-      await invoke('emit_event', {
-        event: 'log',
-        payload: {
-          message: `应用程序启动，自动恢复隧道功能已启用${isAutostart ? '，检测到是自启动模式' : '，非自启动模式'}`
-        }
-      });
-  
-      // 获取保存的隧道状态
-      const savedStates = localStorage.getItem('tunnelStates');
-      if (savedStates) {
-        const states = JSON.parse(savedStates);
-        const tunnelIds = Object.keys(states);
-        
-        if (tunnelIds.length > 0 && isAutostart) {
-          // 添加日志记录
-          await invoke('emit_event', {
-            event: 'log',
-            payload: {
-              message: `找到${tunnelIds.length}个需要恢复的隧道: ${tunnelIds.join(', ')}`
-            }
-          });
-          
-          // 只在自启动模式下恢复隧道
-          await invoke('emit_event', {
-            event: 'log',
-            payload: {
-              message: '自启动模式，开始恢复隧道...'
-            }
-          });
-          message.info('正在自启动隧道')
-          
-          // 日志初始化由 App.vue 的 globalLogService 负责，此处仅导航与恢复隧道
-          const initLogSystem = async () => {
-            try {
-              console.log("准备自动恢复隧道");
+    if (await appWindow.isMaximized()) await appWindow.unmaximize();
+    else await appWindow.maximize();
+    isMaximized.value = await appWindow.isMaximized();
+  } catch (error) {
+    console.error('调整窗口失败:', error);
+  }
+}
+function refreshWebview() {
+  globalLogService.flush();
+  window.location.reload();
+}
+function copyAddress(address: string) {
+  const first = address.split('\n').find(line => line.trim())?.trim();
+  if (!first || !copy(first)) message.error('复制链接地址失败');
+  else message.success('链接地址已复制到剪贴板');
+}
 
-              await invoke('emit_event', {
-                event: 'log',
-                payload: {
-                  message: '日志系统已在后台初始化'
-                }
-              });
+const restoreAtStartup = ref(false);
+watch([restoreAtStartup, () => session.userInfo], async ([restore, account]) => {
+  if (!restore || !account?.token) return;
+  restoreAtStartup.value = false;
+  const ids = getSavedTunnelIds(account.id);
+  if (!ids.length) return;
+  try {
+    if (!await invoke<boolean>('check_frpc')) return;
+    const response = await frpApiGetUserProxies();
+    if (!response.flag) throw new Error(response.msg);
+    if (session.userInfo?.id !== account.id) return;
 
-              // 导航到隧道页面并触发恢复
-              router.push('/proxylist');
-
-              // 等待页面加载
-              setTimeout(async () => {
-                await invoke('emit_event', {
-                  event: 'log',
-                  payload: {
-                    message: '正在准备启动隧道...'
-                  }
-                });
-
-                // 通知 ProxyList 组件立即恢复隧道
-                window.dispatchEvent(new CustomEvent('global-restore-tunnels'));
-              }, 500);
-            } catch (error) {
-              console.error("自动恢复隧道初始化失败:", error);
-            }
-          };
-          
-          // 执行日志系统初始化
-          await initLogSystem();
-        } else if (tunnelIds.length > 0) {
-          // 非自启动模式下，记录日志但不自动恢复
-          await invoke('emit_event', {
-            event: 'log',
-            payload: {
-              message: '当前不是自启动模式，不会自动恢复隧道'
-            }
-          });
-        }
+    const selected = response.data.list.filter(proxy =>
+      ids.includes(String(proxy.id)) && proxy.status === true && proxy.online === false
+    );
+    if (!selected.length) return;
+    await router.push('/proxylist');
+    message.info('正在恢复上次运行的隧道');
+    for (const proxy of selected) {
+      if (session.userInfo?.id !== account.id) break;
+      try {
+        await startManagedTunnel({
+          id: String(proxy.id), token: session.userInfo.token, name: proxy.proxyName,
+          remote: proxyRemoteAddress(proxy), external: false,
+        });
+      } catch (error) {
+        message.error(`恢复隧道 #${proxy.id} 失败：${errorMessage(error)}`);
       }
     }
   } catch (error) {
-    console.error('初始化自动恢复隧道功能失败:', error);
+    message.error(`恢复隧道失败：${errorMessage(error)}`);
   }
-}
+});
 
-// 监听窗口状态变化
-onMounted(async () => {
-  const window = await getCurrentWindow()
-  isMaximized.value = await window.isMaximized()
-
-  // 防抖：macOS 拖拽缩放时连续触发大量 resize 事件，
-  // 每次都发 IPC 会淹没 Rust 主线程导致卡死
-  let resizeTimer: ReturnType<typeof setTimeout> | undefined
-  await window.onResized(() => {
-    if (resizeTimer) clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => {
-      window.isMaximized().then((maximized: any) => {
-        isMaximized.value = maximized
-      })
-    }, 150)
-  })
-  
-  // 初始化自动恢复隧道功能
-  await initAutoRestoreTunnels();
-})
-const dialog = useDialog()
-import './style.less';
-const message = useMessage()
-let downloadingMsg: ReturnType<typeof message.loading> | null = null
-let downloadingPercent = ref(0)
-
-let unlistenNeedDownload: any = null
-
-const currentVersion = ref('v0.1')
-
-interface CplUpdate {
-  title: string;
-  latest: string;
-  msg: string;
-}
-
-const getCurrentVersion = async () => {
+const handledLoginCodes = new Set<string>();
+async function handleDeepLink(value: string) {
   try {
-    const version = await invoke('get_cpl_version')
-    currentVersion.value = version as string
-  } catch (e) {
-    currentVersion.value = '获取失败'
-    console.error('获取版本失败:', e)
-  }
-}
-getCurrentVersion()
-
-const requestNotificationPermission = async () => {
-  try {
-    let permissionGranted = await isPermissionGranted()
-    if (!permissionGranted) {
-      const permission = await requestPermission()
-      permissionGranted = permission === 'granted'
-    }
-    return permissionGranted
-  } catch (e) {
-    console.error('获取通知权限失败:', e)
-    return false
-  }
-}
-
-const handleHeaderDoubleClick = async () => {
-  await maximizeWindow()
-}
-
-const linkTunnelsStore = useLinkTunnelsStore()
-const processingLinks = ref(new Set<string>())
-
-const isSuccessLog = (log: string): boolean => {
-  const successPatterns = [
-    /start.*success/i,          // 匹配 "start xxx success"
-    /启动成功/,               // 匹配 "xxx启动xxx成功xxx"
-    /隧道.*启动成功/i,         // 中文启动成功消息，如"隧道 [newsrdp] 启动成功"
-    /success for proxy/i,
-    /proxy.*start.*success/i    // 代理启动成功
-  ]
-  return successPatterns.some(pattern => pattern.test(log))
-}
-
-const handleDeepLink = async (url: string) => {
-  const urlObj = new URL(url)
-  if (urlObj.protocol !== 'openfrp:') return
-  // 直接解析 URL 字符串
-  const match = url.match(/^openfrp:\/\/([^/?]+)/)
-  if (!match) return
-
-  const path = match[1]
-  // 只对 login 做去重
-  if (path === 'login') {
-    const processedUrls = JSON.parse(localStorage.getItem('processedUrls') || '[]');
-    if (processedUrls.includes(url)) {
-      console.log('已处理过该 login deeplink，跳过:', url);
+    const url = new URL(value);
+    if (url.protocol !== 'openfrp:') return;
+    if (url.hostname === 'login' || url.hostname === 'oauth_callback') {
+      const code = url.searchParams.get('code');
+      if (!code) {
+        message.error('登录链接缺少授权码');
+        return;
+      }
+      if (session.signedIn || handledLoginCodes.has(code)) return;
+      handledLoginCodes.add(code);
+      if (handledLoginCodes.size > 32) handledLoginCodes.delete(handledLoginCodes.values().next().value!);
+      await router.push({ path: '/oauth_callback', query: { code } });
       return;
     }
-    processedUrls.push(url);
-    if (processedUrls.length > 10) processedUrls.shift();
-    localStorage.setItem('processedUrls', JSON.stringify(processedUrls));
+    if (url.hostname !== 'start_proxy') {
+      message.error('未知链接操作');
+      return;
+    }
+    const id = (url.searchParams.get('proxy') || '').replace(/^0+(?=\d)/, '');
+    const token = url.searchParams.get('user')?.trim() || '';
+    const remote = url.searchParams.get('remote')?.trim() || '';
+    const name = url.searchParams.get('name')?.trim() || '';
+    if (!/^[1-9]\d{0,19}$/.test(id) || !token || !remote || !name) {
+      message.error('快速启动链接格式错误');
+      return;
+    }
+    if (pendingTunnels.has(id)) return;
+    if (!await invoke<boolean>('get_quick_start_enabled')) return;
+    if (pendingTunnels.has(id)) return;
+    message.info(`正在快速启动${name}隧道`);
+    const result = await startManagedTunnel({ id, token, name, remote, external: true });
+    if (result === 'already-running') message.info(`隧道 #${id} 已在运行`);
+    else if (result === 'running') message.warning(`隧道 #${id} 的进程已启动，连接结果请查看日志`);
+    else notification.success({
+      title: `隧道 #${id} ${name} 启动成功`,
+      description: `连接地址：${remote}`,
+      duration: 5000,
+      content: () => h(NButton, { text: true, onClick: () => copyAddress(remote) }, () => '复制链接地址'),
+    });
+  } catch (error) {
+    message.error(`处理链接失败：${errorMessage(error)}`);
   }
+}
 
-  // 将窗口提升到最前方
+async function checkForUpdates() {
   try {
-    const appWindow = await getCurrentWindow()
-    await appWindow.show()
-    await appWindow.setFocus()
-  } catch (e) {
-    console.error('窗口提升失败:', e)
+    const update = await invoke<UpdateInfo | null>('check_update');
+    if (!update) return;
+    const notice = notification.info({
+      title: update.title,
+      description: `发现新版本 v${update.latest}\n${update.msg}`,
+      duration: 10000,
+      content: () => h(NButton, {
+        text: true, type: 'primary', disabled: installing.value,
+        onClick: () => { notice.destroy(); void installUpdate(update.latest); },
+      }, () => '立即更新'),
+    });
+  } catch (error) {
+    console.error('检查更新失败:', error);
   }
-  // 处理登录回调
-  if (path === 'login') {
-    const params = new URLSearchParams(urlObj.search)
-    const code = params.get('code')
-    
+}
 
-    if (code) {
-      // 保存 token
-      // localStorage.setItem('userToken', token)
-      message.success('获取到登录码')
-      urlObj.searchParams.delete('code')
-      // 发送事件到日志系统
+let disposed = false;
+let resizeTimer: ReturnType<typeof setTimeout> | undefined;
+let closeDialog: ReturnType<typeof dialog.warning> | undefined;
+const cleanups: (() => void)[] = [];
+async function register(listener: Promise<() => void>) {
+  try {
+    const cleanup = await listener;
+    if (disposed) cleanup();
+    else cleanups.push(cleanup);
+  } catch (error) {
+    console.error('注册窗口监听失败:', error);
+  }
+}
 
-      router.push(`/oauth_callback?code=${code}`)
-      
-      // 清除URL缓存，防止重复处理
+function handleClose() {
+  if (closeDialog) return;
+  closeDialog = dialog.warning({
+    title: '二次确认',
+    content: '确认退出程序？',
+    positiveText: '最小化到托盘',
+    negativeText: '彻底退出',
+    onAfterLeave: () => { closeDialog = undefined; },
+    onPositiveClick: () => appWindow.hide().catch(error => message.error(errorMessage(error))),
+    onNegativeClick: async () => {
       try {
-        // 使用本地存储记录已处理的URL
-        const processedUrls = JSON.parse(localStorage.getItem('processedUrls') || '[]')
-        processedUrls.push(url)
-        // 只保留最近的10个URL
-        if (processedUrls.length > 10) {
-          processedUrls.shift()
-        }
-        localStorage.setItem('processedUrls', JSON.stringify(processedUrls))
-      } catch (e) {
-        console.error('保存已处理URL失败:', e)
+        globalLogService.flush();
+        await invoke('exit_app');
+      } catch (error) {
+        message.error(`退出失败：${errorMessage(error)}`);
+        return false;
       }
-      
-      return
-    } else {
-      message.error('登录失败：未获取到 token')
-      return
-    }
-  }
-  // 远程启动隧道
-  if (path === 'start_proxy') {
-    const params = new URLSearchParams(urlObj.search)
-    const user = params.get('user')
-    const proxyId = params.get('proxy')
-    const remoteAddress = params.get('remote')
-    const proxyName = params.get('name')
-
-    if (!user || !proxyId || !remoteAddress || !proxyName) {
-      await sendNotification({ title: '快速启动链接格式错误', body: '请检查链接格式是否正确' })
-      console.error('链接格式错误')
-      return
-    }
-
-    // 检查是否正在处理
-    if (processingLinks.value.has(proxyId)) {
-      console.log('隧道正在启动中，跳过:', proxyId)
-      return
-    }
-    try {
-      processingLinks.value.add(proxyId)
-
-      // 发送启动事件到日志系统
-      await invoke('emit_event', {
-        event: 'tunnel-event',
-        payload: {
-          type: 'start',
-          tunnelId: proxyId,
-          tunnelName: proxyName
-        }
-      })
-
-      // message.loading('正在启动隧道', { duration: 1000 })
-
-      // 等待日志响应
-      const logResult = await new Promise<{ success: boolean, message: string }>((resolve) => {
-        let resolved = false;
-        const timeout = setTimeout(async () => {
-          if (resolved) return;
-          resolved = true;
-          // 超时后检查隧道是否实际在运行
-          try {
-            const isRunning = await invoke('check_frpc_status', { id: proxyId })
-            if (isRunning) {
-              resolve({ success: false, message: '进程已运行但未收到日志事件，启动结果未知' })
-            } else {
-              resolve({ success: false, message: '启动超时，请检查日志。' })
-              message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
-            }
-          } catch (e) {
-            resolve({ success: false, message: '启动超时，请检查日志。' })
-            message.warning('若要反馈问题，请勿截图此弹窗，请向技术支持提供报错日志。')
-          }
-          logListener.then(unlisten => unlisten())
-        }, 5000)
-
-        const logListener = listen(`frpc-log-${proxyId}`, (event: any) => {
-          if (resolved) return;
-          const log = event.payload.message
-          if (isSuccessLog(log)) {
-            resolved = true;
-            clearTimeout(timeout)
-            logListener.then(unlisten => unlisten())
-            resolve({ success: true, message: log })
-          } else if (log.includes('启动失败')) {
-            resolved = true;
-            clearTimeout(timeout)
-            logListener.then(unlisten => unlisten())
-            const errorMatch = log.match(/启动失败:\s*(.+)/)
-            const errorMessage = errorMatch ? errorMatch[1] : log
-            resolve({ success: false, message: errorMessage })
-          }
-        })
-
-        // 先检查是否已经在运行（不再直接判定为 success，只做提示）
-        invoke('check_frpc_status', { id: proxyId })
-          .then(isRunning => {
-            if (isRunning) {
-              // 不再直接 resolve success，只等日志事件
-              // 可选：可在此处提示“进程已在运行，等待日志事件..."
-              return
-            }
-            // 如果没有运行，则启动隧道
-            return invoke('start_frpc_instance', {
-              id: proxyId,
-              token: user,
-              tunnelId: proxyId,
-              name: proxyName,
-              remote: remoteAddress,
-              logColors: true,
-              enableLog: true,
-              logUser: user
-            })
-          })
-          .catch((error) => {
-            if (resolved) return;
-            resolved = true;
-            clearTimeout(timeout)
-            logListener.then(unlisten => unlisten())
-            resolve({ success: false, message: String(error) })
-          })
-      })
-
-      await requestNotificationPermission()
-
-      const copyToClipboard = async (text: string) => {
-        try {
-          await navigator.clipboard.writeText(text)
-          message.success('已复制到剪贴板')
-        } catch (err) {
-          message.error('复制失败')
-          console.error('复制失败:', err)
-        }
-      }
-
-      if (logResult.success) {
-        notification.success({
-          title: `隧道 #${proxyId} ${proxyName} 启动成功`,
-          description: `隧道启动成功！连接地址: ${remoteAddress}`,
-          content: () => h('div', [
-            h(NButton, {
-              type: 'success',
-              text: true,
-              onClick: () => copyToClipboard(remoteAddress)
-            }, '复制链接地址')
-          ]),
-          duration: 5000
-        })
-        // 系统通知：自动复制第一个链接地址到剪贴板（多个地址取第一个）
-        const firstRemote = remoteAddress.split('\n').map(s => s.trim()).filter(Boolean)[0] || remoteAddress
-        navigator.clipboard.writeText(firstRemote).catch(() => {})
-        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动成功`, body: `链接地址已复制到剪贴板：${firstRemote}` })
-        linkTunnelsStore.addLinkTunnel(proxyId)
-        message.success('通过快速启动隧道成功')
-        setTimeout(() => {
-          message.info('您通过快速启动启动了一条隧道，您可在网页版或日志中查看链接地址与启动状态')
-        }, 1000);
-      } else {
-        notification.error({
-          title: `隧道 #${proxyId} ${proxyName} 启动失败`,
-          content: logResult.message,
-          duration: 5000
-        })
-        await sendNotification({ title: `隧道 #${proxyId} ${proxyName} 启动失败`, body: logResult.message })
-        message.error(`启动隧道失败: ${logResult.message}`)
-      }
-
-    } catch (e) {
-      // 发送错误事件到日志系统
-      await invoke('emit_event', {
-        event: 'tunnel-event',
-        payload: {
-          type: 'error',
-          tunnelId: proxyId,
-          tunnelName: proxyName
-        }
-      })
-      await sendNotification({ title: `隧道 #${proxyId} 启动失败`, body: e as any })
-      message.error(`启动隧道失败: ${e}`)
-
-    } finally {
-      processingLinks.value.delete(proxyId)
-    }
-    return
-  }
-  message.error('错误:未知链接操作')
+    },
+  });
 }
 
-// 创建事件清理函数的引用
-let cleanupOpenUrl: (() => void) | null = null
-let cleanupSecondInstance: (() => void) | null = null
+onMounted(() => {
+  void appWindow.isMaximized().then(value => { isMaximized.value = value; }).catch(console.error);
+  // 缩放时减少 Windows 和 macOS 发往主线程的 IPC。
+  void register(appWindow.onResized(() => {
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      void appWindow.isMaximized().then(value => { isMaximized.value = value; }).catch(console.error);
+    }, 150);
+  }));
+  void register(appWindow.onCloseRequested(event => {
+    event.preventDefault();
+    handleClose();
+  }));
+  void register(listen<string>('tray-copy-link', ({ payload }) => copyAddress(payload)));
+  void register(listen<string>('tray-error', ({ payload }) => message.error(payload)));
+  void register(onOpenUrl(urls => urls.forEach(url => void handleDeepLink(url))))
+    .then(() => invoke<string[]>('take_startup_links'))
+    .then(urls => urls.forEach(url => void handleDeepLink(url))).catch(console.error);
 
-const checkForUpdates = async () => {
-  try {
-    const update = await invoke('check_update') as CplUpdate
-    if (update) {
-      const notificationInstance = notification.info({
-        title: update.title,
-        description: `发现新版本 v${update.latest}\n${update.msg}`,
-        content: () => h('div', [
-          h(NButton, {
-            text: true, type: 'primary',
-            onClick: async () => {
-              notificationInstance.destroy()
-              try {
-                if (downloadingMsg) downloadingMsg.destroy()
-                downloadingPercent.value = 0
-                downloadingMsg = message.loading(
-                  () => h('span', [
-                    '正在下载更新... ',
-                    downloadingPercent.value > 0 ? `${downloadingPercent.value}%` : ''
-                  ]),
-                  { duration: 0 }
-                )
-                await invoke('download_and_install_update')
-                if (downloadingMsg) {
-                  downloadingMsg.destroy()
-                  downloadingMsg = null
-                }
-                message.success('更新已下载完成，重启应用后生效')
-              } catch (e) {
-                if (downloadingMsg) {
-                  downloadingMsg.destroy()
-                  downloadingMsg = null
-                }
-              }
-            },
-            style: 'margin-top: 8px;'
-          }, '立即更新')
-        ]),
-        duration: 10000
-      })
-    }
-  } catch (e) {
-    console.error('检查更新失败:', e)
-  }
-}
-
-onMounted(async () => {
-  // 检查更新
-  checkForUpdates()
-
-  // 监听托盘事件
-  listen('tray-copy-link', (event) => {
-    navigator.clipboard.writeText(String(event.payload)).catch(() => {})
-    message.success('链接地址已复制到剪贴板')
-  })
-
-  // 监听进度
-  await listen('update-progress', (event) => {
-    const percent = parseFloat(String(event.payload).replace('%', ''))
-    if (!isNaN(percent)) {
-      downloadingPercent.value = Math.round(percent)
-      if (downloadingMsg) {
-        downloadingMsg.content = () => h('span', [
-          '正在下载更新... ',
-          `${downloadingPercent.value}%`
-        ])
-      }
-    }
-  })
-  // 监听错误
-  await listen('update-error', (event) => {
-    if (downloadingMsg) {
-      downloadingMsg.destroy()
-      downloadingMsg = null
-    }
-    notification.error({
-      title: '更新失败',
-      content: String(event.payload)
-    })
-  })
-  // 监听成功
-  await listen('update-success', (event) => {
-    if (downloadingMsg) {
-      downloadingMsg.destroy()
-      downloadingMsg = null
-    }
-    // notification.success({
-    //   title: '更新完成',
-    //   content: String(event.payload || '更新已下载完成，重启应用后生效')
-    // })
-  })
-
-  unlistenNeedDownload = await listen('need_download', async () => {
-    const notificationInstance = notification.warning({
-      title: '提示',
-      description: '未检测到 frpc，是否前往设置页面下载？\n您必须下载 frpc 才能继续使用本程序。',
+  void invoke<boolean>('take_autostart_restore').then(value => {
+    restoreAtStartup.value = value && session.signedIn && localStorage.getItem('autoRestoreTunnels') !== 'false';
+  }).catch(console.error);
+  void invoke<boolean>('check_frpc').then(installed => {
+    if (installed) return;
+    const notice = notification.warning({
+      title: '未检测到 Frpc',
+      description: '请下载或手动配置 Frpc 后启动隧道。',
       duration: 8000,
       content: () => h(RouterLink, {
-        to: { path: '/settings' },
-        onClick: () => {
-          notificationInstance.destroy();
-          router.push('/settings');
-        }
-      }, '前往下载')
-    })
-  })
-
-  // 检查 frpc
-  try {
-    const handle = await getCurrentWindow()
-    if (await invoke('check_frpc_status', { id: "0" })) {
-      await invoke('download_frpc', { app: handle })
-    }
-  } catch (e) {
-    console.error('检查 frpc 失败:', e)
-  }
-
-  const appWindow = getCurrentWindow();
-
-  appWindow.onCloseRequested(async () => {
-    dialog.warning({
-      title: '二次确认',
-      content: '确认退出程序？',
-      positiveText: '最小化到托盘',
-      negativeText: '彻底退出',
-      closeOnEsc: true,
-      maskClosable: true,
-      showIcon: true,
-      closable: true,
-      onPositiveClick: async () => {
-        await appWindow.hide();
-      },
-      onNegativeClick: async () => {
-        try {
-          // 清除自启动标志，确保下次手动启动时不会自动恢复隧道
-          localStorage.removeItem('appStartedByAutostart');
-          
-          // 先结束所有隧道
-          await invoke('kill_all_processes');
-          // 然后退出程序
-          await invoke('exit_app');
-        } catch (e) {
-          console.error(e);
-        }
-      }
-    })
-  });
-
-  // 监听 frpc 更新成功事件
-  await listen('frpc-update', (event) => {
-    notification.success({
-      title: 'Frpc 更新',
-      content: event.payload as string,
-      duration: 5000
-    })
-  })
-
-  // 监听 frpc 更新失败事件
-  await listen('frpc-update-error', (event) => {
-    notification.error({
-      title: 'Frpc 更新失败',
-      content: event.payload as string,
-      duration: 5000
-    })
-  })
-
-  // 检查启动参数
-  const urls = await getCurrent()
-  if (urls && urls.length > 0) {
-    await handleDeepLink(urls[0])
-  }
-
-  // 监听新的链接
-  cleanupOpenUrl = await onOpenUrl((urls) => {
-    if (urls.length > 0) {
-      handleDeepLink(urls[0])
-    }
-  })
-
-  // 监听来自第二个实例的参数
-  cleanupSecondInstance = await listen('second-instance', (event: any) => {
-    const args = event.payload as string[]
-    for (const arg of args) {
-      if (arg.startsWith('openfrp://')) {
-        handleDeepLink(arg)
-      }
-    }
-  })
-})
+        to: { path: '/settings', query: { section: 'frpc' } },
+        onClick: () => notice.destroy(),
+      }, () => '前往配置'),
+    });
+  }).catch(console.error);
+  void checkForUpdates();
+});
 
 onUnmounted(() => {
-  if (unlistenNeedDownload) {
-    unlistenNeedDownload()
-  }
-  if (cleanupOpenUrl) cleanupOpenUrl()
-  if (cleanupSecondInstance) cleanupSecondInstance()
-})
+  disposed = true;
+  if (resizeTimer) clearTimeout(resizeTimer);
+  cleanups.forEach(cleanup => cleanup());
+});
 
-// 移除这里的 provide，因为我们已经在 getUserInfo 成功回调中提供了
-// provide('userInfo', { userInfo, getUserInfo });
-
-// 正确引用已存在的主题功能
-const { colorScheme, toggleColorScheme } = inject('darkMode') as {
-  colorScheme: Ref<string>,
-  toggleColorScheme: () => void
+const { colorScheme, toggleColorScheme: toggleDarkMode } = inject('darkMode') as {
+  colorScheme: Ref<string>;
+  toggleColorScheme: () => void;
 };
-
-// 基于colorScheme计算isDark
 const isDark = computed(() => colorScheme.value === 'dark');
-
-// 使用已有的toggleColorScheme函数
-const toggleDarkMode = () => {
-  toggleColorScheme();
-};
 </script>
 
 <template>
-  <div class="header" data-tauri-drag-region @dblclick="handleHeaderDoubleClick">
+  <div class="header" data-tauri-drag-region @dblclick="maximizeWindow">
     <div class="header-left" data-tauri-drag-region>
       <div class="header-logo" data-tauri-drag-region>
         <div class="brand-wrap">
@@ -766,10 +263,10 @@ const toggleDarkMode = () => {
     </div>
     <div class="header-right" data-tauri-drag-region>
 
-      <div class="window-controls">
+      <div class="window-controls" @dblclick.stop>
         <n-tooltip placement="bottom">
           <template #trigger>
-            <n-button quaternary circle size="small" @click="toggleDarkMode">
+            <n-button quaternary circle size="small" @click="toggleDarkMode" :aria-label="isDark ? '切换到浅色主题' : '切换到深色主题'">
               <template #icon>
                 <n-icon>
                   <Moon v-if="isDark" />
@@ -784,7 +281,7 @@ const toggleDarkMode = () => {
           刷新(遇到 bug 时可尝试)
           
           <template #trigger>
-            <n-button quaternary size="small" @click="refreshWebview">
+            <n-button quaternary size="small" @click="refreshWebview" aria-label="刷新启动器">
            
               <template #icon>
                 <n-icon>
@@ -794,14 +291,14 @@ const toggleDarkMode = () => {
             </n-button>
           </template>
         </n-tooltip>
-        <n-button quaternary size="small" @click="minimizeWindow">
+        <n-button quaternary size="small" @click="minimizeWindow" aria-label="最小化">
           <template #icon>
             <n-icon>
               <Remove />
             </n-icon>
           </template>
         </n-button>
-        <n-button quaternary size="small" @click="maximizeWindow">
+        <n-button quaternary size="small" @click="maximizeWindow" :aria-label="isMaximized ? '还原窗口' : '最大化'">
           <template #icon>
             <n-icon v-if="isMaximized">
               <Contract />
@@ -811,7 +308,7 @@ const toggleDarkMode = () => {
             </n-icon>
           </template>
         </n-button>
-        <n-button quaternary size="small" @click="closeWindow" class="close-button">
+        <n-button quaternary size="small" @click="closeWindow" class="close-button" aria-label="关闭">
           <template #icon>
             <n-icon>
               <Close />
@@ -843,13 +340,13 @@ const toggleDarkMode = () => {
 
 
 .header-left {
+  margin-left: 1em;
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
 .brand-wrap {
-  margin-top: 6px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -876,44 +373,13 @@ const toggleDarkMode = () => {
   fill: currentColor;
 }
 
-@media screen and (max-width: 280px) {
-  .header-logo {
-    display: none;
-  }
+@media (max-width: 540px) {
+  .header-logo .brand-text { display: none; }
 }
 
 .header-right {
   float: right;
   padding-right: 10px;
-}
-
-
-.header-userpanel {
-  display: inline-block;
-  padding: 16px 16px 16px 0;
-}
-
-.header-userpanel .header-userpanel-icon {
-  vertical-align: middle;
-}
-
-.header-userpanel .header-userpanel-username {
-  margin-left: 3px;
-  font-size: 12px;
-  vertical-align: middle;
-}
-
-.header-logout {
-  display: inline-block;
-  padding: 16px 16px 16px 0;
-}
-
-.header-logout .n-button {
-  padding-left: 1px;
-}
-
-.header-avatar {
-  padding: 15px 18px 10px 0;
 }
 
 

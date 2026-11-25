@@ -3048,6 +3048,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
+ "tempfile",
  "tiny_http",
  "tokio",
  "winreg 0.50.0",

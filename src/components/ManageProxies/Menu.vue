@@ -1,91 +1,40 @@
 <script setup lang="ts">
-import { Component, h, watch } from 'vue';
-
+import { computed, h } from 'vue';
+import type { Component } from 'vue';
 import { NIcon } from 'naive-ui';
-
+import type { DropdownOption } from 'naive-ui';
 import {
-  BuildOutline,
-  CloudOfflineOutline,
-  CreateOutline,
-  DocumentOutline,
-  InformationOutline,
-  PlayOutline,
-  RefreshOutline,
-  TrashOutline,
+  BuildOutline, CloudOfflineOutline, CreateOutline, DocumentOutline,
+  InformationOutline, PlayOutline, RefreshOutline, TrashOutline,
 } from '@vicons/ionicons5';
 
 const props = defineProps<{
   proxy: Struct.UserProxy;
+  localRunning: boolean;
+  busy: boolean;
   fallback: (key: string) => void;
-  btnStyle: string;
 }>();
-
-const renderIcon = (icon: Component, size = '16px') => {
-  return () => {
-    return h(
-      NIcon,
-      { size },
-      () => h(icon)
-    );
-  };
-};
-
-const options = [
-  {
-    label: '刷新状态',
-    key: 'refreshState',
-    icon: renderIcon(RefreshOutline),
-  },
-  {
-    label: '启用/禁用隧道',
-    key: 'stateChange',
-    icon: renderIcon(PlayOutline),
-  },
-  {
-    key: 'menu-divider',
-    type: 'divider',
-  },
-  {
-    label: '编辑',
-    key: 'editConf',
-    icon: renderIcon(CreateOutline),
-    disabled: props.proxy.online,
-  },
-  {
-    label: '详情',
-    key: 'getInfo',
-    icon: renderIcon(InformationOutline),
-  },
-  {
-    key: 'menu-divider',
-    type: 'divider',
-  },
-  {
-    label: '删除',
-    key: 'deleteProxy',
-    icon: renderIcon(TrashOutline),
-  },
-];
-
-const update = () => {
-  options[3].disabled = props.proxy.online;
-  options[4].disabled = props.proxy.online;
-};
-
-watch(() => props.proxy.online, (newVal) => {
-  options[3].disabled = newVal;
-  options[4].disabled = newVal;
-}, { immediate: true });
+const icon = (component: Component) => () => h(NIcon, { size: 16 }, () => h(component));
+const options = computed<DropdownOption[]>(() => {
+  const online = props.localRunning || props.proxy.online;
+  return [
+    { label: '刷新状态', key: 'refreshState', icon: icon(RefreshOutline) },
+    { label: props.proxy.status ? '禁用隧道' : '启用隧道', key: 'stateChange', icon: icon(PlayOutline), disabled: online },
+    { type: 'divider', key: 'details-divider' },
+    { label: '编辑', key: 'editConf', icon: icon(CreateOutline), disabled: online },
+    { label: '详情', key: 'getInfo', icon: icon(InformationOutline) },
+    { label: '获取配置', key: 'getConf', icon: icon(DocumentOutline) },
+    { type: 'divider', key: 'actions-divider' },
+    { label: '强制下线', key: 'forceOff', icon: icon(CloudOfflineOutline), disabled: !online || props.localRunning },
+    { label: '删除', key: 'deleteProxy', icon: icon(TrashOutline), disabled: online },
+  ];
+});
 </script>
+
 <template>
-  <n-dropdown trigger="click" :options="options" @update:show="() => update()" @select="fallback">
-    <n-tooltip trigger="hover">
-      <template #trigger>
-        <n-button :style="btnStyle" circle text>
-          <n-icon size="16" :component="BuildOutline" />
-        </n-button>
-      </template>
-      操作
-    </n-tooltip>
+  <n-dropdown trigger="click" :options="options" @select="fallback">
+    <n-button text :disabled="busy" :aria-label="'隧道操作 ' + proxy.proxyName">
+      <n-icon size="16" :component="BuildOutline" />
+    </n-button>
   </n-dropdown>
 </template>

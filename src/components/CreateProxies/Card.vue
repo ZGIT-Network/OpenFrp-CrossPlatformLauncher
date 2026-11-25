@@ -3,7 +3,7 @@ import { AlertOutline, CheckmarkOutline, PersonCircleOutline, Warning } from '@v
 
 defineProps<{
   node: Struct.Node & { hostnameExt?: string };
-  // selectedId: number | undefined;
+  reason?: string;
   fallback: (node: Struct.Node) => void;
 }>();
 const codeToState = (code: number) => {
@@ -24,15 +24,20 @@ const codeToState = (code: number) => {
       return { text: '超时', type: 'error' };
     }
     default: {
-      break;
+      return { text: '不可用', type: 'warning' };
     }
   }
 };
 </script>
 <template>
-  <!-- 'node-selected': selectedId === node.id -->
   <n-card
-    :class="{ 'node-selector': true, 'node-disabled': node.fullyLoaded }"
+    :class="{ 'node-selector': true, 'node-disabled': !!reason }"
+    role="button"
+    tabindex="0"
+    :aria-disabled="!!reason"
+    :title="reason"
+    @keydown.enter.prevent="fallback(node)"
+    @keydown.space.prevent="fallback(node)"
     style="min-height: 140px"
     embedded
     footer-style="padding:12px 16px 12px 16px;"
@@ -107,13 +112,13 @@ const codeToState = (code: number) => {
           </n-tag>
           <!-- 因为所有节点均有TCP无需再次展示 -->
 
-          <n-tag v-if="node.protocolSupport.udp" round :bordered="false" type="info" size="small">
+          <n-tag v-if="node.protocolSupport?.udp" round :bordered="false" type="info" size="small">
             <template #icon>
               <n-icon :component="CheckmarkOutline" />
             </template>
             UDP
           </n-tag>
-          <n-tag v-if="node?.hostnameExt !== ''" round :bordered="false" type="warning" size="small">
+          <n-tag v-if="node.hostnameExt" round :bordered="false" type="warning" size="small">
             <template #icon>
               <n-icon
                 style="padding-bottom: 2px; padding-left: 2px; margin-right: -4px"
@@ -123,7 +128,7 @@ const codeToState = (code: number) => {
             扩展地址
           </n-tag>
           <n-tag
-            v-if="node.protocolSupport.https && node.protocolSupport.http"
+            v-if="node.protocolSupport?.https && node.protocolSupport?.http"
             round
             :bordered="false"
             type="info"
@@ -135,7 +140,7 @@ const codeToState = (code: number) => {
             HTTP(S)
           </n-tag>
           <n-tag
-            v-if="node.protocolSupport.http && !node.protocolSupport.https"
+            v-if="node.protocolSupport?.http && !node.protocolSupport?.https"
             round
             :bordered="false"
             type="info"
@@ -147,7 +152,7 @@ const codeToState = (code: number) => {
             HTTP
           </n-tag>
           <n-tag
-            v-if="!node.protocolSupport.http && node.protocolSupport.https"
+            v-if="!node.protocolSupport?.http && node.protocolSupport?.https"
             round
             :bordered="false"
             type="info"
@@ -159,48 +164,11 @@ const codeToState = (code: number) => {
             HTTPS
           </n-tag>
         </n-space>
+        <n-text v-if="reason && !node.fullyLoaded && node.status === 200" type="warning" style="font-size: 12px;">{{ reason }}</n-text>
         <n-ellipsis :line-clamp="2" style="width: 100%; font-size: 0.9em; color: #888888">
           {{ node.comments }}
         </n-ellipsis>
       </n-space>
     </n-space>
-    <!-- <template #footer>
-        <n-space vertical size="small">
-
-            <n-space :size="[4, 4]">
-                <n-tag :bordered="false" type="success" size="small">
-                    {{ node.bandwidth }}Mbps{{ node.bandwidthMagnification == 1 ? '' : ` *
-                    ${node.bandwidthMagnification}` }}
-                </n-tag>
-                <n-tag :bordered="false" v-if="node.needRealname && node.classify !== 1" type="warning" size="small">
-                    实名
-                </n-tag>
-                <n-tag :bordered="false" v-if="node.fullyLoaded" type="error" size="small">
-                    满载
-                </n-tag>
-                <n-tag :bordered="false" v-if="node.status != 200"
-                    :type="codeToState(node.status)?.type == 'warning' ? 'warning' : 'error'" size="small">
-                    {{ codeToState(node.status)?.text }}
-                </n-tag>
-
-
-                <n-tag :bordered="false" v-if="node.protocolSupport.udp" type="info" size="small">
-                    UDP
-                </n-tag>
-                <n-tag :bordered="false" v-if="node.protocolSupport.https && node.protocolSupport.http" type="info"
-                    size="small">
-                    HTTP(S)
-                </n-tag>
-                <n-tag :bordered="false" v-if="node.protocolSupport.http && !node.protocolSupport.https" type="info"
-                    size="small">
-                    HTTP
-                </n-tag>
-                <n-tag :bordered="false" v-if="!node.protocolSupport.http && node.protocolSupport.https" type="info"
-                    size="small">
-                    HTTPS
-                </n-tag>
-            </n-space>
-        </n-space>
-    </template> -->
   </n-card>
 </template>
